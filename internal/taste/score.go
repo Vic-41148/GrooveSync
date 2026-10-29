@@ -207,6 +207,19 @@ type Metadata struct {
 	Tags   []string
 }
 
+type BacktestSample struct {
+	Candidate MixCandidate
+	Favorite  bool
+}
+
+func Backtest(samples []BacktestSample, seed int64) []MixCandidate {
+	items := make([]MixCandidate, 0, len(samples))
+	for _, sample := range samples {
+		items = append(items, sample.Candidate)
+	}
+	return BacktestRank(items, seed)
+}
+
 func ColdStartScore(candidate, library Metadata) float64 {
 	score := 0.0
 	if equalFold(candidate.Title, library.Title) {
