@@ -95,6 +95,29 @@ func TestMigrateAppliesInitialSchema(t *testing.T) {
 	}
 }
 
+func TestMigrateAppliesCoreSchema(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	if err := Migrate(context.Background(), db); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+
+	tables := []string{"track", "alias", "rendition", "event", "service_state", "review_queue", "write_log", "tombstone", "device_holding"}
+	for _, table := range tables {
+		table := table
+		t.Run(table, func(t *testing.T) {
+			var name string
+			if err := db.QueryRow(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&name); err != nil {
+				t.Fatalf("query %s table: %v", table, err)
+			}
+			if name != table {
+				t.Fatalf("%s table = %q, want %s", table, name, table)
+			}
+		})
+	}
+}
+
 func TestOpenReturnsReadyDatabase(t *testing.T) {
 	t.Parallel()
 
