@@ -1,6 +1,9 @@
 package taste
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestScore(t *testing.T) {
 	t.Parallel()
@@ -48,5 +51,50 @@ func TestScoreKeepsContributionsSorted(t *testing.T) {
 	}
 	if got.Contributions[0].Name != "like" {
 		t.Fatalf("first contribution = %q, want like", got.Contributions[0].Name)
+	}
+}
+
+func TestScoreUsesLastWriterWinsForLikeRegisters(t *testing.T) {
+	t.Parallel()
+
+	asOf := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	events := []Event{
+		{TrackID: "track-1", Source: SourceLocal, Type: EventLike, At: asOf.Add(-2 * time.Hour)},
+		{TrackID: "track-1", Source: SourceLocal, Type: EventUnlike, At: asOf.Add(-time.Hour)},
+	}
+	got := ScoreAt(events, DefaultConfig(), asOf)
+	if got.Score >= 0 {
+		t.Fatalf("ScoreAt() = %v, want negative after unlike wins", got.Score)
+	}
+	if len(got.Contributions) != 1 {
+		t.Fatalf("contributions len = %d, want 1", len(got.Contributions))
+	}
+	if got.Contributions[0].Name != "track-1: unlike" {
+		t.Fatalf("contribution = %q, want track-1: unlike", got.Contributions[0].Name)
+	}
+}
+
+func TestColdStartScore(t *testing.T) {
+	t.Parallel()
+
+	got := ColdStartScore(
+		Metadata{Title: "Garden", Artist: "The Local Band", Album: "First", Tags: []string{"indie", "guitar"}},
+		Metadata{Title: "garden", Artist: "The Local Band", Album: "First", Tags: []string{"guitar", "live"}},
+	)
+	if got < 4.5 {
+		t.Fatalf("ColdStartScore() = %v, want at least 4.5", got)
+	}
+}
+
+func TestAllowedSource(t *testing.T) {
+	t.Parallel()
+
+	if AllowedSource(SourceSpotify) {
+		t.Fatal("AllowedSource(SourceSpotify) = true, want false")
+	}
+	for _, src := range []Source{SourceLocal, SourceMusicBrainz, SourceListenBrainz, SourceNavidrome, SourceYouTube} {
+		if !AllowedSource(src) {
+			t.Fatalf("AllowedSource(%q) = false, want true", src)
+		}
 	}
 }
