@@ -163,6 +163,59 @@ func TestProcessorSkipsMissingExecutorsWithoutMutatingQueue(t *testing.T) {
 	}
 }
 
+func TestProcessorHonorsRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	db := openProcessorDB(t)
+	defer db.Close()
+	repo := NewRepo(db)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	if err := repo.UpsertQueueItem(ctx, QueueItem{ID: "a", Provider: "spotify", Operation: "like", Payload: "{}", NextAttempt: now}); err != nil {
+		t.Fatalf("UpsertQueueItem() error = %v", err)
+	}
+
+	report, err := Processor{
+		Store:     repo,
+		Now:       func() time.Time { return now },
+		BaseDelay: time.Second,
+		Executors: map[string]Executor{
+			"spotify": ExecutorFunc(func(context.Context, QueueItem) error {
+				return retryAfterStub{delay: 45 * time.Second}
+			}),
+		},
+	}.ProcessDue(ctx)
+	if err != nil {
+		t.Fatalf("ProcessDue() error = %v", err)
+	}
+	if report.RateLimited != 1 || report.Retried != 0 {
+		t.Fatalf("report = %#v, want one rate-limited item", report)
+	}
+
+	items, err := repo.LoadQueue(ctx)
+	if err != nil {
+		t.Fatalf("LoadQueue() error = %v", err)
+	}
+	if len(items) != 1 || items[0].Attempts != 0 {
+		t.Fatalf("queue = %#v, want item with unchanged attempts", items)
+	}
+	if !items[0].NextAttempt.Equal(now.Add(45 * time.Second)) {
+		t.Fatalf("next_attempt = %v, want %v", items[0].NextAttempt, now.Add(45*time.Second))
+	}
+}
+
+type retryAfterStub struct {
+	delay time.Duration
+}
+
+func (e retryAfterStub) Error() string {
+	return "rate limited"
+}
+
+func (e retryAfterStub) RetryAfter() time.Duration {
+	return e.delay
+}
+
 func openProcessorDB(t *testing.T) *sql.DB {
 	t.Helper()
 

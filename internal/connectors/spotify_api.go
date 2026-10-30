@@ -32,6 +32,11 @@ func (e *RetryAfterError) Error() string {
 	return fmt.Sprintf("connectors: spotify rate limited, retry after %s", e.After)
 }
 
+// RetryAfter reports the delay so the queue can honor it.
+func (e *RetryAfterError) RetryAfter() time.Duration {
+	return e.After
+}
+
 // SpotifyTokenSource returns an access token for one account.
 type SpotifyTokenSource interface {
 	SpotifyAccessToken(context.Context, string) (string, error)

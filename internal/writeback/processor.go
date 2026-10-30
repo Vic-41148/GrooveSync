@@ -2,6 +2,7 @@ package writeback
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -21,14 +22,15 @@ func (f ExecutorFunc) Execute(ctx context.Context, item QueueItem) error {
 
 // ProcessReport summarizes one processor pass.
 type ProcessReport struct {
-	Loaded   int
-	Due      int
-	Ran      int
-	Retried  int
-	Deferred int
-	Missing  int
-	Skipped  int
-	Failed   int
+	Loaded      int
+	Due         int
+	Ran         int
+	Retried     int
+	RateLimited int
+	Deferred    int
+	Missing     int
+	Skipped     int
+	Failed      int
 }
 
 // Processor drains due queue items through provider executors.
@@ -84,6 +86,20 @@ func (p Processor) ProcessDue(ctx context.Context) (ProcessReport, error) {
 		}
 
 		if err := executor.Execute(ctx, item); err != nil {
+			var limited interface{ RetryAfter() time.Duration }
+			if errors.As(err, &limited) {
+				delay := limited.RetryAfter()
+				if delay <= 0 {
+					delay = p.BaseDelay
+				}
+				item.NextAttempt = now.Add(delay)
+				item.LastError = err.Error()
+				if err := p.Store.UpsertQueueItem(ctx, item); err != nil {
+					return report, err
+				}
+				report.RateLimited++
+				continue
+			}
 			if !queue.Fail(item.ID, err.Error(), now, p.BaseDelay, p.MaxDelay) {
 				report.Failed++
 				continue
