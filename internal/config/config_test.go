@@ -44,6 +44,30 @@ func TestLoadRejectsNegativeBuildFloor(t *testing.T) {
 	}
 }
 
+func TestLoadParsesNavidromeCredentials(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(func(key string) string {
+		switch key {
+		case "SYNCD_NAVIDROME_URL":
+			return "http://navidrome.lan:4533"
+		case "SYNCD_NAVIDROME_USER":
+			return "vic"
+		case "SYNCD_NAVIDROME_PASSWORD":
+			return "secret"
+		default:
+			return ""
+		}
+	}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.NavidromeURL != "http://navidrome.lan:4533" || cfg.NavidromeUser != "vic" || cfg.NavidromePassword != "secret" {
+		t.Fatalf("navidrome config = %q %q %q, want the environment values", cfg.NavidromeURL, cfg.NavidromeUser, cfg.NavidromePassword)
+	}
+}
+
 func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 	t.Parallel()
 

@@ -26,9 +26,13 @@ type Config struct {
 	DBPath       string
 	LogLevel     string
 	NavidromeURL string
-	ReleasesURL  string
-	Proto        int
-	ShutdownWait time.Duration
+	// Credentials come from the environment only, so a password never appears
+	// in the process list.
+	NavidromeUser     string
+	NavidromePassword string
+	ReleasesURL       string
+	Proto             int
+	ShutdownWait      time.Duration
 	// Build floors per platform, 0 meaning "any build". Kept in config so a
 	// release can raise a floor without a rebuild.
 	MinBuild         map[string]int
@@ -39,15 +43,17 @@ type Config struct {
 // so tests can pass a fake getenv.
 func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, error) {
 	cfg := Config{
-		Addr:         envOr(getenv, "SYNCD_ADDR", DefaultAddr),
-		DBPath:       envOr(getenv, "SYNCD_DB", DefaultDBPath),
-		LogLevel:     envOr(getenv, "SYNCD_LOG_LEVEL", DefaultLogLevel),
-		NavidromeURL: envOr(getenv, "SYNCD_NAVIDROME_URL", ""),
-		ReleasesURL:  envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
-		Proto:        DefaultProto,
-		ShutdownWait: 10 * time.Second,
-		MinBuild:     map[string]int{},
-		RecommendedBuild: map[string]int{},
+		Addr:              envOr(getenv, "SYNCD_ADDR", DefaultAddr),
+		DBPath:            envOr(getenv, "SYNCD_DB", DefaultDBPath),
+		LogLevel:          envOr(getenv, "SYNCD_LOG_LEVEL", DefaultLogLevel),
+		NavidromeURL:      envOr(getenv, "SYNCD_NAVIDROME_URL", ""),
+		NavidromeUser:     envOr(getenv, "SYNCD_NAVIDROME_USER", ""),
+		NavidromePassword: envOr(getenv, "SYNCD_NAVIDROME_PASSWORD", ""),
+		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
+		Proto:             DefaultProto,
+		ShutdownWait:      10 * time.Second,
+		MinBuild:          map[string]int{},
+		RecommendedBuild:  map[string]int{},
 	}
 
 	fs := flag.NewFlagSet("syncd", flag.ContinueOnError)

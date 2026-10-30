@@ -18,6 +18,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/logging"
+	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/taste"
 	"github.com/Vic-41148/groovesync/internal/writeback"
@@ -64,6 +65,20 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		},
 	}
 
+	features := []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "mix", "acquisition", "settings"}
+	var libraryMirror api.LibraryMirror
+	if cfg.NavidromeURL != "" {
+		if cfg.NavidromeUser == "" || cfg.NavidromePassword == "" {
+			return errors.New("syncd: a Navidrome URL needs SYNCD_NAVIDROME_USER and SYNCD_NAVIDROME_PASSWORD")
+		}
+		client, err := navidrome.NewClient(cfg.NavidromeURL, cfg.NavidromeUser, cfg.NavidromePassword)
+		if err != nil {
+			return err
+		}
+		libraryMirror = navidrome.Mirror{DB: db, Client: client}
+		features = append(features, "library_sync")
+	}
+
 	h := api.New(api.Deps{
 		Logger:             logger,
 		Version:            version(),
@@ -72,7 +87,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		ReleasesURL:        cfg.ReleasesURL,
 		MinBuild:           cfg.MinBuild,
 		RecommendedBuild:   cfg.RecommendedBuild,
-		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "mix", "acquisition", "settings"},
+		Features:           features,
 		DB:                 db,
 		ReviewQueue:        queueRepo,
 		ReviewQueueActions: queueRepo,
@@ -84,6 +99,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Mix:                eventStore,
 		Acquisition:        acquisitionRepo,
 		AcquisitionSwitch:  acquisitionRepo,
+		Library:            libraryMirror,
 		Rollout:            queueRepo,
 	})
 

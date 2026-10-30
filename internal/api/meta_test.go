@@ -16,6 +16,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/acquisition"
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
+	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/taste"
 	"github.com/Vic-41148/groovesync/internal/writeback"
@@ -744,6 +745,62 @@ func TestAcquisitionKillSwitch(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("empty patch status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
+}
+
+func TestLibrarySync(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version: "1.2.3",
+		Proto:   3,
+		Schema:  10,
+		Now:     time.Now,
+		Library: libraryStub{result: navidrome.SyncResult{Albums: 2, Songs: 5, Created: 4, Updated: 1}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/sync", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got navidrome.SyncResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got != (navidrome.SyncResult{Albums: 2, Songs: 5, Created: 4, Updated: 1}) {
+		t.Fatalf("result = %#v, want the mirror counts", got)
+	}
+}
+
+func TestLibrarySyncUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/sync", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
+func TestLibrarySyncFailure(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, Library: libraryStub{err: errors.New("navidrome down")}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/sync", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+}
+
+type libraryStub struct {
+	result navidrome.SyncResult
+	err    error
+}
+
+func (l libraryStub) Sync(context.Context) (navidrome.SyncResult, error) {
+	return l.result, l.err
 }
 
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
