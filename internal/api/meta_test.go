@@ -16,6 +16,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/store"
+	"github.com/Vic-41148/groovesync/internal/taste"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 	_ "modernc.org/sqlite"
 )
@@ -225,6 +226,82 @@ func TestDeviceHoldings(t *testing.T) {
 	}
 	if list, ok := got["holdings"].([]any); !ok || len(list) != 0 {
 		t.Fatalf("holdings = %#v, want empty list", got["holdings"])
+	}
+}
+
+func TestEventAppendAndList(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 8, Now: time.Now, EventLog: taste.NewStore(db)})
+
+	rec := httptest.NewRecorder()
+	body := `{"events":[{"id":"e1","device_id":"phone","canonical_id":"track-1","source":"local","type":"like","value":1,"hlc":{"wall":"2026-10-30T12:00:00Z","counter":1,"node":"phone"}}]}`
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/events", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var appended map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &appended); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if appended["stored"] != float64(1) {
+		t.Fatalf("stored = %v, want 1", appended["stored"])
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/events", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var listed map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	events, ok := listed["events"].([]any)
+	if !ok || len(events) != 1 {
+		t.Fatalf("events = %#v, want one", listed["events"])
+	}
+	event := events[0].(map[string]any)
+	if event["id"] != "e1" || event["type"] != "like" {
+		t.Fatalf("event = %#v, want e1 like", event)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/events", strings.NewReader(`{"events":[{"id":"e2","device_id":"phone","canonical_id":"track-1","source":"spotify","type":"like","hlc":{"wall":"2026-10-30T12:00:00Z","counter":1,"node":"phone"}}]}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestEventsUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 8, Now: time.Now})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/events", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if list, ok := got["events"].([]any); !ok || len(list) != 0 {
+		t.Fatalf("events = %#v, want empty list", got["events"])
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/events", strings.NewReader(`{"events":[]}`)))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
 	}
 }
 

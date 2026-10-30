@@ -3,6 +3,8 @@ package taste
 import (
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -10,6 +12,31 @@ type HLC struct {
 	Wall    time.Time `json:"wall"`
 	Counter uint32    `json:"counter"`
 	Node    string    `json:"node"`
+}
+
+// Format renders the clock for storage. The node keeps any slashes it holds.
+func (h HLC) Format() string {
+	return fmt.Sprintf("%s/%d/%s", h.Wall.UTC().Format(time.RFC3339Nano), h.Counter, h.Node)
+}
+
+// ParseHLC reads a clock written by Format.
+func ParseHLC(text string) (HLC, error) {
+	parts := strings.SplitN(text, "/", 3)
+	if len(parts) != 3 {
+		return HLC{}, fmt.Errorf("taste: malformed clock %q", text)
+	}
+	wall, err := time.Parse(time.RFC3339Nano, parts[0])
+	if err != nil {
+		return HLC{}, fmt.Errorf("taste: parse clock wall: %w", err)
+	}
+	counter, err := strconv.ParseUint(parts[1], 10, 32)
+	if err != nil {
+		return HLC{}, fmt.Errorf("taste: parse clock counter: %w", err)
+	}
+	if parts[2] == "" {
+		return HLC{}, fmt.Errorf("taste: clock node is required")
+	}
+	return HLC{Wall: wall.UTC(), Counter: uint32(counter), Node: parts[2]}, nil
 }
 
 func NewHLC(node string, now time.Time) HLC {

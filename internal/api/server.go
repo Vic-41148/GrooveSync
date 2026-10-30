@@ -16,6 +16,7 @@ import (
 
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
+	"github.com/Vic-41148/groovesync/internal/taste"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 )
 
@@ -41,6 +42,7 @@ type Deps struct {
 	ConnectorActions   ConnectorActions
 	SpotifyLibrary     SpotifyLibraryActions
 	Devices            DeviceRegistry
+	EventLog           EventLog
 }
 
 // Pinger reports whether the backing store is reachable.
@@ -92,6 +94,12 @@ type DeviceRegistry interface {
 	ReportHoldings(context.Context, string, []devices.Holding) error
 }
 
+// EventLog stores the merged taste event log from every device.
+type EventLog interface {
+	Append(context.Context, []taste.EventRecord) (int, error)
+	List(context.Context) ([]taste.EventRecord, error)
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -124,6 +132,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("DELETE /sync/v1/devices/{id}", d.handleDeviceDelete)
 	mux.HandleFunc("GET /sync/v1/devices/{id}/holdings", d.handleDeviceHoldings)
 	mux.HandleFunc("PUT /sync/v1/devices/{id}/holdings", d.handleDeviceHoldingsReport)
+	mux.HandleFunc("GET /sync/v1/events", d.handleEvents)
+	mux.HandleFunc("POST /sync/v1/events", d.handleEventsAppend)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -702,6 +712,46 @@ func writeDeviceError(w http.ResponseWriter, err error) {
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "devices unavailable"}, 0)
 	}
+}
+
+func (d Deps) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if d.EventLog == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"events": []taste.EventRecord{}}, 0)
+		return
+	}
+	events, err := d.EventLog.List(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "events unavailable"}, 0)
+		return
+	}
+	if events == nil {
+		events = []taste.EventRecord{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events}, 0)
+}
+
+func (d Deps) handleEventsAppend(w http.ResponseWriter, r *http.Request) {
+	if d.EventLog == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "events unavailable"}, 0)
+		return
+	}
+	var req struct {
+		Events []taste.EventRecord `json:"events"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	stored, err := d.EventLog.Append(r.Context(), req.Events)
+	if err != nil {
+		if errors.Is(err, taste.ErrInvalidEvent) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "events unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"stored": stored}, 0)
 }
 
 func (d Deps) handleSpotifyLibraryWrite(operation string) http.HandlerFunc {
