@@ -18,7 +18,7 @@ var migrationsFS embed.FS
 // SchemaVersion is the migration level this binary expects. A database newer
 // than this refuses to start rather than running against an unknown schema
 // (handbook GOV-3).
-const SchemaVersion int64 = 2
+const SchemaVersion int64 = 4
 
 // pragmas are per-connection, so they ride in the DSN. journal_mode is
 // persistent; the rest are not.
@@ -102,4 +102,9 @@ func dsn(path string) string {
 		return path + sep + pragmas
 	}
 	return "file:" + path + "?" + pragmas
+}
+
+// DSNForTest exposes the SQLite DSN builder for package tests outside store.
+func DSNForTest(path string) string {
+	return dsn(path)
 }

@@ -16,6 +16,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/config"
 	"github.com/Vic-41148/groovesync/internal/logging"
 	"github.com/Vic-41148/groovesync/internal/store"
+	"github.com/Vic-41148/groovesync/internal/writeback"
 )
 
 func main() {
@@ -37,6 +38,12 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	}
 	defer db.Close()
 
+	queueRepo := writeback.NewRepo(db)
+	processor := writeback.Processor{
+		Store: queueRepo,
+		Now:   time.Now,
+	}
+
 	h := api.New(api.Deps{
 		Logger:           logger,
 		Version:          version(),
@@ -45,7 +52,8 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		ReleasesURL:      cfg.ReleasesURL,
 		MinBuild:         cfg.MinBuild,
 		RecommendedBuild: cfg.RecommendedBuild,
-		Features:         []string{"meta"},
+		Features:         []string{"meta", "review_queue"},
+		ReviewQueue:      queueRepo,
 	})
 
 	srv := &http.Server{
@@ -61,6 +69,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	go runQueueLoop(ctx, logger, processor)
 
 	select {
 	case <-ctx.Done():
@@ -82,6 +91,21 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		return fmt.Errorf("syncd: serve: %w", err)
 	}
 	return nil
+}
+
+func runQueueLoop(ctx context.Context, logger interface{ Warn(string, ...any) }, processor writeback.Processor) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		if _, err := processor.ProcessDue(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Warn("queue processor failed", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
 }
 
 func version() string {

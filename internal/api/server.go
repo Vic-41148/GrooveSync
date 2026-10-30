@@ -3,9 +3,12 @@
 package api
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"time"
+
+	"github.com/Vic-41148/groovesync/internal/writeback"
 )
 
 // Deps is everything the HTTP layer needs. No globals, so tests can build a
@@ -20,8 +23,14 @@ type Deps struct {
 	MinBuild         map[string]int
 	RecommendedBuild map[string]int
 	// Features is what this build actually implements, not what is planned.
-	Features []string
-	Now      func() time.Time
+	Features    []string
+	Now         func() time.Time
+	ReviewQueue ReviewQueueLister
+}
+
+// ReviewQueueLister returns the current low-confidence matches.
+type ReviewQueueLister interface {
+	ListReviewQueue(context.Context) ([]writeback.ReviewItem, error)
 }
 
 // New builds the router with middleware applied.
@@ -36,6 +45,7 @@ func New(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sync/v1/meta", d.handleMeta)
 	mux.HandleFunc("GET /healthz", d.handleHealth)
+	mux.HandleFunc("GET /sync/v1/review", d.handleReviewQueue)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -46,4 +56,17 @@ func New(d Deps) http.Handler {
 
 func (d Deps) handleHealth(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"}, 0)
+}
+
+func (d Deps) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
+	if d.ReviewQueue == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"items": []writeback.ReviewItem{}}, 0)
+		return
+	}
+	items, err := d.ReviewQueue.ListReviewQueue(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "review queue unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items}, 0)
 }

@@ -103,7 +103,7 @@ func TestMigrateAppliesCoreSchema(t *testing.T) {
 		t.Fatalf("Migrate() error = %v", err)
 	}
 
-	tables := []string{"track", "alias", "rendition", "event", "service_state", "review_queue", "write_log", "tombstone", "device_holding"}
+	tables := []string{"track", "alias", "rendition", "event", "service_state", "review_queue", "write_log", "tombstone", "device_holding", "write_queue", "connector_account", "connector_token"}
 	for _, table := range tables {
 		table := table
 		t.Run(table, func(t *testing.T) {

@@ -1,11 +1,14 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Vic-41148/groovesync/internal/writeback"
 )
 
 func TestProtoMin(t *testing.T) {
@@ -78,6 +81,38 @@ func TestNilCollectionsMarshalAsEmptyJSON(t *testing.T) {
 	if len(recommended) != 0 {
 		t.Fatalf("recommended_build len = %d, want 0", len(recommended))
 	}
+	if got["review_queue"] != false {
+		t.Fatalf("review_queue = %v, want false", got["review_queue"])
+	}
+}
+
+func TestMetaExposesReviewQueueFlag(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:     "1.2.3",
+		Proto:       3,
+		Schema:      7,
+		Now:         time.Now,
+		ReviewQueue: reviewQueueStub{},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil))
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got["review_queue"] != true {
+		t.Fatalf("review_queue = %v, want true", got["review_queue"])
+	}
+}
+
+type reviewQueueStub struct{}
+
+func (reviewQueueStub) ListReviewQueue(context.Context) ([]writeback.ReviewItem, error) {
+	return nil, nil
 }
 
 func TestHandleMetaSetsCacheControl(t *testing.T) {
