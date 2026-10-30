@@ -648,6 +648,58 @@ func TestWriteLogListWithoutLister(t *testing.T) {
 	}
 }
 
+func TestBuildPlanPreview(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now})
+
+	body := strings.NewReader(`{"snapshots":[{"provider":"spotify","item_id":"1","base":"unliked","local":"liked","remote":"unliked"}],"confidence_threshold":0.95,"mode":"shadow","baseline_count":1,"fetched_count":1}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/plan", body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got["mode"] != "shadow" {
+		t.Fatalf("mode = %v, want shadow", got["mode"])
+	}
+	if got["dry_run"] != true {
+		t.Fatalf("dry_run = %v, want true", got["dry_run"])
+	}
+	if got["would_write"] != false {
+		t.Fatalf("would_write = %v, want false", got["would_write"])
+	}
+	items, ok := got["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items = %#v, want one item", got["items"])
+	}
+	item, ok := items[0].(map[string]any)
+	if !ok {
+		t.Fatalf("item type = %T, want map[string]any", items[0])
+	}
+	if item["action"] != "push_like" || item["write"] != false || item["undo_before"] != "unliked" || item["undo_after"] != "liked" {
+		t.Fatalf("item = %#v, want dry-run push_like with undo fields", item)
+	}
+}
+
+func TestBuildPlanPreviewGuards(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now})
+	body := strings.NewReader(`{"snapshots":[{"provider":"spotify","item_id":"1"}],"baseline_count":100,"fetched_count":20}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/plan", body))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 func openAPIConnectorTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 

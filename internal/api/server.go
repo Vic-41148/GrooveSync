@@ -91,6 +91,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/write-log", d.handleWriteLog)
 	mux.HandleFunc("POST /sync/v1/write-log/{writeID}/undo", d.handleUndoWriteLog)
 	mux.HandleFunc("POST /sync/v1/write-log/batch/{batchID}/undo", d.handleUndoWriteLogBatch)
+	mux.HandleFunc("POST /sync/v1/plan", d.handleBuildPlan)
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
@@ -294,6 +295,97 @@ type writeLogItem struct {
 	After      string  `json:"after,omitempty"`
 	Confidence float64 `json:"confidence"`
 	BatchID    string  `json:"batch_id,omitempty"`
+}
+
+type buildPlanRequest struct {
+	Snapshots          []writeback.Snapshot  `json:"snapshots"`
+	ConfidenceThreshold float64              `json:"confidence_threshold"`
+	Mode               writeback.RolloutMode `json:"mode"`
+	BaselineCount      int                  `json:"baseline_count"`
+	FetchedCount       int                  `json:"fetched_count"`
+}
+
+type buildPlanResponse struct {
+	Mode       string              `json:"mode"`
+	DryRun     bool                `json:"dry_run"`
+	WouldWrite bool                `json:"would_write"`
+	Warnings   []string            `json:"warnings"`
+	Items      []buildPlanItem      `json:"items"`
+}
+
+type buildPlanItem struct {
+	Provider    string        `json:"provider"`
+	ItemID      string        `json:"item_id"`
+	Action      string        `json:"action"`
+	Write       bool          `json:"write"`
+	Reason      string        `json:"reason"`
+	WinnerAt    string        `json:"winner_at,omitempty"`
+	LocalAt     string        `json:"local_at,omitempty"`
+	RemoteAt    string        `json:"remote_at,omitempty"`
+	Confidence  float64       `json:"confidence"`
+	NeedsReview bool          `json:"needs_review"`
+	UndoBefore  string        `json:"undo_before"`
+	UndoAfter   string        `json:"undo_after"`
+}
+
+func (d Deps) handleBuildPlan(w http.ResponseWriter, r *http.Request) {
+	var req buildPlanRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "decode request body"}, 0)
+		return
+	}
+	if req.ConfidenceThreshold == 0 {
+		req.ConfidenceThreshold = 0.8
+	}
+	if req.Mode == "" {
+		req.Mode = writeback.ModeShadow
+	}
+	if req.BaselineCount <= 0 {
+		req.BaselineCount = len(req.Snapshots)
+	}
+	if req.FetchedCount < 0 {
+		req.FetchedCount = len(req.Snapshots)
+	}
+	plan, err := writeback.BuildPlan(req.Snapshots, req.ConfidenceThreshold, req.Mode, req.BaselineCount, req.FetchedCount)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, buildPlanResponse{
+		Mode:       string(plan.Mode),
+		DryRun:     plan.DryRun,
+		WouldWrite: plan.WouldWrite,
+		Warnings:   sliceOrEmpty(plan.Warnings),
+		Items:      buildPlanItems(plan.Items),
+	}, 0)
+}
+
+func buildPlanItems(items []writeback.PlanItem) []buildPlanItem {
+	out := make([]buildPlanItem, 0, len(items))
+	for _, item := range items {
+		resp := buildPlanItem{
+			Provider:    item.Provider,
+			ItemID:      item.ItemID,
+			Action:      string(item.Action),
+			Write:       item.Write,
+			Reason:      item.Reason,
+			Confidence:  item.Confidence,
+			NeedsReview: item.NeedsReview,
+			UndoBefore:  string(item.UndoBefore),
+			UndoAfter:   string(item.UndoAfter),
+		}
+		if !item.WinnerAt.IsZero() {
+			resp.WinnerAt = item.WinnerAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !item.LocalAt.IsZero() {
+			resp.LocalAt = item.LocalAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !item.RemoteAt.IsZero() {
+			resp.RemoteAt = item.RemoteAt.UTC().Format(time.RFC3339Nano)
+		}
+		out = append(out, resp)
+	}
+	return out
 }
 
 func (d Deps) handleConnectors(w http.ResponseWriter, r *http.Request) {
