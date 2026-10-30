@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 )
 
@@ -26,11 +27,17 @@ type Deps struct {
 	Features    []string
 	Now         func() time.Time
 	ReviewQueue ReviewQueueLister
+	Connectors  ConnectorLister
 }
 
 // ReviewQueueLister returns the current low-confidence matches.
 type ReviewQueueLister interface {
 	ListReviewQueue(context.Context) ([]writeback.ReviewItem, error)
+}
+
+// ConnectorLister returns stored connector account state.
+type ConnectorLister interface {
+	ListSpotifyAccounts(context.Context) ([]connectors.SpotifyAuthState, error)
 }
 
 // New builds the router with middleware applied.
@@ -46,6 +53,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/meta", d.handleMeta)
 	mux.HandleFunc("GET /healthz", d.handleHealth)
 	mux.HandleFunc("GET /sync/v1/review", d.handleReviewQueue)
+	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -69,4 +77,50 @@ func (d Deps) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items}, 0)
+}
+
+func (d Deps) handleConnectors(w http.ResponseWriter, r *http.Request) {
+	type spotifyAccount struct {
+		AccountID           string `json:"account_id"`
+		Status              string `json:"status"`
+		AuthorizedAt        string `json:"authorized_at,omitempty"`
+		ExpiringAt          string `json:"expiring_at,omitempty"`
+		ReconnectRequiredAt string `json:"reconnect_required_at,omitempty"`
+		DisconnectedAt      string `json:"disconnected_at,omitempty"`
+		StatusReason        string `json:"status_reason,omitempty"`
+	}
+
+	if d.Connectors == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"spotify": []spotifyAccount{}}, 0)
+		return
+	}
+
+	accounts, err := d.Connectors.ListSpotifyAccounts(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "connectors unavailable"}, 0)
+		return
+	}
+
+	out := make([]spotifyAccount, 0, len(accounts))
+	for _, account := range accounts {
+		item := spotifyAccount{
+			AccountID:    account.AccountID,
+			Status:       string(account.Status),
+			StatusReason: account.StatusReason,
+		}
+		if !account.AuthorizedAt.IsZero() {
+			item.AuthorizedAt = account.AuthorizedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !account.ExpiringAt.IsZero() {
+			item.ExpiringAt = account.ExpiringAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !account.ReconnectRequiredAt.IsZero() {
+			item.ReconnectRequiredAt = account.ReconnectRequiredAt.UTC().Format(time.RFC3339Nano)
+		}
+		if !account.DisconnectedAt.IsZero() {
+			item.DisconnectedAt = account.DisconnectedAt.UTC().Format(time.RFC3339Nano)
+		}
+		out = append(out, item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"spotify": out}, 0)
 }

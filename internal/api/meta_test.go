@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 )
 
@@ -109,10 +110,97 @@ func TestMetaExposesReviewQueueFlag(t *testing.T) {
 	}
 }
 
+func TestMetaPreservesFeatureList(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:    "1.2.3",
+		Proto:      3,
+		Schema:     7,
+		Now:        time.Now,
+		Features:    []string{"meta", "review_queue", "connectors"},
+		Connectors: connectorListerStub{},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil))
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	features, ok := got["features"].([]any)
+	if !ok {
+		t.Fatalf("features type = %T, want []any", got["features"])
+	}
+	if len(features) != 3 {
+		t.Fatalf("features len = %d, want 3", len(features))
+	}
+}
+
+func TestHandleConnectorsReturnsSpotifyAccounts(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	h := New(Deps{
+		Version:    "1.2.3",
+		Proto:      3,
+		Schema:     7,
+		Now:        func() time.Time { return now },
+		Connectors: connectorListerStub{accounts: []connectors.SpotifyAuthState{{
+			AccountID:           "acct-1",
+			Status:              connectors.SpotifyStatusReconnectRequired,
+			AuthorizedAt:        now.Add(-181 * 24 * time.Hour),
+			ReconnectRequiredAt: now,
+			StatusReason:        "invalid_grant",
+		}}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/connectors", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	spotify, ok := got["spotify"].([]any)
+	if !ok {
+		t.Fatalf("spotify type = %T, want []any", got["spotify"])
+	}
+	if len(spotify) != 1 {
+		t.Fatalf("spotify len = %d, want 1", len(spotify))
+	}
+	item, ok := spotify[0].(map[string]any)
+	if !ok {
+		t.Fatalf("spotify item type = %T, want map[string]any", spotify[0])
+	}
+	if item["account_id"] != "acct-1" {
+		t.Fatalf("account_id = %v, want acct-1", item["account_id"])
+	}
+	if item["status"] != string(connectors.SpotifyStatusReconnectRequired) {
+		t.Fatalf("status = %v, want %q", item["status"], connectors.SpotifyStatusReconnectRequired)
+	}
+	if item["status_reason"] != "invalid_grant" {
+		t.Fatalf("status_reason = %v, want invalid_grant", item["status_reason"])
+	}
+}
+
 type reviewQueueStub struct{}
 
 func (reviewQueueStub) ListReviewQueue(context.Context) ([]writeback.ReviewItem, error) {
 	return nil, nil
+}
+
+type connectorListerStub struct {
+	accounts []connectors.SpotifyAuthState
+}
+
+func (c connectorListerStub) ListSpotifyAccounts(context.Context) ([]connectors.SpotifyAuthState, error) {
+	return c.accounts, nil
 }
 
 func TestHandleMetaSetsCacheControl(t *testing.T) {

@@ -263,6 +263,56 @@ WHERE provider = ? AND account_id = ?
 	return state, nil
 }
 
+// ListSpotifyAccounts loads every stored Spotify account row.
+func (r *Repo) ListSpotifyAccounts(ctx context.Context) ([]SpotifyAuthState, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT account_id, status, authorized_at, expiring_at, reconnect_required_at, disconnected_at, status_reason
+FROM connector_account
+WHERE provider = ?
+ORDER BY account_id ASC
+`, ProviderSpotify)
+	if err != nil {
+		return nil, fmt.Errorf("connectors: list spotify accounts: %w", err)
+	}
+	defer rows.Close()
+
+	var out []SpotifyAuthState
+	for rows.Next() {
+		var state SpotifyAuthState
+		var authorizedAt, expiringAt, reconnectAt, disconnectedAt sql.NullString
+		var status string
+		if err := rows.Scan(&state.AccountID, &status, &authorizedAt, &expiringAt, &reconnectAt, &disconnectedAt, &state.StatusReason); err != nil {
+			return nil, fmt.Errorf("connectors: scan spotify account: %w", err)
+		}
+		state.Status = SpotifyStatus(status)
+		if authorizedAt.Valid {
+			if ts, err := time.Parse(time.RFC3339Nano, authorizedAt.String); err == nil {
+				state.AuthorizedAt = ts
+			}
+		}
+		if expiringAt.Valid {
+			if ts, err := time.Parse(time.RFC3339Nano, expiringAt.String); err == nil {
+				state.ExpiringAt = ts
+			}
+		}
+		if reconnectAt.Valid {
+			if ts, err := time.Parse(time.RFC3339Nano, reconnectAt.String); err == nil {
+				state.ReconnectRequiredAt = ts
+			}
+		}
+		if disconnectedAt.Valid {
+			if ts, err := time.Parse(time.RFC3339Nano, disconnectedAt.String); err == nil {
+				state.DisconnectedAt = ts
+			}
+		}
+		out = append(out, state)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("connectors: iterate spotify accounts: %w", err)
+	}
+	return out, nil
+}
+
 func nullableTime(t time.Time) any {
 	if t.IsZero() {
 		return nil
