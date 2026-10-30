@@ -31,12 +31,18 @@ type Deps struct {
 	// Features is what this build actually implements, not what is planned.
 	Features           []string
 	Now                func() time.Time
+	DB                 Pinger
 	ReviewQueue        ReviewQueueLister
 	ReviewQueueActions ReviewQueueActions
 	WriteLog           WriteLogLister
 	Connectors         ConnectorLister
 	ConnectorActions   ConnectorActions
 	SpotifyLibrary     SpotifyLibraryActions
+}
+
+// Pinger reports whether the backing store is reachable.
+type Pinger interface {
+	PingContext(context.Context) error
 }
 
 // ReviewQueueLister returns the current low-confidence matches.
@@ -108,7 +114,24 @@ func New(d Deps) http.Handler {
 }
 
 func (d Deps) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"}, 0)
+	w.Header().Set("Cache-Control", "no-store")
+	payload := map[string]any{
+		"status":  "ok",
+		"version": d.Version,
+		"schema":  d.Schema,
+	}
+	if d.DB != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := d.DB.PingContext(ctx); err != nil {
+			payload["status"] = "degraded"
+			payload["db"] = "unavailable"
+			writeJSON(w, http.StatusServiceUnavailable, payload, 0)
+			return
+		}
+		payload["db"] = "ok"
+	}
+	writeJSON(w, http.StatusOK, payload, 0)
 }
 
 func (d Deps) handleReviewQueue(w http.ResponseWriter, r *http.Request) {

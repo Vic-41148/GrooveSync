@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -17,6 +18,53 @@ import (
 	"github.com/Vic-41148/groovesync/internal/writeback"
 	_ "modernc.org/sqlite"
 )
+
+func TestHealthReportsDatabase(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantState  string
+		wantDB     string
+	}{
+		{name: "database ok", wantStatus: http.StatusOK, wantState: "ok", wantDB: "ok"},
+		{name: "database down", err: errors.New("disk unavailable"), wantStatus: http.StatusServiceUnavailable, wantState: "degraded", wantDB: "unavailable"},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := New(Deps{Version: "1.2.3", Schema: 7, DB: pingerStub{err: tc.err}})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/healthz", nil))
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q, want no-store", got)
+			}
+			var got map[string]any
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("unmarshal response: %v", err)
+			}
+			if got["status"] != tc.wantState || got["db"] != tc.wantDB {
+				t.Fatalf("body = %#v, want status %q and db %q", got, tc.wantState, tc.wantDB)
+			}
+		})
+	}
+}
+
+type pingerStub struct {
+	err error
+}
+
+func (p pingerStub) PingContext(context.Context) error {
+	return p.err
+}
 
 func TestProtoMin(t *testing.T) {
 	t.Parallel()

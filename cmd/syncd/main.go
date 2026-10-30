@@ -67,6 +67,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		MinBuild:           cfg.MinBuild,
 		RecommendedBuild:   cfg.RecommendedBuild,
 		Features:           []string{"meta", "review_queue", "connectors", "spotify_library"},
+		DB:                 db,
 		ReviewQueue:        queueRepo,
 		ReviewQueueActions: queueRepo,
 		Connectors:         connectorRepo,
