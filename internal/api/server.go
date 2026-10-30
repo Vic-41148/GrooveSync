@@ -222,13 +222,14 @@ func (d Deps) handleWriteLog(w http.ResponseWriter, r *http.Request) {
 	out := make([]writeLogItem, 0, len(items))
 	for _, item := range items {
 		out = append(out, writeLogItem{
-			WriteID:    item.ID,
-			Service:    item.Provider,
-			Op:         item.Operation,
-			Before:     string(item.Before),
-			After:      string(item.After),
-			Confidence: item.Confidence,
-			BatchID:    item.BatchID,
+			WriteID:     item.ID,
+			Service:     item.Provider,
+			CanonicalID: item.CanonicalID,
+			Op:          item.Operation,
+			Before:      string(item.Before),
+			After:       string(item.After),
+			Confidence:  item.Confidence,
+			BatchID:     item.BatchID,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": out}, 0)

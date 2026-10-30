@@ -634,6 +634,9 @@ func TestWriteLogList(t *testing.T) {
 	if first["write_id"] != "w2" || first["batch_id"] != "batch-2" || first["service"] != connectors.ProviderSpotify {
 		t.Fatalf("first item = %#v, want newest write first", first)
 	}
+	if first["canonical_id"] != "track-1" {
+		t.Fatalf("canonical_id = %v, want track-1", first["canonical_id"])
+	}
 }
 
 func TestUndoWriteLogItem(t *testing.T) {
