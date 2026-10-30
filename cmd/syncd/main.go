@@ -17,6 +17,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/config"
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
+	"github.com/Vic-41148/groovesync/internal/library"
 	"github.com/Vic-41148/groovesync/internal/logging"
 	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/store"
@@ -47,6 +48,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	deviceRepo := devices.Repo{DB: db}
 	eventStore := taste.NewStore(db)
 	acquisitionRepo := acquisition.Repo{DB: db}
+	libraryRepo := library.Repo{DB: db}
 	queueRepo := writeback.NewRepo(db)
 	processor := writeback.Processor{
 		Store:     queueRepo,
@@ -65,7 +67,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		},
 	}
 
-	features := []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "mix", "acquisition", "settings"}
+	features := []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "mix", "library", "acquisition", "settings"}
 	var libraryMirror api.LibraryMirror
 	if cfg.NavidromeURL != "" {
 		if cfg.NavidromeUser == "" || cfg.NavidromePassword == "" {
@@ -99,7 +101,8 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Mix:                eventStore,
 		Acquisition:        acquisitionRepo,
 		AcquisitionSwitch:  acquisitionRepo,
-		Library:            libraryMirror,
+		LibrarySync:        libraryMirror,
+		Library:            libraryRepo,
 		Rollout:            queueRepo,
 	})
 

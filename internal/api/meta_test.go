@@ -16,6 +16,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/acquisition"
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
+	"github.com/Vic-41148/groovesync/internal/library"
 	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/taste"
@@ -751,11 +752,11 @@ func TestLibrarySync(t *testing.T) {
 	t.Parallel()
 
 	h := New(Deps{
-		Version: "1.2.3",
-		Proto:   3,
-		Schema:  10,
-		Now:     time.Now,
-		Library: libraryStub{result: navidrome.SyncResult{Albums: 2, Songs: 5, Created: 4, Updated: 1}},
+		Version:     "1.2.3",
+		Proto:       3,
+		Schema:      10,
+		Now:         time.Now,
+		LibrarySync: libraryStub{result: navidrome.SyncResult{Albums: 2, Songs: 5, Created: 4, Updated: 1}},
 	})
 
 	rec := httptest.NewRecorder()
@@ -786,7 +787,7 @@ func TestLibrarySyncUnavailable(t *testing.T) {
 func TestLibrarySyncFailure(t *testing.T) {
 	t.Parallel()
 
-	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, Library: libraryStub{err: errors.New("navidrome down")}})
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, LibrarySync: libraryStub{err: errors.New("navidrome down")}})
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/sync", nil))
 	if rec.Code != http.StatusBadGateway {
@@ -801,6 +802,90 @@ type libraryStub struct {
 
 func (l libraryStub) Sync(context.Context) (navidrome.SyncResult, error) {
 	return l.result, l.err
+}
+
+func TestLibraryList(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, album, duration_ms) VALUES ('track-b', 'Beta', 'Artist', 'Album', 180000), ('track-a', 'Alpha', 'Artist', NULL, 200000)`); err != nil {
+		t.Fatalf("insert tracks: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO rendition (canonical_id, kind, path_or_uri, codec) VALUES ('track-b', 'file', '/music/b.flac', 'flac')`); err != nil {
+		t.Fatalf("insert rendition: %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, Library: library.Repo{DB: db}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library?limit=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got struct {
+		Total  int             `json:"total"`
+		Limit  int             `json:"limit"`
+		Offset int             `json:"offset"`
+		Tracks []library.Track `json:"tracks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Total != 2 || got.Limit != 1 || got.Offset != 0 || len(got.Tracks) != 1 {
+		t.Fatalf("page = %#v, want the first of two tracks", got)
+	}
+	if got.Tracks[0].CanonicalID != "track-a" || got.Tracks[0].Renditions == nil {
+		t.Fatalf("track = %#v, want track-a with an empty rendition list", got.Tracks[0])
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library?limit=1&offset=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(got.Tracks) != 1 || got.Tracks[0].CanonicalID != "track-b" || len(got.Tracks[0].Renditions) != 1 {
+		t.Fatalf("second page = %#v, want track-b with its rendition", got.Tracks)
+	}
+
+	for _, url := range []string{
+		"/sync/v1/library?limit=0",
+		"/sync/v1/library?limit=501",
+		"/sync/v1/library?limit=ten",
+		"/sync/v1/library?offset=-1",
+		"/sync/v1/library?offset=next",
+	} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want %d", url, rec.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestLibraryListWithoutSource(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if tracks, ok := got["tracks"].([]any); !ok || len(tracks) != 0 {
+		t.Fatalf("tracks = %#v, want an empty list", got["tracks"])
+	}
+	if got["total"] != float64(0) {
+		t.Fatalf("total = %v, want 0", got["total"])
+	}
 }
 
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {

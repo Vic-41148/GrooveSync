@@ -17,6 +17,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/acquisition"
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
+	"github.com/Vic-41148/groovesync/internal/library"
 	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/taste"
 	"github.com/Vic-41148/groovesync/internal/writeback"
@@ -48,7 +49,8 @@ type Deps struct {
 	Mix                MixSource
 	Acquisition        AcquisitionQueue
 	AcquisitionSwitch  AcquisitionSwitch
-	Library            LibraryMirror
+	LibrarySync        LibraryMirror
+	Library            LibraryLister
 	Rollout            RolloutSettings
 }
 
@@ -136,6 +138,12 @@ type LibraryMirror interface {
 	Sync(context.Context) (navidrome.SyncResult, error)
 }
 
+// LibraryLister reads pages of the mirrored library.
+type LibraryLister interface {
+	List(context.Context, int, int) ([]library.Track, error)
+	Count(context.Context) (int, error)
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -178,6 +186,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/settings", d.handleSettings)
 	mux.HandleFunc("PATCH /sync/v1/settings", d.handleSettingsUpdate)
 	mux.HandleFunc("POST /sync/v1/library/sync", d.handleLibrarySync)
+	mux.HandleFunc("GET /sync/v1/library", d.handleLibrary)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -1107,16 +1116,65 @@ func (d Deps) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d Deps) handleLibrarySync(w http.ResponseWriter, r *http.Request) {
-	if d.Library == nil {
+	if d.LibrarySync == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "library sync unavailable"}, 0)
 		return
 	}
-	result, err := d.Library.Sync(r.Context())
+	result, err := d.LibrarySync.Sync(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "library sync failed"}, 0)
 		return
 	}
 	writeJSON(w, http.StatusOK, result, 0)
+}
+
+func (d Deps) handleLibrary(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+
+	limit := 100
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 500 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"}, 0)
+			return
+		}
+		limit = parsed
+	}
+
+	offset := 0
+	if raw := query.Get("offset"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid offset"}, 0)
+			return
+		}
+		offset = parsed
+	}
+
+	payload := map[string]any{
+		"limit":  limit,
+		"offset": offset,
+		"total":  0,
+		"tracks": []library.Track{},
+	}
+	if d.Library != nil {
+		total, err := d.Library.Count(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "library unavailable"}, 0)
+			return
+		}
+		tracks, err := d.Library.List(r.Context(), limit, offset)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "library unavailable"}, 0)
+			return
+		}
+		if tracks == nil {
+			tracks = []library.Track{}
+		}
+		payload["total"] = total
+		payload["tracks"] = tracks
+	}
+	writeJSON(w, http.StatusOK, payload, 0)
 }
 
 func (d Deps) handleSpotifyLibraryWrite(operation string) http.HandlerFunc {
