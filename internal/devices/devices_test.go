@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,6 +207,134 @@ func TestDeleteRemovesHoldings(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("holdings = %d, want 0", count)
+	}
+}
+
+func TestReportHoldings(t *testing.T) {
+	t.Parallel()
+
+	validHash := strings.Repeat("ab", 32)
+	tests := []struct {
+		name     string
+		deviceID string
+		holdings []Holding
+		wantErr  error
+	}{
+		{
+			name:     "stores a hashed file",
+			deviceID: "phone",
+			holdings: []Holding{{CanonicalID: "track-1", Hash: validHash}},
+		},
+		{
+			name:     "accepts an upper-case digest",
+			deviceID: "phone",
+			holdings: []Holding{{CanonicalID: "track-1", Hash: strings.ToUpper(validHash)}},
+		},
+		{
+			name:     "deduplicates repeated files",
+			deviceID: "phone",
+			holdings: []Holding{{CanonicalID: "track-1", Hash: validHash}, {CanonicalID: "track-1", Hash: validHash}},
+		},
+		{
+			name:     "rejects a short digest",
+			deviceID: "phone",
+			holdings: []Holding{{CanonicalID: "track-1", Hash: "abc"}},
+			wantErr:  ErrInvalidHolding,
+		},
+		{
+			name:     "rejects a missing track",
+			deviceID: "phone",
+			holdings: []Holding{{CanonicalID: "", Hash: validHash}},
+			wantErr:  ErrInvalidHolding,
+		},
+		{
+			name:     "rejects an unknown device",
+			deviceID: "missing",
+			holdings: []Holding{{CanonicalID: "track-1", Hash: validHash}},
+			wantErr:  ErrDeviceNotFound,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := openDeviceDB(t)
+			defer db.Close()
+			ctx := context.Background()
+			now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+			repo := Repo{DB: db, Now: func() time.Time { return now }, Token: fixedToken("token")}
+			if _, err := repo.Register(ctx, Device{ID: "phone", Name: "Phone"}); err != nil {
+				t.Fatalf("Register() error = %v", err)
+			}
+			if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+				t.Fatalf("insert track: %v", err)
+			}
+
+			err := repo.ReportHoldings(ctx, tc.deviceID, tc.holdings)
+			if tc.wantErr != nil {
+				if !errors.Is(err, tc.wantErr) {
+					t.Fatalf("ReportHoldings() error = %v, want %v", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ReportHoldings() error = %v", err)
+			}
+
+			holdings, err := repo.ListHoldings(ctx, "phone")
+			if err != nil {
+				t.Fatalf("ListHoldings() error = %v", err)
+			}
+			if len(holdings) != 1 {
+				t.Fatalf("holdings = %#v, want one", holdings)
+			}
+			if holdings[0].Hash != validHash {
+				t.Fatalf("hash = %q, want %q", holdings[0].Hash, validHash)
+			}
+			if !holdings[0].LastSeen.Equal(now) {
+				t.Fatalf("last seen = %v, want %v", holdings[0].LastSeen, now)
+			}
+		})
+	}
+}
+
+func TestReportHoldingsReplacesPreviousSet(t *testing.T) {
+	t.Parallel()
+
+	db := openDeviceDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	repo := Repo{DB: db, Now: func() time.Time { return now }, Token: fixedToken("token")}
+	if _, err := repo.Register(ctx, Device{ID: "phone", Name: "Phone"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	for _, id := range []string{"track-1", "track-2"} {
+		if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES (?, 'Song', 'Artist', 180000)`, id); err != nil {
+			t.Fatalf("insert track %s: %v", id, err)
+		}
+	}
+
+	first := strings.Repeat("ab", 32)
+	second := strings.Repeat("cd", 32)
+	if err := repo.ReportHoldings(ctx, "phone", []Holding{
+		{CanonicalID: "track-1", Hash: first},
+		{CanonicalID: "track-2", Hash: second},
+	}); err != nil {
+		t.Fatalf("ReportHoldings() error = %v", err)
+	}
+	if err := repo.ReportHoldings(ctx, "phone", []Holding{{CanonicalID: "track-2", Hash: second}}); err != nil {
+		t.Fatalf("ReportHoldings() error = %v", err)
+	}
+
+	holdings, err := repo.ListHoldings(ctx, "phone")
+	if err != nil {
+		t.Fatalf("ListHoldings() error = %v", err)
+	}
+	if len(holdings) != 1 || holdings[0].CanonicalID != "track-2" {
+		t.Fatalf("holdings = %#v, want only track-2", holdings)
 	}
 }
 

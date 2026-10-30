@@ -74,7 +74,7 @@ func TestDeviceRegisterAndList(t *testing.T) {
 	defer db.Close()
 	repo := devices.Repo{DB: db, Token: func() (string, error) { return "device-token", nil }}
 
-	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 6, Now: time.Now, Devices: repo})
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now, Devices: repo})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/devices", strings.NewReader(`{"id":"phone","name":"Phone","platform":"android","build":12,"sync_mode":"external"}`)))
@@ -126,7 +126,7 @@ func TestDeviceSyncModeAndDelete(t *testing.T) {
 		t.Fatalf("Register() error = %v", err)
 	}
 
-	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 6, Now: time.Now, Devices: repo})
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now, Devices: repo})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/sync/v1/devices/phone", strings.NewReader(`{"sync_mode":"off"}`)))
@@ -159,6 +159,75 @@ func TestDeviceSyncModeAndDelete(t *testing.T) {
 	}
 }
 
+func TestDeviceHoldings(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := devices.Repo{DB: db, Token: func() (string, error) { return "device-token", nil }}
+	if _, err := repo.Register(ctx, devices.Device{ID: "phone", Name: "Phone"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now, Devices: repo})
+	hash := strings.Repeat("ab", 32)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/phone/holdings", strings.NewReader(`{"holdings":[{"canonical_id":"track-1","hash":"`+hash+`"}]}`)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/holdings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	holdings, ok := got["holdings"].([]any)
+	if !ok || len(holdings) != 1 {
+		t.Fatalf("holdings = %#v, want one", got["holdings"])
+	}
+	holding := holdings[0].(map[string]any)
+	if holding["canonical_id"] != "track-1" || holding["hash"] != hash {
+		t.Fatalf("holding = %#v, want track-1 with %s", holding, hash)
+	}
+	if holding["last_seen"] == "" || holding["last_seen"] == nil {
+		t.Fatalf("holding last_seen = %v, want a timestamp", holding["last_seen"])
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/phone/holdings", strings.NewReader(`{"holdings":[{"canonical_id":"track-1","hash":"nope"}]}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/missing/holdings", strings.NewReader(`{"holdings":[]}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices/missing/holdings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if list, ok := got["holdings"].([]any); !ok || len(list) != 0 {
+		t.Fatalf("holdings = %#v, want empty list", got["holdings"])
+	}
+}
+
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 
@@ -166,7 +235,7 @@ func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
 	defer db.Close()
 	repo := devices.Repo{DB: db, Token: func() (string, error) { return "device-token", nil }}
 
-	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 6, Now: time.Now, Devices: repo})
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now, Devices: repo})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/devices", strings.NewReader(`{"id":"phone"}`)))
@@ -194,7 +263,7 @@ func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
 func TestDevicesUnavailable(t *testing.T) {
 	t.Parallel()
 
-	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 6, Now: time.Now})
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices", nil))

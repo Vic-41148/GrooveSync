@@ -47,6 +47,16 @@ var ErrDeviceNotFound = errors.New("devices: device not found")
 // ErrInvalidDevice reports caller-supplied device fields that cannot be stored.
 var ErrInvalidDevice = errors.New("devices: invalid device")
 
+// ErrInvalidHolding reports a holding entry that cannot be stored.
+var ErrInvalidHolding = errors.New("devices: invalid holding")
+
+// Holding is one file a device reported, keyed by its content hash.
+type Holding struct {
+	CanonicalID string
+	Hash        string
+	LastSeen    time.Time
+}
+
 // Repo persists the device registry.
 type Repo struct {
 	DB    *sql.DB
@@ -213,6 +223,111 @@ func (r Repo) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+// ReportHoldings replaces the recorded holdings of a device from a full index
+// of its library. Files that are gone from the index stop being recorded, which
+// reflects the device rather than asking for a deletion.
+func (r Repo) ReportHoldings(ctx context.Context, deviceID string, holdings []Holding) error {
+	if r.DB == nil {
+		return errors.New("devices: database is required")
+	}
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return fmt.Errorf("%w: device id is required", ErrInvalidDevice)
+	}
+	now := r.now()
+	cleaned := make([]Holding, 0, len(holdings))
+	seen := make(map[string]struct{}, len(holdings))
+	for _, holding := range holdings {
+		canonicalID := strings.TrimSpace(holding.CanonicalID)
+		if canonicalID == "" {
+			return fmt.Errorf("%w: canonical id is required", ErrInvalidHolding)
+		}
+		hash := strings.ToLower(strings.TrimSpace(holding.Hash))
+		if !validHash(hash) {
+			return fmt.Errorf("%w: %q is not a sha256 hex digest", ErrInvalidHolding, holding.Hash)
+		}
+		key := canonicalID + "\x00" + hash
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		cleaned = append(cleaned, Holding{CanonicalID: canonicalID, Hash: hash, LastSeen: now})
+	}
+
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("devices: begin holdings tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var exists int
+	err = tx.QueryRowContext(ctx, `SELECT 1 FROM device WHERE id = ?`, deviceID).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrDeviceNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("devices: load device %s: %w", deviceID, err)
+	}
+
+	if _, err := tx.ExecContext(ctx, `DELETE FROM device_holding WHERE device_id = ?`, deviceID); err != nil {
+		return fmt.Errorf("devices: clear holdings for %s: %w", deviceID, err)
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+INSERT INTO device_holding (device_id, canonical_id, hash, last_seen)
+VALUES (?, ?, ?, ?)
+`)
+	if err != nil {
+		return fmt.Errorf("devices: prepare holdings for %s: %w", deviceID, err)
+	}
+	defer stmt.Close()
+
+	stamp := now.Format(time.RFC3339Nano)
+	for _, holding := range cleaned {
+		if _, err := stmt.ExecContext(ctx, deviceID, holding.CanonicalID, holding.Hash, stamp); err != nil {
+			return fmt.Errorf("devices: store holding %s for %s: %w", holding.CanonicalID, deviceID, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE device SET last_seen = ? WHERE id = ?`, stamp, deviceID); err != nil {
+		return fmt.Errorf("devices: touch %s: %w", deviceID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("devices: commit holdings tx: %w", err)
+	}
+	return nil
+}
+
+// ListHoldings returns the recorded files of one device.
+func (r Repo) ListHoldings(ctx context.Context, deviceID string) ([]Holding, error) {
+	if r.DB == nil {
+		return nil, errors.New("devices: database is required")
+	}
+	rows, err := r.DB.QueryContext(ctx, `
+SELECT canonical_id, hash, last_seen
+FROM device_holding
+WHERE device_id = ?
+ORDER BY canonical_id ASC, hash ASC
+`, deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("devices: list holdings for %s: %w", deviceID, err)
+	}
+	defer rows.Close()
+
+	var out []Holding
+	for rows.Next() {
+		var holding Holding
+		var lastSeen sql.NullString
+		if err := rows.Scan(&holding.CanonicalID, &holding.Hash, &lastSeen); err != nil {
+			return nil, fmt.Errorf("devices: scan holding: %w", err)
+		}
+		holding.LastSeen = parseTime(lastSeen)
+		out = append(out, holding)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("devices: iterate holdings: %w", err)
+	}
+	return out, nil
+}
+
 // VerifyToken reports whether a plaintext token matches the stored hash.
 func (r Repo) VerifyToken(ctx context.Context, id, token string) (bool, error) {
 	if r.DB == nil {
@@ -254,6 +369,14 @@ func (r Repo) token() (string, error) {
 func hashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+func validHash(hash string) bool {
+	if len(hash) != sha256.Size*2 {
+		return false
+	}
+	_, err := hex.DecodeString(hash)
+	return err == nil
 }
 
 func validMode(mode SyncMode) bool {

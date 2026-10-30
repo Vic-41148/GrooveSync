@@ -88,6 +88,8 @@ type DeviceRegistry interface {
 	Register(context.Context, devices.Device) (devices.Registration, error)
 	SetSyncMode(context.Context, string, devices.SyncMode) error
 	Delete(context.Context, string) error
+	ListHoldings(context.Context, string) ([]devices.Holding, error)
+	ReportHoldings(context.Context, string, []devices.Holding) error
 }
 
 // New builds the router with middleware applied.
@@ -120,6 +122,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/devices", d.handleDeviceRegister)
 	mux.HandleFunc("PATCH /sync/v1/devices/{id}", d.handleDeviceSyncMode)
 	mux.HandleFunc("DELETE /sync/v1/devices/{id}", d.handleDeviceDelete)
+	mux.HandleFunc("GET /sync/v1/devices/{id}/holdings", d.handleDeviceHoldings)
+	mux.HandleFunc("PUT /sync/v1/devices/{id}/holdings", d.handleDeviceHoldingsReport)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -582,11 +586,7 @@ func (d Deps) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		SyncMode: req.SyncMode,
 	})
 	if err != nil {
-		if errors.Is(err, devices.ErrInvalidDevice) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "devices unavailable"}, 0)
+		writeDeviceError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
@@ -613,15 +613,7 @@ func (d Deps) handleDeviceSyncMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.Devices.SetSyncMode(r.Context(), id, req.SyncMode); err != nil {
-		if errors.Is(err, devices.ErrDeviceNotFound) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"}, 0)
-			return
-		}
-		if errors.Is(err, devices.ErrInvalidDevice) {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "devices unavailable"}, 0)
+		writeDeviceError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -638,14 +630,78 @@ func (d Deps) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.Devices.Delete(r.Context(), id); err != nil {
-		if errors.Is(err, devices.ErrDeviceNotFound) {
-			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"}, 0)
-			return
-		}
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "devices unavailable"}, 0)
+		writeDeviceError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleDeviceHoldings(w http.ResponseWriter, r *http.Request) {
+	if d.Devices == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	holdings, err := d.Devices.ListHoldings(r.Context(), id)
+	if err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	out := make([]map[string]string, 0, len(holdings))
+	for _, holding := range holdings {
+		out = append(out, map[string]string{
+			"canonical_id": holding.CanonicalID,
+			"hash":         holding.Hash,
+			"last_seen":    holding.LastSeen.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"holdings": out}, 0)
+}
+
+func (d Deps) handleDeviceHoldingsReport(w http.ResponseWriter, r *http.Request) {
+	if d.Devices == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	var req struct {
+		Holdings []struct {
+			CanonicalID string `json:"canonical_id"`
+			Hash        string `json:"hash"`
+		} `json:"holdings"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	holdings := make([]devices.Holding, 0, len(req.Holdings))
+	for _, holding := range req.Holdings {
+		holdings = append(holdings, devices.Holding{CanonicalID: holding.CanonicalID, Hash: holding.Hash})
+	}
+	if err := d.Devices.ReportHoldings(r.Context(), id, holdings); err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func writeDeviceError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, devices.ErrDeviceNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"}, 0)
+	case errors.Is(err, devices.ErrInvalidDevice), errors.Is(err, devices.ErrInvalidHolding):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "devices unavailable"}, 0)
+	}
 }
 
 func (d Deps) handleSpotifyLibraryWrite(operation string) http.HandlerFunc {
