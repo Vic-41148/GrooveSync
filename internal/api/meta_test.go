@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Vic-41148/groovesync/internal/connectors"
+	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 	_ "modernc.org/sqlite"
@@ -64,6 +65,155 @@ type pingerStub struct {
 
 func (p pingerStub) PingContext(context.Context) error {
 	return p.err
+}
+
+func TestDeviceRegisterAndList(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	repo := devices.Repo{DB: db, Token: func() (string, error) { return "device-token", nil }}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 6, Now: time.Now, Devices: repo})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/devices", strings.NewReader(`{"id":"phone","name":"Phone","platform":"android","build":12,"sync_mode":"external"}`)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+	var created map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if created["token"] != "device-token" {
+		t.Fatalf("token = %v, want device-token", created["token"])
+	}
+	device, ok := created["device"].(map[string]any)
+	if !ok {
+		t.Fatalf("device type = %T, want map[string]any", created["device"])
+	}
+	if device["id"] != "phone" || device["sync_mode"] != "external" {
+		t.Fatalf("device = %#v, want phone in external mode", device)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var listed map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	list, ok := listed["devices"].([]any)
+	if !ok || len(list) != 1 {
+		t.Fatalf("devices = %#v, want one", listed["devices"])
+	}
+	if _, ok := list[0].(map[string]any)["token"]; ok {
+		t.Fatal("device list must not expose tokens")
+	}
+}
+
+func TestDeviceSyncModeAndDelete(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := devices.Repo{DB: db, Token: func() (string, error) { return "device-token", nil }}
+	if _, err := repo.Register(ctx, devices.Device{ID: "phone", Name: "Phone"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 6, Now: time.Now, Devices: repo})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/sync/v1/devices/phone", strings.NewReader(`{"sync_mode":"off"}`)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/sync/v1/devices/phone", strings.NewReader(`{"sync_mode":"sometimes"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/sync/v1/devices/missing", strings.NewReader(`{"sync_mode":"app"}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/sync/v1/devices/phone", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/sync/v1/devices/phone", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	repo := devices.Repo{DB: db, Token: func() (string, error) { return "device-token", nil }}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 6, Now: time.Now, Devices: repo})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/devices", strings.NewReader(`{"id":"phone"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/devices", strings.NewReader(`{"id":"phone","name":"Phone","sync_mode":"sometimes"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices", nil))
+	var listed map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if list, ok := listed["devices"].([]any); !ok || len(list) != 0 {
+		t.Fatalf("devices = %#v, want empty list", listed["devices"])
+	}
+}
+
+func TestDevicesUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 6, Now: time.Now})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if list, ok := got["devices"].([]any); !ok || len(list) != 0 {
+		t.Fatalf("devices = %#v, want empty list", got["devices"])
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/devices", strings.NewReader(`{"id":"phone","name":"Phone"}`)))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
 }
 
 func TestProtoMin(t *testing.T) {

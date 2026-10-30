@@ -15,6 +15,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/api"
 	"github.com/Vic-41148/groovesync/internal/config"
 	"github.com/Vic-41148/groovesync/internal/connectors"
+	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/logging"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/writeback"
@@ -40,6 +41,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	defer db.Close()
 
 	connectorRepo := connectors.NewRepo(db)
+	deviceRepo := devices.Repo{DB: db}
 	queueRepo := writeback.NewRepo(db)
 	processor := writeback.Processor{
 		Store:     queueRepo,
@@ -66,13 +68,14 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		ReleasesURL:        cfg.ReleasesURL,
 		MinBuild:           cfg.MinBuild,
 		RecommendedBuild:   cfg.RecommendedBuild,
-		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log"},
+		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices"},
 		DB:                 db,
 		ReviewQueue:        queueRepo,
 		ReviewQueueActions: queueRepo,
 		Connectors:         connectorRepo,
 		ConnectorActions:   connectorRepo,
 		SpotifyLibrary:     connectorRepo,
+		Devices:            deviceRepo,
 	})
 
 	srv := &http.Server{

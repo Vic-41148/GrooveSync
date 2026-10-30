@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Vic-41148/groovesync/internal/connectors"
+	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 )
 
@@ -38,6 +40,7 @@ type Deps struct {
 	Connectors         ConnectorLister
 	ConnectorActions   ConnectorActions
 	SpotifyLibrary     SpotifyLibraryActions
+	Devices            DeviceRegistry
 }
 
 // Pinger reports whether the backing store is reachable.
@@ -79,6 +82,14 @@ type SpotifyLibraryActions interface {
 	SpotifyLibraryContains(context.Context, []string) ([]bool, error)
 }
 
+// DeviceRegistry stores the devices that sync and their sync modes.
+type DeviceRegistry interface {
+	List(context.Context) ([]devices.Device, error)
+	Register(context.Context, devices.Device) (devices.Registration, error)
+	SetSyncMode(context.Context, string, devices.SyncMode) error
+	Delete(context.Context, string) error
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -105,6 +116,10 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
 	mux.HandleFunc("DELETE /sync/v1/me/library", d.handleSpotifyLibraryWrite("unlike"))
 	mux.HandleFunc("GET /sync/v1/me/library/contains", d.handleSpotifyLibraryContains)
+	mux.HandleFunc("GET /sync/v1/devices", d.handleDevices)
+	mux.HandleFunc("POST /sync/v1/devices", d.handleDeviceRegister)
+	mux.HandleFunc("PATCH /sync/v1/devices/{id}", d.handleDeviceSyncMode)
+	mux.HandleFunc("DELETE /sync/v1/devices/{id}", d.handleDeviceDelete)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -494,6 +509,140 @@ func (d Deps) handleSpotifyInvalidGrant(w http.ResponseWriter, r *http.Request) 
 	}
 	if err := d.ConnectorActions.MarkSpotifyInvalidGrant(r.Context(), accountID, "invalid_grant", d.Now().UTC()); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid grant update failed"}, 0)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type deviceResponse struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Platform  string `json:"platform"`
+	Build     int    `json:"build"`
+	SyncMode  string `json:"sync_mode"`
+	CreatedAt string `json:"created_at,omitempty"`
+	LastSeen  string `json:"last_seen,omitempty"`
+}
+
+func newDeviceResponse(device devices.Device) deviceResponse {
+	resp := deviceResponse{
+		ID:       device.ID,
+		Name:     device.Name,
+		Platform: device.Platform,
+		Build:    device.Build,
+		SyncMode: string(device.SyncMode),
+	}
+	if !device.CreatedAt.IsZero() {
+		resp.CreatedAt = device.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !device.LastSeen.IsZero() {
+		resp.LastSeen = device.LastSeen.UTC().Format(time.RFC3339Nano)
+	}
+	return resp
+}
+
+func (d Deps) handleDevices(w http.ResponseWriter, r *http.Request) {
+	if d.Devices == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"devices": []deviceResponse{}}, 0)
+		return
+	}
+	list, err := d.Devices.List(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	out := make([]deviceResponse, 0, len(list))
+	for _, device := range list {
+		out = append(out, newDeviceResponse(device))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"devices": out}, 0)
+}
+
+func (d Deps) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
+	if d.Devices == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	var req struct {
+		ID       string           `json:"id"`
+		Name     string           `json:"name"`
+		Platform string           `json:"platform"`
+		Build    int              `json:"build"`
+		SyncMode devices.SyncMode `json:"sync_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	registration, err := d.Devices.Register(r.Context(), devices.Device{
+		ID:       req.ID,
+		Name:     req.Name,
+		Platform: req.Platform,
+		Build:    req.Build,
+		SyncMode: req.SyncMode,
+	})
+	if err != nil {
+		if errors.Is(err, devices.ErrInvalidDevice) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"device": newDeviceResponse(registration.Device),
+		"token":  registration.Token,
+	}, 0)
+}
+
+func (d Deps) handleDeviceSyncMode(w http.ResponseWriter, r *http.Request) {
+	if d.Devices == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	var req struct {
+		SyncMode devices.SyncMode `json:"sync_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !devices.ValidSyncMode(req.SyncMode) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid sync_mode"}, 0)
+		return
+	}
+	if err := d.Devices.SetSyncMode(r.Context(), id, req.SyncMode); err != nil {
+		if errors.Is(err, devices.ErrDeviceNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"}, 0)
+			return
+		}
+		if errors.Is(err, devices.ErrInvalidDevice) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleDeviceDelete(w http.ResponseWriter, r *http.Request) {
+	if d.Devices == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	if err := d.Devices.Delete(r.Context(), id); err != nil {
+		if errors.Is(err, devices.ErrDeviceNotFound) {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "device not found"}, 0)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "devices unavailable"}, 0)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
