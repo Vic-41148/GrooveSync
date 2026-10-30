@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Vic-41148/groovesync/internal/acquisition"
 	"github.com/Vic-41148/groovesync/internal/api"
 	"github.com/Vic-41148/groovesync/internal/config"
 	"github.com/Vic-41148/groovesync/internal/connectors"
@@ -44,6 +45,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	connectorRepo := connectors.NewRepo(db)
 	deviceRepo := devices.Repo{DB: db}
 	eventStore := taste.NewStore(db)
+	acquisitionRepo := acquisition.Repo{DB: db}
 	queueRepo := writeback.NewRepo(db)
 	processor := writeback.Processor{
 		Store:     queueRepo,
@@ -70,7 +72,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		ReleasesURL:        cfg.ReleasesURL,
 		MinBuild:           cfg.MinBuild,
 		RecommendedBuild:   cfg.RecommendedBuild,
-		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score"},
+		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "acquisition"},
 		DB:                 db,
 		ReviewQueue:        queueRepo,
 		ReviewQueueActions: queueRepo,
@@ -79,6 +81,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		SpotifyLibrary:     connectorRepo,
 		Devices:            deviceRepo,
 		EventLog:           eventStore,
+		Acquisition:        acquisitionRepo,
 	})
 
 	srv := &http.Server{

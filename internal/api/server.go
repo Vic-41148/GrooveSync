@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Vic-41148/groovesync/internal/acquisition"
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/taste"
@@ -43,6 +44,7 @@ type Deps struct {
 	SpotifyLibrary     SpotifyLibraryActions
 	Devices            DeviceRegistry
 	EventLog           EventLog
+	Acquisition        AcquisitionQueue
 }
 
 // Pinger reports whether the backing store is reachable.
@@ -100,6 +102,13 @@ type EventLog interface {
 	List(context.Context) ([]taste.EventRecord, error)
 }
 
+// AcquisitionQueue records downloads for the optional worker.
+type AcquisitionQueue interface {
+	Create(context.Context, string, string) (acquisition.Request, error)
+	List(context.Context, ...acquisition.State) ([]acquisition.Request, error)
+	Clear(context.Context) (int, error)
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -135,6 +144,9 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/events", d.handleEvents)
 	mux.HandleFunc("POST /sync/v1/events", d.handleEventsAppend)
 	mux.HandleFunc("GET /sync/v1/score", d.handleScores)
+	mux.HandleFunc("GET /sync/v1/acquisition", d.handleAcquisition)
+	mux.HandleFunc("POST /sync/v1/acquisition", d.handleAcquisitionCreate)
+	mux.HandleFunc("DELETE /sync/v1/acquisition", d.handleAcquisitionClear)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -779,6 +791,105 @@ func (d Deps) handleScores(w http.ResponseWriter, r *http.Request) {
 		scores = []taste.TrackScore{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"as_of": asOf.Format(time.RFC3339Nano), "tracks": scores}, 0)
+}
+
+type acquisitionResponse struct {
+	ID          string `json:"id"`
+	CanonicalID string `json:"canonical_id"`
+	Query       string `json:"query"`
+	State       string `json:"state"`
+	Attempts    int    `json:"attempts"`
+	LastError   string `json:"last_error,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+func newAcquisitionResponse(request acquisition.Request) acquisitionResponse {
+	return acquisitionResponse{
+		ID:          request.ID,
+		CanonicalID: request.CanonicalID,
+		Query:       request.Query,
+		State:       string(request.State),
+		Attempts:    request.Attempts,
+		LastError:   request.LastError,
+		CreatedAt:   request.CreatedAt.UTC().Format(time.RFC3339Nano),
+		UpdatedAt:   request.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	}
+}
+
+func (d Deps) handleAcquisition(w http.ResponseWriter, r *http.Request) {
+	if d.Acquisition == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"requests": []acquisitionResponse{}}, 0)
+		return
+	}
+	var states []acquisition.State
+	if raw := r.URL.Query().Get("state"); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			state := acquisition.State(strings.TrimSpace(part))
+			if !validAcquisitionState(state) {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid state"}, 0)
+				return
+			}
+			states = append(states, state)
+		}
+	}
+	requests, err := d.Acquisition.List(r.Context(), states...)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	out := make([]acquisitionResponse, 0, len(requests))
+	for _, request := range requests {
+		out = append(out, newAcquisitionResponse(request))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"requests": out}, 0)
+}
+
+func (d Deps) handleAcquisitionCreate(w http.ResponseWriter, r *http.Request) {
+	if d.Acquisition == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	var req struct {
+		CanonicalID string `json:"canonical_id"`
+		Query       string `json:"query"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	request, err := d.Acquisition.Create(r.Context(), req.CanonicalID, req.Query)
+	if err != nil {
+		if errors.Is(err, acquisition.ErrInvalidRequest) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"request": newAcquisitionResponse(request)}, 0)
+}
+
+func (d Deps) handleAcquisitionClear(w http.ResponseWriter, r *http.Request) {
+	if d.Acquisition == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	cleared, err := d.Acquisition.Clear(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"cleared": cleared}, 0)
+}
+
+func validAcquisitionState(state acquisition.State) bool {
+	switch state {
+	case acquisition.StateQueued, acquisition.StateClaimed, acquisition.StateDone, acquisition.StateFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func (d Deps) handleSpotifyLibraryWrite(operation string) http.HandlerFunc {

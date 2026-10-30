@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Vic-41148/groovesync/internal/acquisition"
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/store"
@@ -382,6 +383,102 @@ func TestScoresUnavailable(t *testing.T) {
 	}
 	if tracks, ok := got["tracks"].([]any); !ok || len(tracks) != 0 {
 		t.Fatalf("tracks = %#v, want empty list", got["tracks"])
+	}
+}
+
+func TestAcquisitionLifecycle(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	repo := acquisition.Repo{DB: db}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 9, Now: time.Now, Acquisition: repo})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/acquisition", strings.NewReader(`{"canonical_id":"track-1","query":"Song Artist"}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var created map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	request, ok := created["request"].(map[string]any)
+	if !ok {
+		t.Fatalf("request type = %T, want map[string]any", created["request"])
+	}
+	if request["state"] != "queued" || request["canonical_id"] != "track-1" {
+		t.Fatalf("request = %#v, want a queued track-1", request)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/acquisition?state=queued", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var listed map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if requests, ok := listed["requests"].([]any); !ok || len(requests) != 1 {
+		t.Fatalf("requests = %#v, want one", listed["requests"])
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/acquisition?state=sometimes", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/acquisition", strings.NewReader(`{"canonical_id":"track-1","query":"spotify:track:abc"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/sync/v1/acquisition", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var cleared map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &cleared); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if cleared["cleared"] != float64(1) {
+		t.Fatalf("cleared = %v, want 1", cleared["cleared"])
+	}
+}
+
+func TestAcquisitionUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 9, Now: time.Now})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/acquisition", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if list, ok := got["requests"].([]any); !ok || len(list) != 0 {
+		t.Fatalf("requests = %#v, want empty list", got["requests"])
+	}
+
+	for _, method := range []string{http.MethodPost, http.MethodDelete} {
+		rec = httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, "/sync/v1/acquisition", strings.NewReader(`{"canonical_id":"track-1","query":"Song"}`)))
+		if rec.Code != http.StatusNotImplemented {
+			t.Fatalf("%s status = %d, want %d", method, rec.Code, http.StatusNotImplemented)
+		}
 	}
 }
 
