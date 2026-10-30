@@ -4,13 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/Vic-41148/groovesync/internal/writeback"
 	"github.com/Vic-41148/groovesync/internal/store"
+	"github.com/Vic-41148/groovesync/internal/writeback"
 	_ "modernc.org/sqlite"
 )
 
@@ -161,10 +162,10 @@ func TestSpotifyRepoUpsertDerivesLifecycleFields(t *testing.T) {
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	if err := repo.UpsertSpotifyAuth(context.Background(), SpotifyAuthState{
 		AccountID:    "acct-3",
-		AuthorizedAt:  now.Add(-151 * 24 * time.Hour),
-		AccessToken:   "access",
-		RefreshToken:  "refresh",
-		StatusReason:  "",
+		AuthorizedAt: now.Add(-151 * 24 * time.Hour),
+		AccessToken:  "access",
+		RefreshToken: "refresh",
+		StatusReason: "",
 	}); err != nil {
 		t.Fatalf("UpsertSpotifyAuth() error = %v", err)
 	}
@@ -372,6 +373,129 @@ func TestListenBrainzWriteExecutor(t *testing.T) {
 	}
 	if report.Ran != 1 {
 		t.Fatalf("report = %#v, want one run", report)
+	}
+}
+
+func TestSpotifyTokenSource(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		setup     func(context.Context, *testing.T, *Repo)
+		wantToken string
+		wantErr   error
+	}{
+		{
+			name: "valid token",
+			setup: func(ctx context.Context, t *testing.T, repo *Repo) {
+				t.Helper()
+				if err := repo.UpsertSpotifyAuth(ctx, SpotifyAuthState{
+					AccountID:       "acct-1",
+					Status:          SpotifyStatusConnected,
+					AuthorizedAt:    now.Add(-24 * time.Hour),
+					AccessToken:     "access",
+					RefreshToken:    "refresh",
+					AccessExpiresAt: now.Add(time.Hour),
+				}); err != nil {
+					t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+				}
+			},
+			wantToken: "access",
+		},
+		{
+			name: "reconnect required",
+			setup: func(ctx context.Context, t *testing.T, repo *Repo) {
+				t.Helper()
+				if err := repo.UpsertSpotifyAuth(ctx, SpotifyAuthState{
+					AccountID:    "acct-1",
+					Status:       SpotifyStatusReconnectRequired,
+					AuthorizedAt: now.Add(-200 * 24 * time.Hour),
+					AccessToken:  "access",
+					RefreshToken: "refresh",
+				}); err != nil {
+					t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+				}
+			},
+			wantErr: ErrSpotifyReauthRequired,
+		},
+		{
+			name: "expired access token",
+			setup: func(ctx context.Context, t *testing.T, repo *Repo) {
+				t.Helper()
+				if err := repo.UpsertSpotifyAuth(ctx, SpotifyAuthState{
+					AccountID:       "acct-1",
+					Status:          SpotifyStatusConnected,
+					AuthorizedAt:    now.Add(-24 * time.Hour),
+					AccessToken:     "access",
+					RefreshToken:    "refresh",
+					AccessExpiresAt: now.Add(-time.Minute),
+				}); err != nil {
+					t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+				}
+			},
+			wantErr: ErrSpotifyTokenExpired,
+		},
+		{
+			name: "missing token row",
+			setup: func(ctx context.Context, t *testing.T, repo *Repo) {
+				t.Helper()
+				if err := repo.UpsertSpotifyAuth(ctx, SpotifyAuthState{
+					AccountID:    "acct-1",
+					Status:       SpotifyStatusConnected,
+					AuthorizedAt: now.Add(-24 * time.Hour),
+				}); err != nil {
+					t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+				}
+			},
+			wantErr: sql.ErrNoRows,
+		},
+		{
+			name: "disconnected account",
+			setup: func(ctx context.Context, t *testing.T, repo *Repo) {
+				t.Helper()
+				if err := repo.UpsertSpotifyAuth(ctx, SpotifyAuthState{
+					AccountID:    "acct-1",
+					Status:       SpotifyStatusConnected,
+					AuthorizedAt: now.Add(-24 * time.Hour),
+					AccessToken:  "access",
+					RefreshToken: "refresh",
+				}); err != nil {
+					t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+				}
+				if err := repo.DisconnectSpotify(ctx, "acct-1", "user_requested"); err != nil {
+					t.Fatalf("DisconnectSpotify() error = %v", err)
+				}
+			},
+			wantErr: ErrSpotifyReauthRequired,
+		},
+		{
+			name:    "missing account",
+			setup:   func(context.Context, *testing.T, *Repo) {},
+			wantErr: sql.ErrNoRows,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := openConnectorTestDB(t)
+			defer db.Close()
+
+			ctx := context.Background()
+			repo := NewRepo(db)
+			tc.setup(ctx, t, repo)
+
+			source := SpotifyRepoTokenSource{Repo: repo, Now: func() time.Time { return now }}
+			token, err := source.SpotifyAccessToken(ctx, "acct-1")
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("error = %v, want %v", err, tc.wantErr)
+			}
+			if token != tc.wantToken {
+				t.Fatalf("token = %q, want %q", token, tc.wantToken)
+			}
+		})
 	}
 }
 

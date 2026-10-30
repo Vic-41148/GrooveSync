@@ -322,6 +322,92 @@ ORDER BY account_id ASC
 	return out, nil
 }
 
+// SpotifyToken is the stored OAuth token pair for one account.
+type SpotifyToken struct {
+	AccessToken      string
+	RefreshToken     string
+	TokenType        string
+	Scope            string
+	AccessExpiresAt  time.Time
+	RefreshExpiresAt time.Time
+}
+
+// GetSpotifyToken loads the stored tokens for one account.
+func (r *Repo) GetSpotifyToken(ctx context.Context, accountID string) (SpotifyToken, error) {
+	if accountID == "" {
+		return SpotifyToken{}, errors.New("connectors: spotify account id is required")
+	}
+	var token SpotifyToken
+	var tokenType, scope, accessExpires, refreshExpires sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+SELECT access_token, refresh_token, token_type, scope, access_expires_at, refresh_expires_at
+FROM connector_token
+WHERE provider = ? AND account_id = ?
+`, ProviderSpotify, accountID).Scan(&token.AccessToken, &token.RefreshToken, &tokenType, &scope, &accessExpires, &refreshExpires)
+	if err != nil {
+		return SpotifyToken{}, err
+	}
+	if tokenType.Valid {
+		token.TokenType = tokenType.String
+	}
+	if scope.Valid {
+		token.Scope = scope.String
+	}
+	if accessExpires.Valid {
+		if ts, err := time.Parse(time.RFC3339Nano, accessExpires.String); err == nil {
+			token.AccessExpiresAt = ts
+		}
+	}
+	if refreshExpires.Valid {
+		if ts, err := time.Parse(time.RFC3339Nano, refreshExpires.String); err == nil {
+			token.RefreshExpiresAt = ts
+		}
+	}
+	return token, nil
+}
+
+// SpotifyRepoTokenSource reads access tokens from the connector store.
+type SpotifyRepoTokenSource struct {
+	Repo *Repo
+	Now  func() time.Time
+}
+
+// ErrSpotifyReauthRequired means the account must be connected again.
+var ErrSpotifyReauthRequired = errors.New("connectors: spotify account must be reconnected")
+
+// ErrSpotifyTokenExpired means the access token needs a refresh.
+var ErrSpotifyTokenExpired = errors.New("connectors: spotify access token expired")
+
+// SpotifyAccessToken returns a usable access token for one account.
+func (s SpotifyRepoTokenSource) SpotifyAccessToken(ctx context.Context, accountID string) (string, error) {
+	if s.Repo == nil {
+		return "", ErrSpotifyReauthRequired
+	}
+	account, err := s.Repo.GetSpotifyAccount(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	switch account.Status {
+	case SpotifyStatusReconnectRequired, SpotifyStatusDisconnected:
+		return "", ErrSpotifyReauthRequired
+	}
+	token, err := s.Repo.GetSpotifyToken(ctx, accountID)
+	if err != nil {
+		return "", err
+	}
+	if token.AccessToken == "" {
+		return "", ErrSpotifyReauthRequired
+	}
+	now := time.Now().UTC()
+	if s.Now != nil {
+		now = s.Now().UTC()
+	}
+	if !token.AccessExpiresAt.IsZero() && !now.Before(token.AccessExpiresAt) {
+		return "", ErrSpotifyTokenExpired
+	}
+	return token.AccessToken, nil
+}
+
 // QueueSpotifyLibraryWrite stores a like or unlike request for later execution.
 func (r *Repo) QueueSpotifyLibraryWrite(ctx context.Context, requestID, operation string, uris []string) error {
 	if requestID == "" {
