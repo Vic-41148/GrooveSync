@@ -768,6 +768,56 @@ func TestBuildPlanPreviewGuards(t *testing.T) {
 	}
 }
 
+func TestBuildPlanPreviewDefaultsFetchedCount(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now})
+	body := strings.NewReader(`{"snapshots":[{"provider":"spotify","item_id":"abc"}]}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/plan", body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	items, ok := got["items"].([]any)
+	if !ok || len(items) != 1 {
+		t.Fatalf("items = %#v, want one item", got["items"])
+	}
+	item := items[0].(map[string]any)
+	if item["item_id"] != "abc" {
+		t.Fatalf("item_id = %v, want abc", item["item_id"])
+	}
+}
+
+func TestBuildPlanPreviewBelowThresholdDoesNotWrite(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now})
+	body := strings.NewReader(`{"snapshots":[{"provider":"spotify","item_id":"1","base":"unliked","local":"liked","remote":"unliked","confidence":0.5}],"confidence_threshold":0.8,"mode":"live"}`)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/plan", body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got["would_write"] != false {
+		t.Fatalf("would_write = %v, want false", got["would_write"])
+	}
+	items := got["items"].([]any)
+	item := items[0].(map[string]any)
+	if item["write"] != false || item["needs_review"] != true {
+		t.Fatalf("item = %#v, want no write and review", item)
+	}
+}
+
 func openAPIConnectorTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 

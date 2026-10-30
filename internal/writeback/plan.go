@@ -26,13 +26,14 @@ const (
 
 // Snapshot captures the three-way comparison for one item.
 type Snapshot struct {
-	Provider string
-	ItemID   string
-	Base     State
-	Local    State
-	Remote   State
-	LocalAt  time.Time
-	RemoteAt time.Time
+	Provider   string    `json:"provider"`
+	ItemID     string    `json:"item_id"`
+	Base       State     `json:"base"`
+	Local      State     `json:"local"`
+	Remote     State     `json:"remote"`
+	LocalAt    time.Time `json:"local_at"`
+	RemoteAt   time.Time `json:"remote_at"`
+	Confidence float64   `json:"confidence"`
 }
 
 // Action is the outcome of a reconcile step.
@@ -73,18 +74,18 @@ type Plan struct {
 }
 
 // Reconcile returns the action for one snapshot and a plan item.
-func Reconcile(s Snapshot, confidence float64, mode RolloutMode) PlanItem {
+func Reconcile(s Snapshot, confidenceThreshold float64, mode RolloutMode) PlanItem {
 	item := PlanItem{
 		Provider:   s.Provider,
 		ItemID:     s.ItemID,
-		Confidence: confidence,
+		Confidence: s.Confidence,
 		UndoBefore: s.Base,
 	}
 
-	if confidence < 0 {
-		confidence = 0
+	if confidenceThreshold < 0 {
+		confidenceThreshold = 0
 	}
-	if confidence < 0.8 {
+	if s.Confidence < confidenceThreshold {
 		item.NeedsReview = true
 	}
 
@@ -130,7 +131,10 @@ func Reconcile(s Snapshot, confidence float64, mode RolloutMode) PlanItem {
 		item.UndoAfter = s.Local
 	}
 
-	if mode == ModeShadow || mode == ModeOff {
+	if item.NeedsReview {
+		item.Write = false
+	}
+	if mode != ModeLive {
 		item.Write = false
 	}
 	return item
@@ -217,15 +221,15 @@ func (t Tombstone) Renew(now time.Time, ttl time.Duration) Tombstone {
 
 // WriteLog records a write and keeps the before/after state for undo.
 type WriteLog struct {
-	ID         string
-	Provider   string
+	ID          string
+	Provider    string
 	CanonicalID string
-	Operation  string
-	Before     State
-	After      State
-	Confidence float64
-	BatchID    string
-	At         time.Time
+	Operation   string
+	Before      State
+	After       State
+	Confidence  float64
+	BatchID     string
+	At          time.Time
 }
 
 // Undo returns the reverse transition for the write.

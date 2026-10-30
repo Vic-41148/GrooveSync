@@ -309,7 +309,7 @@ type buildPlanRequest struct {
 	ConfidenceThreshold float64               `json:"confidence_threshold"`
 	Mode                writeback.RolloutMode `json:"mode"`
 	BaselineCount       int                   `json:"baseline_count"`
-	FetchedCount        int                   `json:"fetched_count"`
+	FetchedCount        *int                  `json:"fetched_count"`
 }
 
 type buildPlanResponse struct {
@@ -341,7 +341,7 @@ func (d Deps) handleBuildPlan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "decode request body"}, 0)
 		return
 	}
-	if req.ConfidenceThreshold == 0 {
+	if req.ConfidenceThreshold <= 0 {
 		req.ConfidenceThreshold = 0.8
 	}
 	if req.Mode == "" {
@@ -350,10 +350,11 @@ func (d Deps) handleBuildPlan(w http.ResponseWriter, r *http.Request) {
 	if req.BaselineCount <= 0 {
 		req.BaselineCount = len(req.Snapshots)
 	}
-	if req.FetchedCount < 0 {
-		req.FetchedCount = len(req.Snapshots)
+	fetchedCount := len(req.Snapshots)
+	if req.FetchedCount != nil {
+		fetchedCount = *req.FetchedCount
 	}
-	plan, err := writeback.BuildPlan(req.Snapshots, req.ConfidenceThreshold, req.Mode, req.BaselineCount, req.FetchedCount)
+	plan, err := writeback.BuildPlan(req.Snapshots, req.ConfidenceThreshold, req.Mode, req.BaselineCount, fetchedCount)
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
 		return
