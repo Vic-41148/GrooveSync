@@ -529,10 +529,10 @@ func TestWriteLogList(t *testing.T) {
 
 	repo := writeback.NewRepo(db)
 	ctx := context.Background()
-	if err := repo.AppendWriteLog(ctx, writeback.WriteLog{ID: "w1", Provider: connectors.ProviderSpotify, Operation: "like", Before: writeback.StateUnliked, After: writeback.StateLiked, Confidence: 0.9, BatchID: "batch-1"}); err != nil {
+	if err := repo.AppendWriteLog(ctx, writeback.WriteLog{ID: "w1", Provider: connectors.ProviderSpotify, CanonicalID: "track-1", Operation: "like", Before: writeback.StateUnliked, After: writeback.StateLiked, Confidence: 0.9, BatchID: "batch-1"}); err != nil {
 		t.Fatalf("AppendWriteLog() error = %v", err)
 	}
-	if err := repo.AppendWriteLog(ctx, writeback.WriteLog{ID: "w2", Provider: connectors.ProviderSpotify, Operation: "unlike", Before: writeback.StateLiked, After: writeback.StateUnliked, Confidence: 0.8, BatchID: "batch-2"}); err != nil {
+	if err := repo.AppendWriteLog(ctx, writeback.WriteLog{ID: "w2", Provider: connectors.ProviderSpotify, CanonicalID: "track-1", Operation: "unlike", Before: writeback.StateLiked, After: writeback.StateUnliked, Confidence: 0.8, BatchID: "batch-2"}); err != nil {
 		t.Fatalf("AppendWriteLog() error = %v", err)
 	}
 
@@ -568,6 +568,70 @@ func TestWriteLogList(t *testing.T) {
 	}
 	if first["write_id"] != "w2" || first["batch_id"] != "batch-2" || first["service"] != connectors.ProviderSpotify {
 		t.Fatalf("first item = %#v, want newest write first", first)
+	}
+}
+
+func TestUndoWriteLogItem(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+
+	repo := writeback.NewRepo(db)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO service_state (canonical_id, service, base_state, last_seen) VALUES ('track-1', ?, 'liked', ?)`, connectors.ProviderSpotify, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert service_state: %v", err)
+	}
+	if err := repo.AppendWriteLog(ctx, writeback.WriteLog{ID: "w1", Provider: connectors.ProviderSpotify, CanonicalID: "track-1", Operation: "unlike", Before: writeback.StateLiked, After: writeback.StateUnliked, Confidence: 0.9}); err != nil {
+		t.Fatalf("AppendWriteLog() error = %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now, WriteLog: repo})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/write-log/w1/undo", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM service_state WHERE canonical_id = 'track-1' AND service = ?`, connectors.ProviderSpotify).Scan(&count); err != nil {
+		t.Fatalf("query service_state: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("service_state count = %d, want 1", count)
+	}
+}
+
+func TestUndoWriteLogBatch(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+
+	repo := writeback.NewRepo(db)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO service_state (canonical_id, service, base_state, last_seen) VALUES ('track-1', ?, 'liked', ?)`, connectors.ProviderSpotify, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert service_state: %v", err)
+	}
+	if err := repo.AppendWriteLog(ctx, writeback.WriteLog{ID: "w1", Provider: connectors.ProviderSpotify, CanonicalID: "track-1", Operation: "unlike", Before: writeback.StateLiked, After: writeback.StateUnliked, Confidence: 0.9, BatchID: "batch-1"}); err != nil {
+		t.Fatalf("AppendWriteLog() error = %v", err)
+	}
+	if err := repo.AppendWriteLog(ctx, writeback.WriteLog{ID: "w2", Provider: connectors.ProviderSpotify, CanonicalID: "track-1", Operation: "like", Before: writeback.StateUnliked, After: writeback.StateLiked, Confidence: 0.9, BatchID: "batch-1"}); err != nil {
+		t.Fatalf("AppendWriteLog() error = %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now, WriteLog: repo})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/write-log/batch/batch-1/undo", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
 	}
 }
 

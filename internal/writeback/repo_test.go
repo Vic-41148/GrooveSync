@@ -18,7 +18,7 @@ func TestRepoRoundTrip(t *testing.T) {
 
 	repo := NewRepo(db)
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
-	if err := repo.AppendWriteLog(context.Background(), WriteLog{ID: "w1", Provider: "spotify", Operation: "like", Before: StateUnliked, After: StateLiked, Confidence: 0.9, BatchID: "b1"}); err != nil {
+	if err := repo.AppendWriteLog(context.Background(), WriteLog{ID: "w1", Provider: "spotify", CanonicalID: "track-1", Operation: "like", Before: StateUnliked, After: StateLiked, Confidence: 0.9, BatchID: "b1"}); err != nil {
 		t.Fatalf("AppendWriteLog() error = %v", err)
 	}
 	if err := repo.UpsertTombstone(context.Background(), Tombstone{Provider: "spotify", ExternalID: "x", ExpiresAt: now.Add(24 * time.Hour)}); err != nil {
@@ -31,6 +31,64 @@ func TestRepoRoundTrip(t *testing.T) {
 	}
 	if len(active) != 1 || active[0].ExternalID != "x" {
 		t.Fatalf("ActiveTombstones() = %#v, want x", active)
+	}
+}
+
+func TestRepoUndoWriteLog(t *testing.T) {
+	t.Parallel()
+
+	db := openRepoDB(t)
+	defer db.Close()
+
+	repo := NewRepo(db)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO service_state (canonical_id, service, base_state, last_seen) VALUES ('track-1', 'spotify', 'liked', '2026-10-30T12:00:00Z')`); err != nil {
+		t.Fatalf("insert service_state: %v", err)
+	}
+	if err := repo.AppendWriteLog(ctx, WriteLog{ID: "w1", Provider: "spotify", CanonicalID: "track-1", Operation: "unlike", Before: StateLiked, After: StateUnliked, Confidence: 0.9, BatchID: "b1"}); err != nil {
+		t.Fatalf("AppendWriteLog() error = %v", err)
+	}
+	undone, err := repo.UndoWriteLog(ctx, UndoScope{WriteID: "w1"})
+	if err != nil {
+		t.Fatalf("UndoWriteLog() error = %v", err)
+	}
+	if len(undone) != 1 {
+		t.Fatalf("UndoWriteLog() len = %d, want 1", len(undone))
+	}
+	if err := db.QueryRowContext(ctx, `SELECT base_state FROM service_state WHERE canonical_id = 'track-1' AND service = 'spotify'`).Scan(new(string)); err != nil {
+		t.Fatalf("service_state should remain present: %v", err)
+	}
+}
+
+func TestRepoUndoWriteLogBatch(t *testing.T) {
+	t.Parallel()
+
+	db := openRepoDB(t)
+	defer db.Close()
+
+	repo := NewRepo(db)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO service_state (canonical_id, service, base_state, last_seen) VALUES ('track-1', 'spotify', 'liked', '2026-10-30T12:00:00Z')`); err != nil {
+		t.Fatalf("insert service_state: %v", err)
+	}
+	if err := repo.AppendWriteLog(ctx, WriteLog{ID: "w1", Provider: "spotify", CanonicalID: "track-1", Operation: "unlike", Before: StateLiked, After: StateUnliked, Confidence: 0.9, BatchID: "b1"}); err != nil {
+		t.Fatalf("AppendWriteLog() error = %v", err)
+	}
+	if err := repo.AppendWriteLog(ctx, WriteLog{ID: "w2", Provider: "spotify", CanonicalID: "track-1", Operation: "like", Before: StateUnliked, After: StateLiked, Confidence: 0.9, BatchID: "b1"}); err != nil {
+		t.Fatalf("AppendWriteLog() error = %v", err)
+	}
+	undone, err := repo.UndoWriteLog(ctx, UndoScope{BatchID: "b1"})
+	if err != nil {
+		t.Fatalf("UndoWriteLog() error = %v", err)
+	}
+	if len(undone) != 2 {
+		t.Fatalf("UndoWriteLog() len = %d, want 2", len(undone))
 	}
 }
 

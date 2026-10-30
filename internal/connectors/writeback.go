@@ -76,9 +76,9 @@ ON CONFLICT(canonical_id, service) DO UPDATE SET
 		}
 
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO write_log (write_id, service, op, before, after, confidence, batch_id)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-`, item.ID, provider, item.Operation, nullableState(before), nullableState(after), payload.Confidence, payload.BatchID); err != nil {
+INSERT INTO write_log (write_id, service, canonical_id, op, before, after, confidence, batch_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`, item.ID, provider, payload.CanonicalID, item.Operation, nullableState(before), nullableState(after), payload.Confidence, payload.BatchID); err != nil {
 			return fmt.Errorf("connectors: append %s write log: %w", provider, err)
 		}
 

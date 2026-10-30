@@ -219,6 +219,7 @@ func (t Tombstone) Renew(now time.Time, ttl time.Duration) Tombstone {
 type WriteLog struct {
 	ID         string
 	Provider   string
+	CanonicalID string
 	Operation  string
 	Before     State
 	After      State
@@ -233,4 +234,10 @@ func (w WriteLog) Undo() (State, State, bool) {
 		return w.Before, w.After, false
 	}
 	return w.After, w.Before, true
+}
+
+// UndoScope identifies a single write or a whole batch.
+type UndoScope struct {
+	WriteID string
+	BatchID string
 }

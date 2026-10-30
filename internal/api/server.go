@@ -89,6 +89,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("DELETE /sync/v1/review/{id}", d.handleReviewQueueDelete)
 	mux.HandleFunc("POST /sync/v1/review/{id}/resolve", d.handleReviewQueueResolve)
 	mux.HandleFunc("GET /sync/v1/write-log", d.handleWriteLog)
+	mux.HandleFunc("POST /sync/v1/write-log/{writeID}/undo", d.handleUndoWriteLog)
+	mux.HandleFunc("POST /sync/v1/write-log/batch/{batchID}/undo", d.handleUndoWriteLogBatch)
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
@@ -229,9 +231,64 @@ func (d Deps) handleWriteLog(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"items": out}, 0)
 }
 
+func (d Deps) handleUndoWriteLog(w http.ResponseWriter, r *http.Request) {
+	if d.WriteLog == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "write log unavailable"}, 0)
+		return
+	}
+	undo, ok := d.WriteLog.(interface{ UndoWriteLog(context.Context, writeback.UndoScope) ([]writeback.WriteLog, error) })
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "write log unavailable"}, 0)
+		return
+	}
+	writeID := r.PathValue("writeID")
+	if writeID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "write_id required"}, 0)
+		return
+	}
+	items, err := undo.UndoWriteLog(r.Context(), writeback.UndoScope{WriteID: writeID})
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "write item not found"}, 0)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write log unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"undone": len(items)}, 0)
+}
+
+func (d Deps) handleUndoWriteLogBatch(w http.ResponseWriter, r *http.Request) {
+	if d.WriteLog == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "write log unavailable"}, 0)
+		return
+	}
+	undo, ok := d.WriteLog.(interface{ UndoWriteLog(context.Context, writeback.UndoScope) ([]writeback.WriteLog, error) })
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "write log unavailable"}, 0)
+		return
+	}
+	batchID := r.PathValue("batchID")
+	if batchID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "batch_id required"}, 0)
+		return
+	}
+	items, err := undo.UndoWriteLog(r.Context(), writeback.UndoScope{BatchID: batchID})
+	if err != nil {
+		if err == sql.ErrNoRows {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "write batch not found"}, 0)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write log unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"undone": len(items)}, 0)
+}
+
 type writeLogItem struct {
 	WriteID    string  `json:"write_id"`
 	Service    string  `json:"service"`
+	CanonicalID string `json:"canonical_id,omitempty"`
 	Op         string  `json:"op"`
 	Before     string  `json:"before,omitempty"`
 	After      string  `json:"after,omitempty"`

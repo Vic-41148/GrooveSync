@@ -31,6 +31,7 @@ type ReviewQueueStore interface {
 // WriteLogLister returns recorded write transitions.
 type WriteLogLister interface {
 	ListWriteLog(context.Context) ([]WriteLog, error)
+	UndoWriteLog(context.Context, UndoScope) ([]WriteLog, error)
 }
 
 // ReviewItem is a low-confidence match awaiting human review.
@@ -131,9 +132,9 @@ ORDER BY next_attempt ASC, write_id ASC
 // AppendWriteLog stores an undoable write record.
 func (r *Repo) AppendWriteLog(ctx context.Context, log WriteLog) error {
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO write_log (write_id, service, op, before, after, confidence, batch_id)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-`, log.ID, log.Provider, log.Operation, string(log.Before), string(log.After), log.Confidence, log.BatchID)
+INSERT INTO write_log (write_id, service, canonical_id, op, before, after, confidence, batch_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`, log.ID, log.Provider, nullableString(log.CanonicalID), log.Operation, string(log.Before), string(log.After), log.Confidence, log.BatchID)
 	if err != nil {
 		return fmt.Errorf("writeback: append write log %q: %w", log.ID, err)
 	}
@@ -143,7 +144,7 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 // ListWriteLog returns write records ordered from newest to oldest.
 func (r *Repo) ListWriteLog(ctx context.Context) ([]WriteLog, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT write_id, service, op, before, after, confidence, batch_id
+SELECT write_id, service, canonical_id, op, before, after, confidence, batch_id
 FROM write_log
 ORDER BY rowid DESC
 `)
@@ -156,14 +157,18 @@ ORDER BY rowid DESC
 	for rows.Next() {
 		var (
 			id, provider, op string
+			canonicalID      sql.NullString
 			before, after    sql.NullString
 			confidence       float64
 			batchID          sql.NullString
 		)
-		if err := rows.Scan(&id, &provider, &op, &before, &after, &confidence, &batchID); err != nil {
+		if err := rows.Scan(&id, &provider, &canonicalID, &op, &before, &after, &confidence, &batchID); err != nil {
 			return nil, fmt.Errorf("writeback: scan write log: %w", err)
 		}
 		item := WriteLog{ID: id, Provider: provider, Operation: op, Confidence: confidence}
+		if canonicalID.Valid {
+			item.CanonicalID = canonicalID.String
+		}
 		if before.Valid {
 			item.Before = State(before.String)
 		}
@@ -179,6 +184,85 @@ ORDER BY rowid DESC
 		return nil, fmt.Errorf("writeback: iterate write log: %w", err)
 	}
 	return out, nil
+}
+
+// UndoWriteLog restores service state from a write log entry or batch.
+func (r *Repo) UndoWriteLog(ctx context.Context, scope UndoScope) ([]WriteLog, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("writeback: begin undo tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+SELECT write_id, service, canonical_id, op, before, after, confidence, batch_id
+FROM write_log
+WHERE write_id = ?
+`
+	args := []any{scope.WriteID}
+	if scope.BatchID != "" {
+		query = `
+SELECT write_id, service, canonical_id, op, before, after, confidence, batch_id
+FROM write_log
+WHERE batch_id = ?
+ORDER BY rowid DESC
+`
+		args = []any{scope.BatchID}
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("writeback: load undo targets: %w", err)
+	}
+	defer rows.Close()
+
+	var undone []WriteLog
+	for rows.Next() {
+		var item WriteLog
+		var before, after, batchID, canonicalID sql.NullString
+		if err := rows.Scan(&item.ID, &item.Provider, &canonicalID, &item.Operation, &before, &after, &item.Confidence, &batchID); err != nil {
+			return nil, fmt.Errorf("writeback: scan undo target: %w", err)
+		}
+		if canonicalID.Valid {
+			item.CanonicalID = canonicalID.String
+		}
+		if before.Valid {
+			item.Before = State(before.String)
+		}
+		if after.Valid {
+			item.After = State(after.String)
+		}
+		if batchID.Valid {
+			item.BatchID = batchID.String
+		}
+
+		if item.CanonicalID == "" {
+			return nil, fmt.Errorf("writeback: undo target %s has no canonical id", item.ID)
+		}
+		if item.Before == StateUnknown {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM service_state WHERE canonical_id = ? AND service = ?`, item.CanonicalID, item.Provider); err != nil {
+				return nil, fmt.Errorf("writeback: undo delete service state: %w", err)
+			}
+		} else {
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO service_state (canonical_id, service, base_state, last_seen, last_synced)
+VALUES (?, ?, ?, NULL, NULL)
+ON CONFLICT(canonical_id, service) DO UPDATE SET base_state = excluded.base_state
+`, item.CanonicalID, item.Provider, string(item.Before)); err != nil {
+				return nil, fmt.Errorf("writeback: undo restore service state: %w", err)
+			}
+		}
+		undone = append(undone, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("writeback: iterate undo targets: %w", err)
+	}
+	if len(undone) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("writeback: commit undo tx: %w", err)
+	}
+	return undone, nil
 }
 
 // UpsertTombstone keeps a tombstone alive until its TTL expires.
