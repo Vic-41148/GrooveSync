@@ -332,6 +332,70 @@ func TestSpotifyLibraryWriteQueuesItems(t *testing.T) {
 	}
 }
 
+func TestReviewQueueCreate(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+
+	h := New(Deps{
+		Version:            "1.2.3",
+		Proto:              3,
+		Schema:             7,
+		Now:                time.Now,
+		ReviewQueueActions: writeback.NewRepo(db),
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/review", strings.NewReader(`{"canonical_id":"track-1","provider":"spotify","service_id":"uri:1","reason":"low confidence"}`)))
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got["id"] == nil {
+		t.Fatalf("response missing id: %#v", got)
+	}
+
+	var count int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM review_queue`).Scan(&count); err != nil {
+		t.Fatalf("count review_queue: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("review_queue count = %d, want 1", count)
+	}
+}
+
+func TestReviewQueueCreateValidatesInput(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now, ReviewQueueActions: reviewQueueStub{}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/review", strings.NewReader(`{"provider":"spotify","service_id":"uri:1"}`)))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestReviewQueueCreateWithoutActions(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/review", strings.NewReader(`{"provider":"spotify","service_id":"uri:1","reason":"low confidence"}`)))
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
 func openAPIConnectorTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -365,6 +429,10 @@ type reviewQueueStub struct{}
 
 func (reviewQueueStub) ListReviewQueue(context.Context) ([]writeback.ReviewItem, error) {
 	return nil, nil
+}
+
+func (reviewQueueStub) AddReviewQueueItem(context.Context, writeback.ReviewItem) (int64, error) {
+	return 0, nil
 }
 
 type connectorListerStub struct {

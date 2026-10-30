@@ -54,18 +54,19 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	}
 
 	h := api.New(api.Deps{
-		Logger:           logger,
-		Version:          version(),
-		Proto:            cfg.Proto,
-		Schema:           store.SchemaVersion,
-		ReleasesURL:      cfg.ReleasesURL,
-		MinBuild:         cfg.MinBuild,
-		RecommendedBuild: cfg.RecommendedBuild,
-		Features:         []string{"meta", "review_queue", "connectors", "spotify_library"},
-		ReviewQueue:      queueRepo,
-		Connectors:       connectors.NewRepo(db),
-		ConnectorActions: connectors.NewRepo(db),
-		SpotifyLibrary:   connectors.NewRepo(db),
+		Logger:             logger,
+		Version:            version(),
+		Proto:              cfg.Proto,
+		Schema:             store.SchemaVersion,
+		ReleasesURL:        cfg.ReleasesURL,
+		MinBuild:           cfg.MinBuild,
+		RecommendedBuild:   cfg.RecommendedBuild,
+		Features:           []string{"meta", "review_queue", "connectors", "spotify_library"},
+		ReviewQueue:        queueRepo,
+		ReviewQueueActions: queueRepo,
+		Connectors:         connectors.NewRepo(db),
+		ConnectorActions:   connectors.NewRepo(db),
+		SpotifyLibrary:     connectors.NewRepo(db),
 	})
 
 	srv := &http.Server{

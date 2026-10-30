@@ -27,17 +27,23 @@ type Deps struct {
 	MinBuild         map[string]int
 	RecommendedBuild map[string]int
 	// Features is what this build actually implements, not what is planned.
-	Features    []string
-	Now         func() time.Time
-	ReviewQueue ReviewQueueLister
-	Connectors  ConnectorLister
-	ConnectorActions ConnectorActions
-	SpotifyLibrary   SpotifyLibraryActions
+	Features           []string
+	Now                func() time.Time
+	ReviewQueue        ReviewQueueLister
+	ReviewQueueActions ReviewQueueActions
+	Connectors         ConnectorLister
+	ConnectorActions   ConnectorActions
+	SpotifyLibrary     SpotifyLibraryActions
 }
 
 // ReviewQueueLister returns the current low-confidence matches.
 type ReviewQueueLister interface {
 	ListReviewQueue(context.Context) ([]writeback.ReviewItem, error)
+}
+
+// ReviewQueueActions mutates the review queue.
+type ReviewQueueActions interface {
+	AddReviewQueueItem(context.Context, writeback.ReviewItem) (int64, error)
 }
 
 // ConnectorLister returns stored connector account state.
@@ -69,6 +75,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/meta", d.handleMeta)
 	mux.HandleFunc("GET /healthz", d.handleHealth)
 	mux.HandleFunc("GET /sync/v1/review", d.handleReviewQueue)
+	mux.HandleFunc("POST /sync/v1/review", d.handleReviewQueueCreate)
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
@@ -97,6 +104,39 @@ func (d Deps) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items}, 0)
+}
+
+func (d Deps) handleReviewQueueCreate(w http.ResponseWriter, r *http.Request) {
+	if d.ReviewQueueActions == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "review queue unavailable"}, 0)
+		return
+	}
+	var req struct {
+		CanonicalID string `json:"canonical_id"`
+		Provider    string `json:"provider"`
+		ServiceID   string `json:"service_id"`
+		Reason      string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "decode request body"}, 0)
+		return
+	}
+	item := writeback.ReviewItem{
+		CanonicalID: req.CanonicalID,
+		Provider:    req.Provider,
+		ServiceID:   req.ServiceID,
+		Reason:      req.Reason,
+	}
+	if item.Provider == "" || item.ServiceID == "" || item.Reason == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "provider, service_id and reason required"}, 0)
+		return
+	}
+	id, err := d.ReviewQueueActions.AddReviewQueueItem(r.Context(), item)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "review queue unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id}, 0)
 }
 
 func (d Deps) handleConnectors(w http.ResponseWriter, r *http.Request) {
