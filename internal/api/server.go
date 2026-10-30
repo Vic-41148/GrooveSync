@@ -46,6 +46,7 @@ type Deps struct {
 	EventLog           EventLog
 	Mix                MixSource
 	Acquisition        AcquisitionQueue
+	AcquisitionSwitch  AcquisitionSwitch
 	Rollout            RolloutSettings
 }
 
@@ -120,6 +121,12 @@ type AcquisitionQueue interface {
 type RolloutSettings interface {
 	RolloutMode(context.Context) (writeback.RolloutMode, error)
 	SetRolloutMode(context.Context, writeback.RolloutMode) error
+}
+
+// AcquisitionSwitch reads and writes the worker kill switch.
+type AcquisitionSwitch interface {
+	Enabled(context.Context) (bool, error)
+	SetEnabled(context.Context, bool) error
 }
 
 // New builds the router with middleware applied.
@@ -992,6 +999,10 @@ func (d Deps) handleAcquisitionCreate(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
 			return
 		}
+		if errors.Is(err, acquisition.ErrDisabled) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "acquisition disabled"}, 0)
+			return
+		}
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
 		return
 	}
@@ -1030,28 +1041,59 @@ func (d Deps) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		mode = stored
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"writeback_mode": string(mode)}, 0)
+	enabled := true
+	if d.AcquisitionSwitch != nil {
+		stored, err := d.AcquisitionSwitch.Enabled(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "settings unavailable"}, 0)
+			return
+		}
+		enabled = stored
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"writeback_mode":      string(mode),
+		"acquisition_enabled": enabled,
+	}, 0)
 }
 
 func (d Deps) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
-	if d.Rollout == nil {
-		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "settings unavailable"}, 0)
-		return
-	}
 	var req struct {
-		WritebackMode writeback.RolloutMode `json:"writeback_mode"`
+		WritebackMode      *writeback.RolloutMode `json:"writeback_mode"`
+		AcquisitionEnabled *bool                  `json:"acquisition_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
 		return
 	}
-	if !writeback.ValidRolloutMode(req.WritebackMode) {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid writeback_mode"}, 0)
+	if req.WritebackMode == nil && req.AcquisitionEnabled == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no settings"}, 0)
 		return
 	}
-	if err := d.Rollout.SetRolloutMode(r.Context(), req.WritebackMode); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "settings unavailable"}, 0)
+	if req.WritebackMode != nil {
+		if d.Rollout == nil {
+			writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "settings unavailable"}, 0)
+			return
+		}
+		if !writeback.ValidRolloutMode(*req.WritebackMode) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid writeback_mode"}, 0)
+			return
+		}
+	}
+	if req.AcquisitionEnabled != nil && d.AcquisitionSwitch == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "settings unavailable"}, 0)
 		return
+	}
+	if req.WritebackMode != nil {
+		if err := d.Rollout.SetRolloutMode(r.Context(), *req.WritebackMode); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "settings unavailable"}, 0)
+			return
+		}
+	}
+	if req.AcquisitionEnabled != nil {
+		if err := d.AcquisitionSwitch.SetEnabled(r.Context(), *req.AcquisitionEnabled); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "settings unavailable"}, 0)
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

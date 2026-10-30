@@ -217,6 +217,56 @@ func TestListOrdersByCreation(t *testing.T) {
 	}
 }
 
+func TestKillSwitch(t *testing.T) {
+	t.Parallel()
+
+	db := openAcquisitionDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	repo := Repo{DB: db, Now: func() time.Time { return now }, NewID: fixedID("req-1")}
+
+	enabled, err := repo.Enabled(ctx)
+	if err != nil {
+		t.Fatalf("Enabled() error = %v", err)
+	}
+	if !enabled {
+		t.Fatal("Enabled() = false, want true by default")
+	}
+
+	if _, err := repo.Create(ctx, "track-1", "Song Artist"); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if err := repo.SetEnabled(ctx, false); err != nil {
+		t.Fatalf("SetEnabled(false) error = %v", err)
+	}
+	enabled, err = repo.Enabled(ctx)
+	if err != nil {
+		t.Fatalf("Enabled() error = %v", err)
+	}
+	if enabled {
+		t.Fatal("Enabled() = true after disable")
+	}
+
+	requests, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(requests) != 0 {
+		t.Fatalf("requests = %#v, want the queue cleared", requests)
+	}
+	if _, err := repo.Create(ctx, "track-1", "Song Artist"); !errors.Is(err, ErrDisabled) {
+		t.Fatalf("Create() error = %v, want ErrDisabled", err)
+	}
+
+	if err := repo.SetEnabled(ctx, true); err != nil {
+		t.Fatalf("SetEnabled(true) error = %v", err)
+	}
+	if _, err := repo.Create(ctx, "track-1", "Song Artist"); err != nil {
+		t.Fatalf("Create() after enable error = %v", err)
+	}
+}
+
 func fixedID(id string) func() (string, error) {
 	return func() (string, error) { return id, nil }
 }

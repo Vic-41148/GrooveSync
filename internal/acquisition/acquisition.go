@@ -26,6 +26,9 @@ const (
 // DefaultMaxAttempts is how many worker tries a request gets before it fails.
 const DefaultMaxAttempts = 5
 
+// enabledKey is where the worker kill switch lives.
+const enabledKey = "acquisition.enabled"
+
 // Request is one queued download of a canonical track.
 type Request struct {
 	ID          string
@@ -46,6 +49,9 @@ var ErrInvalidRequest = errors.New("acquisition: invalid request")
 
 // ErrStateConflict reports a transition from the wrong state.
 var ErrStateConflict = errors.New("acquisition: state conflict")
+
+// ErrDisabled reports a request made while the worker is switched off.
+var ErrDisabled = errors.New("acquisition: provider disabled")
 
 // Repo persists acquisition requests.
 type Repo struct {
@@ -75,8 +81,15 @@ func (r Repo) Create(ctx context.Context, canonicalID, query string) (Request, e
 	if looksSpotify(query) {
 		return Request{}, fmt.Errorf("%w: query must not carry Spotify content", ErrInvalidRequest)
 	}
+	enabled, err := r.Enabled(ctx)
+	if err != nil {
+		return Request{}, err
+	}
+	if !enabled {
+		return Request{}, ErrDisabled
+	}
 	var exists int
-	err := r.DB.QueryRowContext(ctx, `SELECT 1 FROM track WHERE canonical_id = ?`, canonicalID).Scan(&exists)
+	err = r.DB.QueryRowContext(ctx, `SELECT 1 FROM track WHERE canonical_id = ?`, canonicalID).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Request{}, fmt.Errorf("%w: unknown track %s", ErrInvalidRequest, canonicalID)
 	}
@@ -227,6 +240,59 @@ DELETE FROM acquisition_request WHERE state IN (?, ?)
 		return 0, fmt.Errorf("acquisition: clear requests: %w", err)
 	}
 	return int(affected), nil
+}
+
+// Enabled reports whether the worker may accept requests. A missing setting
+// means enabled, so installing the plugin is the opt-in.
+func (r Repo) Enabled(ctx context.Context) (bool, error) {
+	if r.DB == nil {
+		return false, errors.New("acquisition: database is required")
+	}
+	var value string
+	err := r.DB.QueryRowContext(ctx, `SELECT value FROM setting WHERE key = ?`, enabledKey).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("acquisition: load switch: %w", err)
+	}
+	return value != "false", nil
+}
+
+// SetEnabled stores the kill switch. Switching it off also clears in-flight
+// requests, in the same transaction, so nothing is left for a worker to claim.
+func (r Repo) SetEnabled(ctx context.Context, enabled bool) error {
+	if r.DB == nil {
+		return errors.New("acquisition: database is required")
+	}
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("acquisition: begin switch tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	value := "true"
+	if !enabled {
+		value = "false"
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO setting (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+`, enabledKey, value, stamp(r.now())); err != nil {
+		return fmt.Errorf("acquisition: store switch: %w", err)
+	}
+	if !enabled {
+		if _, err := tx.ExecContext(ctx, `
+DELETE FROM acquisition_request WHERE state IN (?, ?)
+`, string(StateQueued), string(StateClaimed)); err != nil {
+			return fmt.Errorf("acquisition: clear requests: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("acquisition: commit switch tx: %w", err)
+	}
+	return nil
 }
 
 func (r Repo) expectOne(ctx context.Context, res sql.Result, id string) error {

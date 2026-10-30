@@ -670,6 +670,82 @@ func TestMixWithoutSource(t *testing.T) {
 	}
 }
 
+func TestAcquisitionKillSwitch(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	repo := acquisition.Repo{DB: db}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, Acquisition: repo, AcquisitionSwitch: repo})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/acquisition", strings.NewReader(`{"canonical_id":"track-1","query":"Song Artist"}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/sync/v1/settings", strings.NewReader(`{"acquisition_enabled":false}`)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("patch status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/settings", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("settings status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var settings map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &settings); err != nil {
+		t.Fatalf("unmarshal settings: %v", err)
+	}
+	if settings["acquisition_enabled"] != false {
+		t.Fatalf("acquisition_enabled = %v, want false", settings["acquisition_enabled"])
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/acquisition", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var listed map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal requests: %v", err)
+	}
+	if requests, ok := listed["requests"].([]any); !ok || len(requests) != 0 {
+		t.Fatalf("requests = %#v, want the queue cleared", listed["requests"])
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/acquisition", strings.NewReader(`{"canonical_id":"track-1","query":"Song Artist"}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("create while disabled status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/sync/v1/settings", strings.NewReader(`{"acquisition_enabled":true}`)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("re-enable status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/acquisition", strings.NewReader(`{"canonical_id":"track-1","query":"Song Artist"}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create after enable status = %d, want %d", rec.Code, http.StatusCreated)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/sync/v1/settings", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty patch status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 

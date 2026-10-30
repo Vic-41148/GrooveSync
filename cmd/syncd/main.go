@@ -83,6 +83,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		EventLog:           eventStore,
 		Mix:                eventStore,
 		Acquisition:        acquisitionRepo,
+		AcquisitionSwitch:  acquisitionRepo,
 		Rollout:            queueRepo,
 	})
 
