@@ -396,6 +396,64 @@ func TestReviewQueueCreateWithoutActions(t *testing.T) {
 	}
 }
 
+func TestReviewQueueDelete(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+
+	itemID := seedReviewQueueItemAPI(t, db)
+	h := New(Deps{
+		Version:            "1.2.3",
+		Proto:              3,
+		Schema:             7,
+		Now:                time.Now,
+		ReviewQueueActions: writeback.NewRepo(db),
+	})
+
+	req := httptest.NewRequest(http.MethodDelete, "/sync/v1/review/1", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	var count int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM review_queue WHERE id = ?`, itemID).Scan(&count); err != nil {
+		t.Fatalf("count review_queue: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("review_queue count = %d, want 0", count)
+	}
+}
+
+func TestReviewQueueDeleteValidatesID(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now, ReviewQueueActions: reviewQueueStub{}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/sync/v1/review/not-an-id", nil))
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestReviewQueueDeleteWithoutActions(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/sync/v1/review/1", nil))
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
 func openAPIConnectorTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -425,6 +483,21 @@ func seedSpotifyRowsAPI(t *testing.T, db *sql.DB) {
 	}
 }
 
+func seedReviewQueueItemAPI(t *testing.T, db *sql.DB) int64 {
+	t.Helper()
+
+	ctx := context.Background()
+	res, err := db.ExecContext(ctx, `INSERT INTO review_queue (canonical_id, service, service_id, reason) VALUES ('track-1', 'spotify', 'uri:1', 'low confidence')`)
+	if err != nil {
+		t.Fatalf("insert review_queue: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	return id
+}
+
 type reviewQueueStub struct{}
 
 func (reviewQueueStub) ListReviewQueue(context.Context) ([]writeback.ReviewItem, error) {
@@ -433,6 +506,10 @@ func (reviewQueueStub) ListReviewQueue(context.Context) ([]writeback.ReviewItem,
 
 func (reviewQueueStub) AddReviewQueueItem(context.Context, writeback.ReviewItem) (int64, error) {
 	return 0, nil
+}
+
+func (reviewQueueStub) DeleteReviewQueueItem(context.Context, int64) error {
+	return nil
 }
 
 type connectorListerStub struct {

@@ -20,6 +20,13 @@ type QueueStore interface {
 	DeleteQueueItem(context.Context, string) error
 }
 
+// ReviewQueueStore persists review queue items.
+type ReviewQueueStore interface {
+	AddReviewQueueItem(context.Context, ReviewItem) (int64, error)
+	DeleteReviewQueueItem(context.Context, int64) error
+	ListReviewQueue(context.Context) ([]ReviewItem, error)
+}
+
 // ReviewItem is a low-confidence match awaiting human review.
 type ReviewItem struct {
 	ID          int64
@@ -185,6 +192,22 @@ VALUES (?, ?, ?, ?)
 		return 0, fmt.Errorf("writeback: review item id: %w", err)
 	}
 	return id, nil
+}
+
+// DeleteReviewQueueItem removes a review item once it has been handled.
+func (r *Repo) DeleteReviewQueueItem(ctx context.Context, id int64) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM review_queue WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("writeback: delete review item %d: %w", id, err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("writeback: review item rows affected %d: %w", id, err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // ListReviewQueue returns all review items in creation order.
