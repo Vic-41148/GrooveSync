@@ -92,6 +92,8 @@ func (r *Repo) UpsertSpotifyAuth(ctx context.Context, state SpotifyAuthState) er
 		state.AuthorizedAt = time.Now().UTC()
 	}
 	if state.Status == "" {
+		state.ReconnectRequiredAt = state.AuthorizedAt.Add(spotifyRefreshLifetime)
+		state.ExpiringAt = state.ReconnectRequiredAt.Add(-spotifyExpiringWindow)
 		state.Status = SpotifyAuth(time.Now().UTC(), state.AuthorizedAt, false)
 	}
 	if state.Status == SpotifyStatusDisconnected {
@@ -235,12 +237,15 @@ SELECT account_id, status, authorized_at, expiring_at, reconnect_required_at, di
 FROM connector_account
 WHERE provider = ? AND account_id = ?
 `, ProviderSpotify, accountID)
-	var authorizedAt, expiringAt, reconnectAt, disconnectedAt sql.NullString
+	var authorizedAt, expiringAt, reconnectAt, disconnectedAt, statusReason sql.NullString
 	var status string
-	if err := row.Scan(&state.AccountID, &status, &authorizedAt, &expiringAt, &reconnectAt, &disconnectedAt, &state.StatusReason); err != nil {
+	if err := row.Scan(&state.AccountID, &status, &authorizedAt, &expiringAt, &reconnectAt, &disconnectedAt, &statusReason); err != nil {
 		return SpotifyAuthState{}, err
 	}
 	state.Status = SpotifyStatus(status)
+	if statusReason.Valid {
+		state.StatusReason = statusReason.String
+	}
 	if authorizedAt.Valid {
 		if ts, err := time.Parse(time.RFC3339Nano, authorizedAt.String); err == nil {
 			state.AuthorizedAt = ts
@@ -280,12 +285,15 @@ ORDER BY account_id ASC
 	var out []SpotifyAuthState
 	for rows.Next() {
 		var state SpotifyAuthState
-		var authorizedAt, expiringAt, reconnectAt, disconnectedAt sql.NullString
+		var authorizedAt, expiringAt, reconnectAt, disconnectedAt, statusReason sql.NullString
 		var status string
-		if err := rows.Scan(&state.AccountID, &status, &authorizedAt, &expiringAt, &reconnectAt, &disconnectedAt, &state.StatusReason); err != nil {
+		if err := rows.Scan(&state.AccountID, &status, &authorizedAt, &expiringAt, &reconnectAt, &disconnectedAt, &statusReason); err != nil {
 			return nil, fmt.Errorf("connectors: scan spotify account: %w", err)
 		}
 		state.Status = SpotifyStatus(status)
+		if statusReason.Valid {
+			state.StatusReason = statusReason.String
+		}
 		if authorizedAt.Valid {
 			if ts, err := time.Parse(time.RFC3339Nano, authorizedAt.String); err == nil {
 				state.AuthorizedAt = ts

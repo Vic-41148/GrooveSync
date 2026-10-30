@@ -121,6 +121,66 @@ func TestSpotifyRepoInvalidGrantClearsTokensWithoutPurgingLibraryData(t *testing
 	}
 }
 
+func TestSpotifyRepoUpsertPreservesExplicitReconnectState(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+
+	repo := NewRepo(db)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	if err := repo.UpsertSpotifyAuth(context.Background(), SpotifyAuthState{
+		AccountID:           "acct-2",
+		Status:              SpotifyStatusReconnectRequired,
+		AuthorizedAt:        now.Add(-181 * 24 * time.Hour),
+		ReconnectRequiredAt: now,
+		StatusReason:        "invalid_grant",
+	}); err != nil {
+		t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+	}
+
+	state, err := repo.GetSpotifyAccount(context.Background(), "acct-2")
+	if err != nil {
+		t.Fatalf("GetSpotifyAccount() error = %v", err)
+	}
+	if state.Status != SpotifyStatusReconnectRequired {
+		t.Fatalf("status = %q, want %q", state.Status, SpotifyStatusReconnectRequired)
+	}
+	if !state.ReconnectRequiredAt.Equal(now) {
+		t.Fatalf("reconnect_required_at = %v, want %v", state.ReconnectRequiredAt, now)
+	}
+}
+
+func TestSpotifyRepoUpsertDerivesLifecycleFields(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+
+	repo := NewRepo(db)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	if err := repo.UpsertSpotifyAuth(context.Background(), SpotifyAuthState{
+		AccountID:    "acct-3",
+		AuthorizedAt:  now.Add(-151 * 24 * time.Hour),
+		AccessToken:   "access",
+		RefreshToken:  "refresh",
+		StatusReason:  "",
+	}); err != nil {
+		t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+	}
+
+	state, err := repo.GetSpotifyAccount(context.Background(), "acct-3")
+	if err != nil {
+		t.Fatalf("GetSpotifyAccount() error = %v", err)
+	}
+	if state.Status != SpotifyStatusExpiring {
+		t.Fatalf("status = %q, want %q", state.Status, SpotifyStatusExpiring)
+	}
+	if state.ExpiringAt.IsZero() || state.ReconnectRequiredAt.IsZero() {
+		t.Fatalf("expected lifecycle timestamps to be set, got expiring=%v reconnect=%v", state.ExpiringAt, state.ReconnectRequiredAt)
+	}
+}
+
 func TestSpotifyWriteExecutor(t *testing.T) {
 	t.Parallel()
 
