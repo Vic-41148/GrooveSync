@@ -3,6 +3,7 @@ package writeback
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -243,13 +244,16 @@ ORDER BY rowid DESC
 				return nil, fmt.Errorf("writeback: undo delete service state: %w", err)
 			}
 		} else {
-		if _, err := tx.ExecContext(ctx, `
+			if _, err := tx.ExecContext(ctx, `
 INSERT INTO service_state (canonical_id, service, base_state, last_seen, last_synced)
 VALUES (?, ?, ?, NULL, NULL)
 ON CONFLICT(canonical_id, service) DO UPDATE SET base_state = excluded.base_state
 `, item.CanonicalID, item.Provider, string(item.Before)); err != nil {
 				return nil, fmt.Errorf("writeback: undo restore service state: %w", err)
 			}
+		}
+		if err := enqueueUndoWrite(ctx, tx, item); err != nil {
+			return nil, err
 		}
 		undone = append(undone, item)
 	}
@@ -263,6 +267,53 @@ ON CONFLICT(canonical_id, service) DO UPDATE SET base_state = excluded.base_stat
 		return nil, fmt.Errorf("writeback: commit undo tx: %w", err)
 	}
 	return undone, nil
+}
+
+func enqueueUndoWrite(ctx context.Context, tx *sql.Tx, item WriteLog) error {
+	operation, ok := reverseOperation(item.Operation)
+	if !ok {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM write_queue WHERE write_id = ?`, item.ID); err != nil {
+		return fmt.Errorf("writeback: cancel pending write %s: %w", item.ID, err)
+	}
+	payload, err := json.Marshal(struct {
+		CanonicalID string  `json:"canonical_id"`
+		Confidence  float64 `json:"confidence"`
+		BatchID     string  `json:"batch_id"`
+	}{CanonicalID: item.CanonicalID, Confidence: item.Confidence, BatchID: "undo:" + item.BatchID})
+	if err != nil {
+		return fmt.Errorf("writeback: encode undo payload %s: %w", item.ID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO write_queue (write_id, service, op, payload)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(write_id) DO UPDATE SET
+    service = excluded.service,
+    op = excluded.op,
+    payload = excluded.payload,
+    attempts = 0,
+    next_attempt = NULL,
+    last_error = NULL
+`, "undo:"+item.ID, item.Provider, operation, string(payload)); err != nil {
+		return fmt.Errorf("writeback: enqueue undo write %s: %w", item.ID, err)
+	}
+	return nil
+}
+
+func reverseOperation(operation string) (string, bool) {
+	switch operation {
+	case "like":
+		return "unlike", true
+	case "unlike":
+		return "like", true
+	case "love":
+		return "hate", true
+	case "hate":
+		return "love", true
+	default:
+		return "", false
+	}
 }
 
 // UpsertTombstone keeps a tombstone alive until its TTL expires.

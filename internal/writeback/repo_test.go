@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -60,6 +61,17 @@ func TestRepoUndoWriteLog(t *testing.T) {
 	}
 	if err := db.QueryRowContext(ctx, `SELECT base_state FROM service_state WHERE canonical_id = 'track-1' AND service = 'spotify'`).Scan(new(string)); err != nil {
 		t.Fatalf("service_state should remain present: %v", err)
+	}
+
+	var operation, payload string
+	if err := db.QueryRowContext(ctx, `SELECT op, payload FROM write_queue WHERE write_id = 'undo:w1'`).Scan(&operation, &payload); err != nil {
+		t.Fatalf("load undo queue item: %v", err)
+	}
+	if operation != "like" {
+		t.Fatalf("undo operation = %q, want like", operation)
+	}
+	if !strings.Contains(payload, `"canonical_id":"track-1"`) {
+		t.Fatalf("undo payload = %q, want canonical id", payload)
 	}
 }
 
