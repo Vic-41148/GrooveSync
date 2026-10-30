@@ -24,6 +24,7 @@ type QueueStore interface {
 type ReviewQueueStore interface {
 	AddReviewQueueItem(context.Context, ReviewItem) (int64, error)
 	DeleteReviewQueueItem(context.Context, int64) error
+	ResolveReviewQueueItem(context.Context, int64) error
 	ListReviewQueue(context.Context) ([]ReviewItem, error)
 }
 
@@ -206,6 +207,52 @@ func (r *Repo) DeleteReviewQueueItem(ctx context.Context, id int64) error {
 	}
 	if rows == 0 {
 		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ResolveReviewQueueItem converts a review item into a manual alias decision.
+func (r *Repo) ResolveReviewQueueItem(ctx context.Context, id int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("writeback: begin resolve review tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var item ReviewItem
+	var canonical sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+SELECT id, canonical_id, service, service_id, reason
+FROM review_queue
+WHERE id = ?
+`, id).Scan(&item.ID, &canonical, &item.Provider, &item.ServiceID, &item.Reason); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("writeback: load review item %d: %w", id, err)
+	}
+	if canonical.Valid {
+		item.CanonicalID = canonical.String
+	}
+	if item.CanonicalID == "" {
+		return fmt.Errorf("writeback: review item %d has no canonical id", id)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO alias (service, service_id, canonical_id, confidence, method, decided_by)
+VALUES (?, ?, ?, 1, 'manual', 'manual')
+ON CONFLICT(service, service_id) DO UPDATE SET
+    canonical_id = excluded.canonical_id,
+    confidence = excluded.confidence,
+    method = excluded.method,
+    decided_by = excluded.decided_by
+`, item.Provider, item.ServiceID, item.CanonicalID); err != nil {
+		return fmt.Errorf("writeback: resolve review item %d alias: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM review_queue WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("writeback: resolve review item %d delete: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("writeback: commit resolve review tx: %w", err)
 	}
 	return nil
 }

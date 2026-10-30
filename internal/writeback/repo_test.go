@@ -69,6 +69,10 @@ func TestRepoReviewQueue(t *testing.T) {
 
 	repo := NewRepo(db)
 	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	var count int
 	id, err := repo.AddReviewQueueItem(ctx, ReviewItem{CanonicalID: "track-1", Provider: "spotify", ServiceID: "svc-1", Reason: "low confidence"})
 	if err != nil {
 		t.Fatalf("AddReviewQueueItem() error = %v", err)
@@ -83,6 +87,23 @@ func TestRepoReviewQueue(t *testing.T) {
 	}
 	if len(items) != 1 || items[0].CanonicalID != "track-1" || items[0].Reason != "low confidence" {
 		t.Fatalf("ListReviewQueue() = %#v, want one review item", items)
+	}
+
+	if err := repo.ResolveReviewQueueItem(ctx, id); err != nil {
+		t.Fatalf("ResolveReviewQueueItem() error = %v", err)
+	}
+
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_queue`).Scan(&count); err != nil {
+		t.Fatalf("count review_queue: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("review_queue count = %d, want 0", count)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM alias WHERE service = ? AND service_id = ? AND canonical_id = ? AND confidence = 1 AND method = 'manual' AND decided_by = 'manual'`, "spotify", "svc-1", "track-1").Scan(&count); err != nil {
+		t.Fatalf("count alias: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("alias count = %d, want 1", count)
 	}
 }
 

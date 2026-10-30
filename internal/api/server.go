@@ -47,6 +47,7 @@ type ReviewQueueLister interface {
 type ReviewQueueActions interface {
 	AddReviewQueueItem(context.Context, writeback.ReviewItem) (int64, error)
 	DeleteReviewQueueItem(context.Context, int64) error
+	ResolveReviewQueueItem(context.Context, int64) error
 }
 
 // ConnectorLister returns stored connector account state.
@@ -80,6 +81,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/review", d.handleReviewQueue)
 	mux.HandleFunc("POST /sync/v1/review", d.handleReviewQueueCreate)
 	mux.HandleFunc("DELETE /sync/v1/review/{id}", d.handleReviewQueueDelete)
+	mux.HandleFunc("POST /sync/v1/review/{id}/resolve", d.handleReviewQueueResolve)
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
@@ -159,6 +161,32 @@ func (d Deps) handleReviewQueueDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.ReviewQueueActions.DeleteReviewQueueItem(r.Context(), id); err != nil {
+		if err == sql.ErrNoRows {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "review item not found"}, 0)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "review queue unavailable"}, 0)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleReviewQueueResolve(w http.ResponseWriter, r *http.Request) {
+	if d.ReviewQueueActions == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "review queue unavailable"}, 0)
+		return
+	}
+	idText := r.PathValue("id")
+	if idText == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	id, err := strconv.ParseInt(idText, 10, 64)
+	if err != nil || id <= 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid id"}, 0)
+		return
+	}
+	if err := d.ReviewQueueActions.ResolveReviewQueueItem(r.Context(), id); err != nil {
 		if err == sql.ErrNoRows {
 			writeJSON(w, http.StatusNotFound, map[string]string{"error": "review item not found"}, 0)
 			return
