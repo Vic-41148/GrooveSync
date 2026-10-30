@@ -184,6 +184,70 @@ func TestSpotifyRepoUpsertDerivesLifecycleFields(t *testing.T) {
 	}
 }
 
+func TestSpotifyRepoDerivesLifecycleOnRead(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name         string
+		status       SpotifyStatus
+		authorizedAt time.Time
+		reason       string
+		want         SpotifyStatus
+	}{
+		{name: "connected", status: SpotifyStatusConnected, authorizedAt: now.Add(-60 * 24 * time.Hour), want: SpotifyStatusConnected},
+		{name: "expiring", status: SpotifyStatusConnected, authorizedAt: now.Add(-151 * 24 * time.Hour), want: SpotifyStatusExpiring},
+		{name: "expired", status: SpotifyStatusConnected, authorizedAt: now.Add(-181 * 24 * time.Hour), want: SpotifyStatusReconnectRequired},
+		{name: "invalid grant stays revoked", status: SpotifyStatusReconnectRequired, authorizedAt: now.Add(-24 * time.Hour), reason: "invalid_grant", want: SpotifyStatusReconnectRequired},
+		{name: "disconnected stays disconnected", status: SpotifyStatusDisconnected, authorizedAt: now.Add(-24 * time.Hour), want: SpotifyStatusDisconnected},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := openConnectorTestDB(t)
+			defer db.Close()
+
+			ctx := context.Background()
+			repo := NewRepo(db)
+			repo.Now = func() time.Time { return now }
+			state := SpotifyAuthState{
+				AccountID:    "acct-1",
+				Status:       tc.status,
+				AuthorizedAt: tc.authorizedAt,
+				StatusReason: tc.reason,
+			}
+			if tc.status == SpotifyStatusConnected {
+				state.AccessToken = "access"
+				state.RefreshToken = "refresh"
+			}
+			if err := repo.UpsertSpotifyAuth(ctx, state); err != nil {
+				t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+			}
+
+			got, err := repo.GetSpotifyAccount(ctx, "acct-1")
+			if err != nil {
+				t.Fatalf("GetSpotifyAccount() error = %v", err)
+			}
+			if got.Status != tc.want {
+				t.Fatalf("status = %q, want %q", got.Status, tc.want)
+			}
+
+			accounts, err := repo.ListSpotifyAccounts(ctx)
+			if err != nil {
+				t.Fatalf("ListSpotifyAccounts() error = %v", err)
+			}
+			if len(accounts) != 1 || accounts[0].Status != tc.want {
+				t.Fatalf("accounts = %#v, want one %q account", accounts, tc.want)
+			}
+			if tc.want != SpotifyStatusDisconnected && (got.ExpiringAt.IsZero() || got.ReconnectRequiredAt.IsZero()) {
+				t.Fatalf("expected lifecycle timestamps, got expiring=%v reconnect=%v", got.ExpiringAt, got.ReconnectRequiredAt)
+			}
+		})
+	}
+}
+
 func TestSpotifyWriteExecutor(t *testing.T) {
 	t.Parallel()
 

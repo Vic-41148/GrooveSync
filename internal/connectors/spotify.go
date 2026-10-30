@@ -71,6 +71,8 @@ func SpotifyExpiryWarning(now, authorizedAt time.Time) (SpotifyStatus, time.Time
 // Repo updates Spotify auth state and removes Spotify-derived data on disconnect.
 type Repo struct {
 	db *sql.DB
+	// Now is injectable so lifecycle derivation is deterministic in tests.
+	Now func() time.Time
 }
 
 const (
@@ -83,18 +85,44 @@ func NewRepo(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
+func (r *Repo) now() time.Time {
+	if r.Now != nil {
+		return r.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+// withLifecycle recomputes time-based status so a connected row does not stay
+// connected after the refresh window has passed.
+func withLifecycle(state SpotifyAuthState, now time.Time) SpotifyAuthState {
+	if state.Status == SpotifyStatusDisconnected || state.AuthorizedAt.IsZero() {
+		return state
+	}
+	if state.ReconnectRequiredAt.IsZero() {
+		state.ReconnectRequiredAt = state.AuthorizedAt.Add(spotifyRefreshLifetime)
+	}
+	if state.ExpiringAt.IsZero() {
+		state.ExpiringAt = state.ReconnectRequiredAt.Add(-spotifyExpiringWindow)
+	}
+	if state.Status == SpotifyStatusReconnectRequired {
+		return state
+	}
+	state.Status = SpotifyAuth(now, state.AuthorizedAt, false)
+	return state
+}
+
 // UpsertSpotifyAuth stores the current token pair and lifecycle state.
 func (r *Repo) UpsertSpotifyAuth(ctx context.Context, state SpotifyAuthState) error {
 	if state.AccountID == "" {
 		return errors.New("connectors: spotify account id is required")
 	}
 	if state.AuthorizedAt.IsZero() {
-		state.AuthorizedAt = time.Now().UTC()
+		state.AuthorizedAt = r.now()
 	}
 	if state.Status == "" {
 		state.ReconnectRequiredAt = state.AuthorizedAt.Add(spotifyRefreshLifetime)
 		state.ExpiringAt = state.ReconnectRequiredAt.Add(-spotifyExpiringWindow)
-		state.Status = SpotifyAuth(time.Now().UTC(), state.AuthorizedAt, false)
+		state.Status = SpotifyAuth(r.now(), state.AuthorizedAt, false)
 	}
 	if state.Status == SpotifyStatusDisconnected {
 		return r.DisconnectSpotify(ctx, state.AccountID, state.StatusReason)
@@ -266,7 +294,7 @@ WHERE provider = ? AND account_id = ?
 			state.DisconnectedAt = ts
 		}
 	}
-	return state, nil
+	return withLifecycle(state, r.now()), nil
 }
 
 // ListSpotifyAccounts loads every stored Spotify account row.
@@ -314,7 +342,7 @@ ORDER BY account_id ASC
 				state.DisconnectedAt = ts
 			}
 		}
-		out = append(out, state)
+		out = append(out, withLifecycle(state, r.now()))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("connectors: iterate spotify accounts: %w", err)
