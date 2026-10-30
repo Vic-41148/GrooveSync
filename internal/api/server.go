@@ -45,6 +45,7 @@ type Deps struct {
 	Devices            DeviceRegistry
 	EventLog           EventLog
 	Acquisition        AcquisitionQueue
+	Rollout            RolloutSettings
 }
 
 // Pinger reports whether the backing store is reachable.
@@ -109,6 +110,12 @@ type AcquisitionQueue interface {
 	Clear(context.Context) (int, error)
 }
 
+// RolloutSettings reads and writes the persisted write-back mode.
+type RolloutSettings interface {
+	RolloutMode(context.Context) (writeback.RolloutMode, error)
+	SetRolloutMode(context.Context, writeback.RolloutMode) error
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -147,6 +154,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/acquisition", d.handleAcquisition)
 	mux.HandleFunc("POST /sync/v1/acquisition", d.handleAcquisitionCreate)
 	mux.HandleFunc("DELETE /sync/v1/acquisition", d.handleAcquisitionClear)
+	mux.HandleFunc("GET /sync/v1/settings", d.handleSettings)
+	mux.HandleFunc("PATCH /sync/v1/settings", d.handleSettingsUpdate)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -890,6 +899,42 @@ func validAcquisitionState(state acquisition.State) bool {
 	default:
 		return false
 	}
+}
+
+func (d Deps) handleSettings(w http.ResponseWriter, r *http.Request) {
+	mode := writeback.ModeShadow
+	if d.Rollout != nil {
+		stored, err := d.Rollout.RolloutMode(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "settings unavailable"}, 0)
+			return
+		}
+		mode = stored
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"writeback_mode": string(mode)}, 0)
+}
+
+func (d Deps) handleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
+	if d.Rollout == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "settings unavailable"}, 0)
+		return
+	}
+	var req struct {
+		WritebackMode writeback.RolloutMode `json:"writeback_mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	if !writeback.ValidRolloutMode(req.WritebackMode) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid writeback_mode"}, 0)
+		return
+	}
+	if err := d.Rollout.SetRolloutMode(r.Context(), req.WritebackMode); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "settings unavailable"}, 0)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (d Deps) handleSpotifyLibraryWrite(operation string) http.HandlerFunc {

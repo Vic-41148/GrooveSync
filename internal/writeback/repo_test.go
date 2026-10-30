@@ -278,6 +278,93 @@ func TestRepoReviewQueue(t *testing.T) {
 	}
 }
 
+func TestRolloutMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		stored string
+		want   RolloutMode
+	}{
+		{name: "defaults to shadow", want: ModeShadow},
+		{name: "reads off", stored: string(ModeOff), want: ModeOff},
+		{name: "reads live", stored: string(ModeLive), want: ModeLive},
+		{name: "unknown value falls back to shadow", stored: "sideways", want: ModeShadow},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			db := openRepoDB(t)
+			defer db.Close()
+
+			if tc.stored != "" {
+				_, err := db.ExecContext(ctx, `INSERT INTO setting (key, value, updated_at) VALUES (?, ?, ?)`, rolloutModeKey, tc.stored, time.Now().UTC().Format(time.RFC3339Nano))
+				if err != nil {
+					t.Fatalf("insert setting: %v", err)
+				}
+			}
+
+			got, err := NewRepo(db).RolloutMode(ctx)
+			if err != nil {
+				t.Fatalf("RolloutMode() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("RolloutMode() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestSetRolloutMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mode    RolloutMode
+		wantErr bool
+	}{
+		{name: "off", mode: ModeOff},
+		{name: "shadow", mode: ModeShadow},
+		{name: "live", mode: ModeLive},
+		{name: "rejects unknown", mode: RolloutMode("sideways"), wantErr: true},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := context.Background()
+			db := openRepoDB(t)
+			defer db.Close()
+			repo := NewRepo(db)
+
+			err := repo.SetRolloutMode(ctx, tc.mode)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("SetRolloutMode() error = nil, want error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SetRolloutMode() error = %v", err)
+			}
+
+			got, err := repo.RolloutMode(ctx)
+			if err != nil {
+				t.Fatalf("RolloutMode() error = %v", err)
+			}
+			if got != tc.mode {
+				t.Fatalf("RolloutMode() = %q, want %q", got, tc.mode)
+			}
+		})
+	}
+}
+
 func openRepoDB(t *testing.T) *sql.DB {
 	t.Helper()
 

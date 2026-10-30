@@ -131,6 +131,40 @@ ORDER BY next_attempt ASC, write_id ASC
 	return items, nil
 }
 
+// RolloutMode returns the stored write-back mode, defaulting to shadow. A
+// value this build does not know is treated as shadow rather than failing.
+func (r *Repo) RolloutMode(ctx context.Context) (RolloutMode, error) {
+	var value string
+	err := r.db.QueryRowContext(ctx, `SELECT value FROM setting WHERE key = ?`, rolloutModeKey).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ModeShadow, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("writeback: load rollout mode: %w", err)
+	}
+	mode := RolloutMode(value)
+	if !ValidRolloutMode(mode) {
+		return ModeShadow, nil
+	}
+	return mode, nil
+}
+
+// SetRolloutMode stores the write-back mode across restarts.
+func (r *Repo) SetRolloutMode(ctx context.Context, mode RolloutMode) error {
+	if !ValidRolloutMode(mode) {
+		return fmt.Errorf("writeback: unsupported rollout mode %q", mode)
+	}
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO setting (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+`, rolloutModeKey, string(mode), time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("writeback: store rollout mode: %w", err)
+	}
+	return nil
+}
+
 // AppendWriteLog stores an undoable write record.
 func (r *Repo) AppendWriteLog(ctx context.Context, log WriteLog) error {
 	_, err := r.db.ExecContext(ctx, `

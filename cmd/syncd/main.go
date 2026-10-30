@@ -72,7 +72,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		ReleasesURL:        cfg.ReleasesURL,
 		MinBuild:           cfg.MinBuild,
 		RecommendedBuild:   cfg.RecommendedBuild,
-		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "acquisition"},
+		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "acquisition", "settings"},
 		DB:                 db,
 		ReviewQueue:        queueRepo,
 		ReviewQueueActions: queueRepo,
@@ -82,6 +82,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Devices:            deviceRepo,
 		EventLog:           eventStore,
 		Acquisition:        acquisitionRepo,
+		Rollout:            queueRepo,
 	})
 
 	srv := &http.Server{

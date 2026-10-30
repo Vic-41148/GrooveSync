@@ -15,6 +15,19 @@ const (
 	ModeLive   RolloutMode = "live"
 )
 
+// rolloutModeKey is where the persisted write-back mode lives.
+const rolloutModeKey = "writeback.mode"
+
+// ValidRolloutMode reports whether mode is a supported write-back mode.
+func ValidRolloutMode(mode RolloutMode) bool {
+	switch mode {
+	case ModeOff, ModeShadow, ModeLive:
+		return true
+	default:
+		return false
+	}
+}
+
 // State is the like state tracked for a service.
 type State string
 
