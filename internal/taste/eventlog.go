@@ -142,6 +142,46 @@ func (l Log) Score(cfg Config, asOf time.Time) Result {
 	return ScoreAt(events, cfg, asOf)
 }
 
+// TrackScore is one track's affinity together with the contributions behind it.
+type TrackScore struct {
+	CanonicalID   string         `json:"canonical_id"`
+	Score         float64        `json:"score"`
+	Contributions []Contribution `json:"contributions"`
+}
+
+// ScoreTracks scores each track on its own events, highest first. Events are
+// keyed by canonical id because the client track id never leaves the device.
+func (l Log) ScoreTracks(cfg Config, asOf time.Time) []TrackScore {
+	ordered := make([]string, 0, len(l.entries))
+	grouped := make(map[string][]Event, len(l.entries))
+	for _, entry := range l.entries {
+		if _, ok := grouped[entry.CanonicalID]; !ok {
+			ordered = append(ordered, entry.CanonicalID)
+		}
+		grouped[entry.CanonicalID] = append(grouped[entry.CanonicalID], Event{
+			TrackID:       entry.CanonicalID,
+			Source:        entry.Source,
+			Type:          entry.Type,
+			Value:         entry.Value,
+			PercentPlayed: entry.PercentPlayed,
+			PositionMs:    entry.PositionMs,
+			At:            entry.HLC.Wall,
+		})
+	}
+	out := make([]TrackScore, 0, len(ordered))
+	for _, canonicalID := range ordered {
+		result := ScoreAt(grouped[canonicalID], cfg, asOf)
+		out = append(out, TrackScore{CanonicalID: canonicalID, Score: result.Score, Contributions: result.Contributions})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Score == out[j].Score {
+			return out[i].CanonicalID < out[j].CanonicalID
+		}
+		return out[i].Score > out[j].Score
+	})
+	return out
+}
+
 func MergeLogs(a, b Log) Log {
 	merged := make([]EventRecord, 0, len(a.entries)+len(b.entries))
 	seen := make(map[string]EventRecord, len(a.entries)+len(b.entries))

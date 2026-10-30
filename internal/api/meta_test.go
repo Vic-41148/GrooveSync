@@ -305,6 +305,86 @@ func TestEventsUnavailable(t *testing.T) {
 	}
 }
 
+func TestScoresExplainContributions(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	asOf := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	eventStore := taste.NewStore(db)
+	if _, err := eventStore.Append(ctx, []taste.EventRecord{{
+		ID:          "e1",
+		DeviceID:    "phone",
+		CanonicalID: "track-1",
+		Source:      taste.SourceLocal,
+		Type:        taste.EventLike,
+		HLC:         taste.HLC{Wall: asOf.Add(-time.Hour), Counter: 1, Node: "phone"},
+	}}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 8, Now: func() time.Time { return asOf }, EventLog: eventStore})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/score?as_of="+asOf.Format(time.RFC3339), nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got["as_of"] != asOf.Format(time.RFC3339Nano) {
+		t.Fatalf("as_of = %v, want %v", got["as_of"], asOf.Format(time.RFC3339Nano))
+	}
+	tracks, ok := got["tracks"].([]any)
+	if !ok || len(tracks) != 1 {
+		t.Fatalf("tracks = %#v, want one", got["tracks"])
+	}
+	track := tracks[0].(map[string]any)
+	if track["canonical_id"] != "track-1" || track["score"].(float64) <= 0 {
+		t.Fatalf("track = %#v, want a positive track-1", track)
+	}
+	contributions, ok := track["contributions"].([]any)
+	if !ok || len(contributions) != 1 {
+		t.Fatalf("contributions = %#v, want one", track["contributions"])
+	}
+	contribution := contributions[0].(map[string]any)
+	if contribution["name"] != "track-1: like" {
+		t.Fatalf("contribution name = %v, want track-1: like", contribution["name"])
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/score?as_of=yesterday", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+func TestScoresUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 8, Now: func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) }})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/score", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if tracks, ok := got["tracks"].([]any); !ok || len(tracks) != 0 {
+		t.Fatalf("tracks = %#v, want empty list", got["tracks"])
+	}
+}
+
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 

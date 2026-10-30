@@ -70,7 +70,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		ReleasesURL:        cfg.ReleasesURL,
 		MinBuild:           cfg.MinBuild,
 		RecommendedBuild:   cfg.RecommendedBuild,
-		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events"},
+		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score"},
 		DB:                 db,
 		ReviewQueue:        queueRepo,
 		ReviewQueueActions: queueRepo,

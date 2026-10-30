@@ -53,8 +53,8 @@ type Config struct {
 }
 
 type Contribution struct {
-	Name  string
-	Value float64
+	Name  string  `json:"name"`
+	Value float64 `json:"value"`
 }
 
 type Result struct {

@@ -38,6 +38,34 @@ func TestHLCFormatRoundTrip(t *testing.T) {
 	}
 }
 
+func TestScoreTracksSeparatesTracks(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	log := NewLog(
+		EventRecord{ID: "1", DeviceID: "phone", CanonicalID: "track-1", Source: SourceLocal, Type: EventLike, HLC: HLC{Wall: base, Counter: 1, Node: "phone"}},
+		EventRecord{ID: "2", DeviceID: "phone", CanonicalID: "track-2", Source: SourceLocal, Type: EventLike, HLC: HLC{Wall: base.Add(time.Minute), Counter: 1, Node: "phone"}},
+		EventRecord{ID: "3", DeviceID: "phone", CanonicalID: "track-1", Source: SourceLocal, Type: EventUnlike, HLC: HLC{Wall: base.Add(2 * time.Minute), Counter: 1, Node: "phone"}},
+		EventRecord{ID: "4", DeviceID: "phone", CanonicalID: "track-2", Source: SourceLocal, Type: EventPlay, PercentPlayed: 1, HLC: HLC{Wall: base.Add(3 * time.Minute), Counter: 1, Node: "phone"}},
+	)
+
+	scores := log.ScoreTracks(DefaultConfig(), base.Add(4*time.Minute))
+	if len(scores) != 2 {
+		t.Fatalf("scores = %#v, want two tracks", scores)
+	}
+	if scores[0].CanonicalID != "track-2" || scores[0].Score <= 0 {
+		t.Fatalf("first score = %#v, want a positive track-2", scores[0])
+	}
+	if scores[1].CanonicalID != "track-1" || scores[1].Score >= 0 {
+		t.Fatalf("second score = %#v, want a negative track-1", scores[1])
+	}
+	for _, contribution := range scores[1].Contributions {
+		if contribution.Name != "track-1: unlike" {
+			t.Fatalf("contribution = %q, want only the unlike", contribution.Name)
+		}
+	}
+}
+
 func TestParseHLCRejectsMalformed(t *testing.T) {
 	t.Parallel()
 

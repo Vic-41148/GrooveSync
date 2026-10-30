@@ -134,6 +134,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("PUT /sync/v1/devices/{id}/holdings", d.handleDeviceHoldingsReport)
 	mux.HandleFunc("GET /sync/v1/events", d.handleEvents)
 	mux.HandleFunc("POST /sync/v1/events", d.handleEventsAppend)
+	mux.HandleFunc("GET /sync/v1/score", d.handleScores)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -752,6 +753,32 @@ func (d Deps) handleEventsAppend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"stored": stored}, 0)
+}
+
+func (d Deps) handleScores(w http.ResponseWriter, r *http.Request) {
+	asOf := d.Now().UTC()
+	if raw := r.URL.Query().Get("as_of"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid as_of"}, 0)
+			return
+		}
+		asOf = parsed.UTC()
+	}
+	if d.EventLog == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"as_of": asOf.Format(time.RFC3339Nano), "tracks": []taste.TrackScore{}}, 0)
+		return
+	}
+	events, err := d.EventLog.List(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "events unavailable"}, 0)
+		return
+	}
+	scores := taste.NewLog(events...).ScoreTracks(taste.DefaultConfig(), asOf)
+	if scores == nil {
+		scores = []taste.TrackScore{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"as_of": asOf.Format(time.RFC3339Nano), "tracks": scores}, 0)
 }
 
 func (d Deps) handleSpotifyLibraryWrite(operation string) http.HandlerFunc {
