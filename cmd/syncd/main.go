@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/Vic-41148/groovesync/internal/api"
-	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/config"
+	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/logging"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/writeback"
@@ -41,8 +41,11 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 
 	queueRepo := writeback.NewRepo(db)
 	processor := writeback.Processor{
-		Store: queueRepo,
-		Now:   time.Now,
+		Store:     queueRepo,
+		Now:       time.Now,
+		BaseDelay: 5 * time.Second,
+		MaxDelay:  5 * time.Minute,
+		Limiter:   writeback.RateLimiter{MinInterval: 5 * time.Second},
 		Executors: map[string]writeback.Executor{
 			connectors.ProviderSpotify:      connectors.SpotifyWriteExecutor(db),
 			connectors.ProviderYouTube:      connectors.YouTubeWriteExecutor(db),

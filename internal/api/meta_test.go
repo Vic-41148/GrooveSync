@@ -2,8 +2,8 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -118,14 +118,14 @@ func TestMetaExposesReviewQueueFlag(t *testing.T) {
 func TestMetaPreservesFeatureList(t *testing.T) {
 	t.Parallel()
 
-		h := New(Deps{
-			Version:    "1.2.3",
-			Proto:      3,
-			Schema:     7,
-			Now:        time.Now,
-			Features:    []string{"meta", "review_queue", "connectors", "spotify_library"},
-			Connectors: connectorListerStub{},
-		})
+	h := New(Deps{
+		Version:    "1.2.3",
+		Proto:      3,
+		Schema:     7,
+		Now:        time.Now,
+		Features:   []string{"meta", "review_queue", "connectors", "spotify_library"},
+		Connectors: connectorListerStub{},
+	})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil))
@@ -148,10 +148,10 @@ func TestHandleConnectorsReturnsSpotifyAccounts(t *testing.T) {
 
 	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
 	h := New(Deps{
-		Version:    "1.2.3",
-		Proto:      3,
-		Schema:     7,
-		Now:        func() time.Time { return now },
+		Version: "1.2.3",
+		Proto:   3,
+		Schema:  7,
+		Now:     func() time.Time { return now },
 		Connectors: connectorListerStub{accounts: []connectors.SpotifyAuthState{{
 			AccountID:           "acct-1",
 			Status:              connectors.SpotifyStatusReconnectRequired,
@@ -242,7 +242,7 @@ func TestSpotifyLibraryContains(t *testing.T) {
 		Proto:          3,
 		Schema:         7,
 		Now:            time.Now,
-		SpotifyLibrary:  connectors.NewRepo(db),
+		SpotifyLibrary: connectors.NewRepo(db),
 	})
 
 	rec := httptest.NewRecorder()
@@ -265,6 +265,42 @@ func TestSpotifyLibraryContains(t *testing.T) {
 	}
 }
 
+func TestSpotifyLibraryContainsFallsBackToIDsAndHandlesUnknownURIs(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	seedSpotifyRowsAPI(t, db)
+
+	h := New(Deps{
+		Version:        "1.2.3",
+		Proto:          3,
+		Schema:         7,
+		Now:            time.Now,
+		SpotifyLibrary: connectors.NewRepo(db),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/sync/v1/me/library/contains?ids=spotify:track:uri:1&ids=spotify:track:missing", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	contains, ok := got["contains"].([]any)
+	if !ok {
+		t.Fatalf("contains type = %T, want []any", got["contains"])
+	}
+	if len(contains) != 2 || contains[0] != true || contains[1] != false {
+		t.Fatalf("contains = %#v, want [true false]", contains)
+	}
+}
+
 func TestSpotifyLibraryWriteQueuesItems(t *testing.T) {
 	t.Parallel()
 
@@ -273,10 +309,10 @@ func TestSpotifyLibraryWriteQueuesItems(t *testing.T) {
 	seedSpotifyRowsAPI(t, db)
 
 	h := New(Deps{
-		Version:       "1.2.3",
-		Proto:         3,
-		Schema:        7,
-		Now:           time.Now,
+		Version:        "1.2.3",
+		Proto:          3,
+		Schema:         7,
+		Now:            time.Now,
 		SpotifyLibrary: connectors.NewRepo(db),
 	})
 
