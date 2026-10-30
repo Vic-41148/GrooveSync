@@ -35,6 +35,107 @@ func TestRepoRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRearmTombstones(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		stored      time.Time
+		ttl         time.Duration
+		keys        []TombstoneKey
+		wantRearmed int
+		wantExpires time.Time
+		wantErr     bool
+	}{
+		{
+			name:        "extends an expiring tombstone",
+			stored:      now.Add(24 * time.Hour),
+			keys:        []TombstoneKey{{Provider: "spotify", ExternalID: "x"}},
+			wantRearmed: 1,
+			wantExpires: now.Add(DefaultTombstoneTTL),
+		},
+		{
+			name:        "revives an expired tombstone",
+			stored:      now.Add(-24 * time.Hour),
+			keys:        []TombstoneKey{{Provider: "spotify", ExternalID: "x"}},
+			wantRearmed: 1,
+			wantExpires: now.Add(DefaultTombstoneTTL),
+		},
+		{
+			name:        "ignores an unknown key",
+			stored:      now.Add(24 * time.Hour),
+			keys:        []TombstoneKey{{Provider: "spotify", ExternalID: "other"}},
+			wantRearmed: 0,
+			wantExpires: now.Add(24 * time.Hour),
+		},
+		{
+			name:        "never shortens a later expiry",
+			stored:      now.Add(48 * time.Hour),
+			ttl:         24 * time.Hour,
+			keys:        []TombstoneKey{{Provider: "spotify", ExternalID: "x"}},
+			wantRearmed: 0,
+			wantExpires: now.Add(48 * time.Hour),
+		},
+		{
+			name:        "applies an explicit ttl",
+			stored:      now.Add(time.Hour),
+			ttl:         7 * 24 * time.Hour,
+			keys:        []TombstoneKey{{Provider: "spotify", ExternalID: "x"}},
+			wantRearmed: 1,
+			wantExpires: now.Add(7 * 24 * time.Hour),
+		},
+		{
+			name:    "rejects a partial key",
+			stored:  now.Add(time.Hour),
+			keys:    []TombstoneKey{{Provider: "spotify"}},
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := openRepoDB(t)
+			defer db.Close()
+
+			ctx := context.Background()
+			repo := NewRepo(db)
+			if err := repo.UpsertTombstone(ctx, Tombstone{Provider: "spotify", ExternalID: "x", ExpiresAt: tc.stored}); err != nil {
+				t.Fatalf("UpsertTombstone() error = %v", err)
+			}
+
+			rearmed, err := repo.RearmTombstones(ctx, now, tc.ttl, tc.keys)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("RearmTombstones() error = nil, want failure")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("RearmTombstones() error = %v", err)
+			}
+			if rearmed != tc.wantRearmed {
+				t.Fatalf("rearmed = %d, want %d", rearmed, tc.wantRearmed)
+			}
+
+			var stored string
+			if err := db.QueryRowContext(ctx, `SELECT expires_at FROM tombstone WHERE provider = 'spotify' AND external_id = 'x'`).Scan(&stored); err != nil {
+				t.Fatalf("load tombstone: %v", err)
+			}
+			expiresAt, err := time.Parse(time.RFC3339Nano, stored)
+			if err != nil {
+				t.Fatalf("parse expiry: %v", err)
+			}
+			if !expiresAt.Equal(tc.wantExpires) {
+				t.Fatalf("expires at = %v, want %v", expiresAt, tc.wantExpires)
+			}
+		})
+	}
+}
+
 func TestRepoUndoWriteLog(t *testing.T) {
 	t.Parallel()
 

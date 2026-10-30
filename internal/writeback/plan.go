@@ -207,6 +207,21 @@ func (t Tombstone) Active(asOf time.Time) bool {
 	return asOf.Before(t.ExpiresAt)
 }
 
+// DefaultTombstoneTTL is how long a tombstone outlives the last sync that saw
+// the removed item.
+const DefaultTombstoneTTL = 365 * 24 * time.Hour
+
+// TombstoneKey identifies one tombstone without its expiry.
+type TombstoneKey struct {
+	Provider   string
+	ExternalID string
+}
+
+// Key returns the key a tombstone is stored under.
+func (t Tombstone) Key() TombstoneKey {
+	return TombstoneKey{Provider: t.Provider, ExternalID: t.ExternalID}
+}
+
 // Renew extends the tombstone by the provided TTL from the current time.
 func (t Tombstone) Renew(now time.Time, ttl time.Duration) Tombstone {
 	if now.IsZero() {

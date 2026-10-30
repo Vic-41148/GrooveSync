@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -327,6 +328,53 @@ ON CONFLICT(provider, external_id) DO UPDATE SET expires_at = excluded.expires_a
 		return fmt.Errorf("writeback: upsert tombstone %s/%s: %w", t.Provider, t.ExternalID, err)
 	}
 	return nil
+}
+
+// RearmTombstones extends the tombstones for the keys a sync pass saw, so a
+// removal that failed keeps blocking resurrection for another TTL. Keys with
+// no stored tombstone are ignored, as are rows already beyond the new expiry.
+func (r *Repo) RearmTombstones(ctx context.Context, now time.Time, ttl time.Duration, keys []TombstoneKey) (int, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	if ttl <= 0 {
+		ttl = DefaultTombstoneTTL
+	}
+	expiresAt := now.UTC().Add(ttl).Format(time.RFC3339Nano)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("writeback: begin tombstone rearm tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+UPDATE tombstone SET expires_at = ?
+WHERE provider = ? AND external_id = ? AND expires_at < ?
+`)
+	if err != nil {
+		return 0, fmt.Errorf("writeback: prepare tombstone rearm: %w", err)
+	}
+	defer stmt.Close()
+
+	rearmed := 0
+	for _, key := range keys {
+		if key.Provider == "" || key.ExternalID == "" {
+			return 0, errors.New("writeback: rearm tombstone needs a provider and an external id")
+		}
+		res, err := stmt.ExecContext(ctx, expiresAt, key.Provider, key.ExternalID, expiresAt)
+		if err != nil {
+			return 0, fmt.Errorf("writeback: rearm tombstone %s/%s: %w", key.Provider, key.ExternalID, err)
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("writeback: rearm tombstone %s/%s: %w", key.Provider, key.ExternalID, err)
+		}
+		rearmed += int(affected)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("writeback: commit tombstone rearm tx: %w", err)
+	}
+	return rearmed, nil
 }
 
 // ActiveTombstones returns unexpired tombstones.
