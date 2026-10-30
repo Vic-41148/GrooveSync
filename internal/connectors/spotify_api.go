@@ -308,7 +308,7 @@ func (c SpotifyClient) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return http.DefaultClient
+	return &http.Client{Timeout: 30 * time.Second}
 }
 
 func (c SpotifyClient) now() time.Time {

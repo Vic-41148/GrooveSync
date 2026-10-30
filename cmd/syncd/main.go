@@ -39,6 +39,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	}
 	defer db.Close()
 
+	connectorRepo := connectors.NewRepo(db)
 	queueRepo := writeback.NewRepo(db)
 	processor := writeback.Processor{
 		Store:     queueRepo,
@@ -47,7 +48,11 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		MaxDelay:  5 * time.Minute,
 		Limiter:   writeback.RateLimiter{MinInterval: 5 * time.Second},
 		Executors: map[string]writeback.Executor{
-			connectors.ProviderSpotify:      connectors.SpotifyWriteExecutor(db),
+			connectors.ProviderSpotify: connectors.SpotifyRemoteWriteExecutor(
+				connectorRepo,
+				connectors.SpotifyClient{},
+				connectors.SpotifyRepoTokenSource{Repo: connectorRepo},
+			),
 			connectors.ProviderYouTube:      connectors.YouTubeWriteExecutor(db),
 			connectors.ProviderListenBrainz: connectors.ListenBrainzWriteExecutor(db),
 		},
@@ -64,9 +69,9 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Features:           []string{"meta", "review_queue", "connectors", "spotify_library"},
 		ReviewQueue:        queueRepo,
 		ReviewQueueActions: queueRepo,
-		Connectors:         connectors.NewRepo(db),
-		ConnectorActions:   connectors.NewRepo(db),
-		SpotifyLibrary:     connectors.NewRepo(db),
+		Connectors:         connectorRepo,
+		ConnectorActions:   connectorRepo,
+		SpotifyLibrary:     connectorRepo,
 	})
 
 	srv := &http.Server{

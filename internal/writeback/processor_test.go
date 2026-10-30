@@ -163,6 +163,36 @@ func TestProcessorSkipsMissingExecutorsWithoutMutatingQueue(t *testing.T) {
 	}
 }
 
+func TestProcessorDiscardsPermanentFailures(t *testing.T) {
+	t.Parallel()
+
+	db := openProcessorDB(t)
+	defer db.Close()
+	repo := NewRepo(db)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	if err := repo.UpsertQueueItem(ctx, QueueItem{ID: "a", Provider: "spotify", Operation: "like", Payload: "{}", NextAttempt: now}); err != nil {
+		t.Fatalf("UpsertQueueItem() error = %v", err)
+	}
+
+	report, err := Processor{
+		Store: repo,
+		Now:   func() time.Time { return now },
+		Executors: map[string]Executor{
+			"spotify": ExecutorFunc(func(context.Context, QueueItem) error {
+				return Permanent(errors.New("refresh token revoked"))
+			}),
+		},
+	}.ProcessDue(ctx)
+	if err != nil {
+		t.Fatalf("ProcessDue() error = %v", err)
+	}
+	if report.Discarded != 1 || report.Retried != 0 {
+		t.Fatalf("report = %#v, want one discarded item", report)
+	}
+	assertQueueCount(t, db, 0)
+}
+
 func TestProcessorHonorsRetryAfter(t *testing.T) {
 	t.Parallel()
 

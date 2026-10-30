@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -376,6 +378,133 @@ func TestListenBrainzWriteExecutor(t *testing.T) {
 	}
 }
 
+func TestSpotifyRemoteWriteExecutor(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := NewRepo(db)
+	seedSpotifyWrite(t, db)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	if err := repo.UpsertSpotifyAuth(ctx, SpotifyAuthState{
+		AccountID:       "acct-1",
+		Status:          SpotifyStatusConnected,
+		AuthorizedAt:    now.Add(-24 * time.Hour),
+		AccessToken:     "access",
+		RefreshToken:    "refresh",
+		AccessExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+	}
+
+	var gotIDs []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || r.URL.Path != "/me/tracks" {
+			t.Errorf("request = %s %s, want PUT /me/tracks", r.Method, r.URL.Path)
+		}
+		var body struct {
+			IDs []string `json:"ids"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		gotIDs = body.IDs
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	executor := SpotifyRemoteWriteExecutor(repo, SpotifyClient{BaseURL: srv.URL}, SpotifyRepoTokenSource{Repo: repo, Now: func() time.Time { return now }})
+	err := executor.Execute(ctx, writeback.QueueItem{
+		ID:        "w1",
+		Provider:  ProviderSpotify,
+		Operation: "like",
+		Payload:   `{"canonical_id":"track-1","confidence":0.99,"batch_id":"batch-1"}`,
+	})
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if len(gotIDs) != 1 || gotIDs[0] != "1" {
+		t.Fatalf("ids = %#v, want [1]", gotIDs)
+	}
+
+	var state string
+	if err := db.QueryRowContext(ctx, `SELECT base_state FROM service_state WHERE canonical_id = 'track-1' AND service = ?`, ProviderSpotify).Scan(&state); err != nil {
+		t.Fatalf("load service_state: %v", err)
+	}
+	if state != "liked" {
+		t.Fatalf("service_state = %q, want liked", state)
+	}
+
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM write_log WHERE write_id = 'w1'`).Scan(&count); err != nil {
+		t.Fatalf("count write_log: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("write_log count = %d, want 1", count)
+	}
+}
+
+func TestSpotifyRemoteWriteExecutorInvalidGrant(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := NewRepo(db)
+	seedSpotifyWrite(t, db)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	if err := repo.UpsertSpotifyAuth(ctx, SpotifyAuthState{
+		AccountID:       "acct-1",
+		Status:          SpotifyStatusConnected,
+		AuthorizedAt:    now.Add(-24 * time.Hour),
+		AccessToken:     "access",
+		RefreshToken:    "refresh",
+		AccessExpiresAt: now.Add(time.Hour),
+	}); err != nil {
+		t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+	}))
+	defer srv.Close()
+
+	executor := SpotifyRemoteWriteExecutor(repo, SpotifyClient{BaseURL: srv.URL}, SpotifyRepoTokenSource{Repo: repo, Now: func() time.Time { return now }})
+	err := executor.Execute(ctx, writeback.QueueItem{
+		ID:        "w1",
+		Provider:  ProviderSpotify,
+		Operation: "like",
+		Payload:   `{"canonical_id":"track-1","confidence":0.99,"batch_id":"batch-1"}`,
+	})
+	if !errors.Is(err, ErrSpotifyInvalidGrant) {
+		t.Fatalf("error = %v, want ErrSpotifyInvalidGrant", err)
+	}
+	var permanent interface{ Permanent() bool }
+	if !errors.As(err, &permanent) || !permanent.Permanent() {
+		t.Fatalf("error = %v, want permanent error", err)
+	}
+
+	account, err := repo.GetSpotifyAccount(ctx, "acct-1")
+	if err != nil {
+		t.Fatalf("GetSpotifyAccount() error = %v", err)
+	}
+	if account.Status != SpotifyStatusReconnectRequired {
+		t.Fatalf("status = %q, want reconnect_required", account.Status)
+	}
+	assertTableCount(t, db, "connector_token", 0)
+	assertTableCount(t, db, "write_log", 0)
+
+	var state string
+	if err := db.QueryRowContext(ctx, `SELECT base_state FROM service_state WHERE canonical_id = 'track-1' AND service = ?`, ProviderSpotify).Scan(&state); err != nil {
+		t.Fatalf("load service_state: %v", err)
+	}
+	if state != "unliked" {
+		t.Fatalf("service_state = %q, want unliked", state)
+	}
+}
+
 func TestSpotifyTokenSource(t *testing.T) {
 	t.Parallel()
 
@@ -496,6 +625,21 @@ func TestSpotifyTokenSource(t *testing.T) {
 				t.Fatalf("token = %q, want %q", token, tc.wantToken)
 			}
 		})
+	}
+}
+
+func seedSpotifyWrite(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO alias (service, service_id, canonical_id, confidence, method) VALUES (?, '1', 'track-1', 0.99, 'manual')`, ProviderSpotify); err != nil {
+		t.Fatalf("insert alias: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO service_state (canonical_id, service, base_state, last_seen) VALUES ('track-1', ?, 'unliked', ?)`, ProviderSpotify, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert service_state: %v", err)
 	}
 }
 

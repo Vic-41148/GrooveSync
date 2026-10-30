@@ -20,6 +20,33 @@ func (f ExecutorFunc) Execute(ctx context.Context, item QueueItem) error {
 	return f(ctx, item)
 }
 
+// PermanentError marks a failure that retrying cannot fix.
+type PermanentError struct {
+	Err error
+}
+
+func (e *PermanentError) Error() string {
+	return e.Err.Error()
+}
+
+// Unwrap exposes the underlying error.
+func (e *PermanentError) Unwrap() error {
+	return e.Err
+}
+
+// Permanent reports that the queue item must not be retried.
+func (e *PermanentError) Permanent() bool {
+	return true
+}
+
+// Permanent wraps err so the queue stops retrying it.
+func Permanent(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &PermanentError{Err: err}
+}
+
 // ProcessReport summarizes one processor pass.
 type ProcessReport struct {
 	Loaded      int
@@ -27,6 +54,7 @@ type ProcessReport struct {
 	Ran         int
 	Retried     int
 	RateLimited int
+	Discarded   int
 	Deferred    int
 	Missing     int
 	Skipped     int
@@ -86,6 +114,14 @@ func (p Processor) ProcessDue(ctx context.Context) (ProcessReport, error) {
 		}
 
 		if err := executor.Execute(ctx, item); err != nil {
+			var permanent interface{ Permanent() bool }
+			if errors.As(err, &permanent) && permanent.Permanent() {
+				if err := p.Store.DeleteQueueItem(ctx, item.ID); err != nil {
+					return report, err
+				}
+				report.Discarded++
+				continue
+			}
 			var limited interface{ RetryAfter() time.Duration }
 			if errors.As(err, &limited) {
 				delay := limited.RetryAfter()
