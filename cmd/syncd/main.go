@@ -72,7 +72,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		ReleasesURL:        cfg.ReleasesURL,
 		MinBuild:           cfg.MinBuild,
 		RecommendedBuild:   cfg.RecommendedBuild,
-		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "acquisition", "settings"},
+		Features:           []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "mix", "acquisition", "settings"},
 		DB:                 db,
 		ReviewQueue:        queueRepo,
 		ReviewQueueActions: queueRepo,
@@ -81,6 +81,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		SpotifyLibrary:     connectorRepo,
 		Devices:            deviceRepo,
 		EventLog:           eventStore,
+		Mix:                eventStore,
 		Acquisition:        acquisitionRepo,
 		Rollout:            queueRepo,
 	})

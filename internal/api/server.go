@@ -44,6 +44,7 @@ type Deps struct {
 	SpotifyLibrary     SpotifyLibraryActions
 	Devices            DeviceRegistry
 	EventLog           EventLog
+	Mix                MixSource
 	Acquisition        AcquisitionQueue
 	Rollout            RolloutSettings
 }
@@ -103,6 +104,11 @@ type EventLog interface {
 	List(context.Context) ([]taste.EventRecord, error)
 }
 
+// MixSource builds the candidate pool a mix draws from.
+type MixSource interface {
+	MixCandidates(context.Context, time.Time) ([]taste.MixCandidate, error)
+}
+
 // AcquisitionQueue records downloads for the optional worker.
 type AcquisitionQueue interface {
 	Create(context.Context, string, string) (acquisition.Request, error)
@@ -151,6 +157,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/events", d.handleEvents)
 	mux.HandleFunc("POST /sync/v1/events", d.handleEventsAppend)
 	mux.HandleFunc("GET /sync/v1/score", d.handleScores)
+	mux.HandleFunc("GET /sync/v1/mix", d.handleMix)
 	mux.HandleFunc("GET /sync/v1/acquisition", d.handleAcquisition)
 	mux.HandleFunc("POST /sync/v1/acquisition", d.handleAcquisitionCreate)
 	mux.HandleFunc("DELETE /sync/v1/acquisition", d.handleAcquisitionClear)
@@ -800,6 +807,118 @@ func (d Deps) handleScores(w http.ResponseWriter, r *http.Request) {
 		scores = []taste.TrackScore{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"as_of": asOf.Format(time.RFC3339Nano), "tracks": scores}, 0)
+}
+
+type mixTrack struct {
+	CanonicalID  string  `json:"canonical_id"`
+	Title        string  `json:"title"`
+	Score        float64 `json:"score"`
+	LastPlayedAt string  `json:"last_played_at,omitempty"`
+	Local        bool    `json:"local"`
+	Liked        bool    `json:"liked"`
+	Service      string  `json:"service,omitempty"`
+}
+
+// handleMix returns one track list, ranked by affinity. It never reaches for
+// a provider: a mix is a selection over already-known tracks.
+func (d Deps) handleMix(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+
+	asOf := d.Now().UTC()
+	if raw := query.Get("as_of"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid as_of"}, 0)
+			return
+		}
+		asOf = parsed.UTC()
+	}
+
+	kind := query.Get("kind")
+	if kind == "" {
+		kind = "shuffle"
+	}
+	switch kind {
+	case "shuffle", "rediscover", "local-rarities", "missing-local":
+	default:
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid kind"}, 0)
+		return
+	}
+
+	days := 30
+	if raw := query.Get("days"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid days"}, 0)
+			return
+		}
+		days = parsed
+	}
+
+	seed := asOf.UnixNano()
+	if raw := query.Get("seed"); raw != "" {
+		parsed, err := strconv.ParseInt(raw, 10, 64)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid seed"}, 0)
+			return
+		}
+		seed = parsed
+	}
+
+	limit := 50
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 500 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"}, 0)
+			return
+		}
+		limit = parsed
+	}
+
+	var candidates []taste.MixCandidate
+	if d.Mix != nil {
+		stored, err := d.Mix.MixCandidates(r.Context(), asOf)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "mix unavailable"}, 0)
+			return
+		}
+		candidates = stored
+	}
+
+	selected := candidates
+	switch kind {
+	case "rediscover":
+		selected = taste.Rediscover(candidates, asOf, days)
+	case "local-rarities":
+		selected = taste.LocalRarities(candidates)
+	case "missing-local":
+		selected = taste.MissingLocally(candidates)
+	}
+	ranked := taste.ScoreWeightedShuffle(selected, seed)
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+
+	tracks := make([]mixTrack, 0, len(ranked))
+	for _, item := range ranked {
+		track := mixTrack{
+			CanonicalID: item.TrackID,
+			Title:       item.Title,
+			Score:       item.Score,
+			Local:       item.Local,
+			Liked:       item.Liked,
+			Service:     item.ServiceName,
+		}
+		if !item.LastPlayedAt.IsZero() {
+			track.LastPlayedAt = item.LastPlayedAt.UTC().Format(time.RFC3339Nano)
+		}
+		tracks = append(tracks, track)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"as_of":  asOf.Format(time.RFC3339Nano),
+		"kind":   kind,
+		"tracks": tracks,
+	}, 0)
 }
 
 type acquisitionResponse struct {

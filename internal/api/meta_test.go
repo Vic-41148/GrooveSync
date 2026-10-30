@@ -555,6 +555,121 @@ func TestSettingsUnavailable(t *testing.T) {
 	}
 }
 
+func TestMixKinds(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	base := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+
+	tracks := map[string]string{
+		"track-local":    "Local",
+		"track-stream":   "Stream",
+		"track-recent":   "Recent",
+		"track-unplayed": "Unplayed",
+	}
+	for id, title := range tracks {
+		if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES (?, ?, 'Artist', 180000)`, id, title); err != nil {
+			t.Fatalf("insert track %s: %v", id, err)
+		}
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO rendition (canonical_id, kind, path_or_uri) VALUES ('track-local', 'file', '/music/local.flac')`); err != nil {
+		t.Fatalf("insert rendition: %v", err)
+	}
+
+	eventStore := taste.NewStore(db)
+	if _, err := eventStore.Append(ctx, []taste.EventRecord{
+		{ID: "e1", DeviceID: "phone", CanonicalID: "track-local", Source: taste.SourceLocal, Type: taste.EventPlay, PercentPlayed: 1, HLC: taste.HLC{Wall: base.Add(-60 * 24 * time.Hour), Counter: 1, Node: "phone"}},
+		{ID: "e2", DeviceID: "phone", CanonicalID: "track-stream", Source: taste.SourceYouTube, Type: taste.EventLike, HLC: taste.HLC{Wall: base.Add(-time.Hour), Counter: 1, Node: "phone"}},
+		{ID: "e3", DeviceID: "phone", CanonicalID: "track-recent", Source: taste.SourceLocal, Type: taste.EventPlay, PercentPlayed: 1, HLC: taste.HLC{Wall: base.Add(-24 * time.Hour), Counter: 1, Node: "phone"}},
+	}); err != nil {
+		t.Fatalf("Append() error = %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: func() time.Time { return base }, Mix: eventStore})
+
+	tests := []struct {
+		name string
+		url  string
+		want []string
+	}{
+		{name: "shuffle ranks every track", url: "/sync/v1/mix", want: []string{"track-stream", "track-recent", "track-local", "track-unplayed"}},
+		{name: "rediscover skips a recent unliked play", url: "/sync/v1/mix?kind=rediscover&days=30", want: []string{"track-stream", "track-local", "track-unplayed"}},
+		{name: "local rarities keep local unliked tracks", url: "/sync/v1/mix?kind=local-rarities", want: []string{"track-local"}},
+		{name: "missing local keeps liked remote tracks", url: "/sync/v1/mix?kind=missing-local", want: []string{"track-stream"}},
+		{name: "limit caps the list", url: "/sync/v1/mix?limit=1", want: []string{"track-stream"}},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tc.url, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+			}
+			var got struct {
+				Tracks []struct {
+					CanonicalID string `json:"canonical_id"`
+				} `json:"tracks"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("unmarshal response: %v", err)
+			}
+			if len(got.Tracks) != len(tc.want) {
+				t.Fatalf("tracks = %#v, want %v", got.Tracks, tc.want)
+			}
+			for i, id := range tc.want {
+				if got.Tracks[i].CanonicalID != id {
+					t.Fatalf("tracks[%d] = %q, want %q", i, got.Tracks[i].CanonicalID, id)
+				}
+			}
+		})
+	}
+}
+
+func TestMixRejectsInvalidQuery(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now})
+
+	for _, url := range []string{
+		"/sync/v1/mix?kind=sometimes",
+		"/sync/v1/mix?days=0",
+		"/sync/v1/mix?days=soon",
+		"/sync/v1/mix?seed=abc",
+		"/sync/v1/mix?limit=0",
+		"/sync/v1/mix?limit=501",
+		"/sync/v1/mix?as_of=yesterday",
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want %d", url, rec.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestMixWithoutSource(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/mix", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if tracks, ok := got["tracks"].([]any); !ok || len(tracks) != 0 {
+		t.Fatalf("tracks = %#v, want an empty list", got["tracks"])
+	}
+}
+
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 
