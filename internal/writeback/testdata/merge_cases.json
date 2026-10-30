@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "name": "all states agree",
+      "snapshot": {
+        "provider": "spotify",
+        "item_id": "1",
+        "base": "liked",
+        "local": "liked",
+        "remote": "liked",
+        "confidence": 0.99
+      },
+      "confidence_threshold": 0.8,
+      "mode": "live",
+      "want": {
+        "action": "noop",
+        "write": false,
+        "needs_review": false,
+        "undo_before": "liked",
+        "undo_after": "liked"
+      }
+    },
+    {
+      "name": "remote removed a liked item",
+      "snapshot": {
+        "provider": "spotify",
+        "item_id": "2",
+        "base": "liked",
+        "local": "liked",
+        "remote": "unliked",
+        "remote_at": "2026-10-30T12:01:00Z",
+        "confidence": 0.99
+      },
+      "confidence_threshold": 0.8,
+      "mode": "live",
+      "want": {
+        "action": "pull_like",
+        "write": true,
+        "needs_review": false,
+        "undo_before": "liked",
+        "undo_after": "liked"
+      }
+    },
+    {
+      "name": "local removed a liked item",
+      "snapshot": {
+        "provider": "spotify",
+        "item_id": "3",
+        "base": "liked",
+        "local": "unliked",
+        "remote": "liked",
+        "confidence": 0.99
+      },
+      "confidence_threshold": 0.8,
+      "mode": "live",
+      "want": {
+        "action": "push_unlike",
+        "write": true,
+        "needs_review": false,
+        "undo_before": "liked",
+        "undo_after": "unliked"
+      }
+    },
+    {
+      "name": "local added an item",
+      "snapshot": {
+        "provider": "spotify",
+        "item_id": "4",
+        "base": "unliked",
+        "local": "liked",
+        "remote": "unliked",
+        "confidence": 0.99
+      },
+      "confidence_threshold": 0.8,
+      "mode": "live",
+      "want": {
+        "action": "push_like",
+        "write": true,
+        "needs_review": false,
+        "undo_before": "unliked",
+        "undo_after": "liked"
+      }
+    },
+    {
+      "name": "remote added an item",
+      "snapshot": {
+        "provider": "spotify",
+        "item_id": "5",
+        "base": "unliked",
+        "local": "unliked",
+        "remote": "liked",
+        "confidence": 0.99
+      },
+      "confidence_threshold": 0.8,
+      "mode": "live",
+      "want": {
+        "action": "pull_like",
+        "write": true,
+        "needs_review": false,
+        "undo_before": "unliked",
+        "undo_after": "liked"
+      }
+    },
+    {
+      "name": "conflict resolves to the newer remote change",
+      "snapshot": {
+        "provider": "spotify",
+        "item_id": "6",
+        "base": "unknown",
+        "local": "liked",
+        "remote": "unliked",
+        "local_at": "2026-10-30T12:00:00Z",
+        "remote_at": "2026-10-30T12:01:00Z",
+        "confidence": 0.99
+      },
+      "confidence_threshold": 0.8,
+      "mode": "live",
+      "want": {
+        "action": "conflict_newest_wins",
+        "write": true,
+        "needs_review": false,
+        "winner_at": "2026-10-30T12:01:00Z",
+        "undo_before": "unknown",
+        "undo_after": "unliked"
+      }
+    },
+    {
+      "name": "conflict resolves to the newer local change",
+      "snapshot": {
+        "provider": "spotify",
+        "item_id": "7",
+        "base": "unknown",
+        "local": "liked",
+        "remote": "unliked",
+        "local_at": "2026-10-30T12:02:00Z",
+        "remote_at": "2026-10-30T12:01:00Z",
+        "confidence": 0.99
+      },
+      "confidence_threshold": 0.8,
+      "mode": "live",
+      "want": {
+        "action": "conflict_newest_wins",
+        "write": true,
+        "needs_review": false,
+        "winner_at": "2026-10-30T12:02:00Z",
+        "undo_before": "unknown",
+        "undo_after": "liked"
+      }
+    },
+    {
+      "name": "shadow mode never writes",
+      "snapshot": {
+        "provider": "spotify",
+        "item_id": "8",
+        "base": "unliked",
+        "local": "liked",
+        "remote": "unliked",
+        "confidence": 0.99
+      },
+      "confidence_threshold": 0.8,
+      "mode": "shadow",
+      "want": {
+        "action": "push_like",
+        "write": false,
+        "needs_review": false,
+        "undo_before": "unliked",
+        "undo_after": "liked"
+      }
+    },
+    {
+      "name": "below threshold never writes",
+      "snapshot": {
+        "provider": "spotify",
+        "item_id": "9",
+        "base": "unliked",
+        "local": "liked",
+        "remote": "unliked",
+        "confidence": 0.5
+      },
+      "confidence_threshold": 0.8,
+      "mode": "live",
+      "want": {
+        "action": "push_like",
+        "write": false,
+        "needs_review": true,
+        "undo_before": "unliked",
+        "undo_after": "liked"
+      }
+    }
+  ]
+}
