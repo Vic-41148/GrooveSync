@@ -28,6 +28,11 @@ type ReviewQueueStore interface {
 	ListReviewQueue(context.Context) ([]ReviewItem, error)
 }
 
+// WriteLogLister returns recorded write transitions.
+type WriteLogLister interface {
+	ListWriteLog(context.Context) ([]WriteLog, error)
+}
+
 // ReviewItem is a low-confidence match awaiting human review.
 type ReviewItem struct {
 	ID          int64
@@ -133,6 +138,47 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 		return fmt.Errorf("writeback: append write log %q: %w", log.ID, err)
 	}
 	return nil
+}
+
+// ListWriteLog returns write records ordered from newest to oldest.
+func (r *Repo) ListWriteLog(ctx context.Context) ([]WriteLog, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT write_id, service, op, before, after, confidence, batch_id
+FROM write_log
+ORDER BY rowid DESC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("writeback: list write log: %w", err)
+	}
+	defer rows.Close()
+
+	var out []WriteLog
+	for rows.Next() {
+		var (
+			id, provider, op string
+			before, after    sql.NullString
+			confidence       float64
+			batchID          sql.NullString
+		)
+		if err := rows.Scan(&id, &provider, &op, &before, &after, &confidence, &batchID); err != nil {
+			return nil, fmt.Errorf("writeback: scan write log: %w", err)
+		}
+		item := WriteLog{ID: id, Provider: provider, Operation: op, Confidence: confidence}
+		if before.Valid {
+			item.Before = State(before.String)
+		}
+		if after.Valid {
+			item.After = State(after.String)
+		}
+		if batchID.Valid {
+			item.BatchID = batchID.String
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("writeback: iterate write log: %w", err)
+	}
+	return out, nil
 }
 
 // UpsertTombstone keeps a tombstone alive until its TTL expires.

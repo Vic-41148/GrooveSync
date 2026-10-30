@@ -33,6 +33,7 @@ type Deps struct {
 	Now                func() time.Time
 	ReviewQueue        ReviewQueueLister
 	ReviewQueueActions ReviewQueueActions
+	WriteLog           WriteLogLister
 	Connectors         ConnectorLister
 	ConnectorActions   ConnectorActions
 	SpotifyLibrary     SpotifyLibraryActions
@@ -48,6 +49,11 @@ type ReviewQueueActions interface {
 	AddReviewQueueItem(context.Context, writeback.ReviewItem) (int64, error)
 	DeleteReviewQueueItem(context.Context, int64) error
 	ResolveReviewQueueItem(context.Context, int64) error
+}
+
+// WriteLogLister returns the recorded write history.
+type WriteLogLister interface {
+	ListWriteLog(context.Context) ([]writeback.WriteLog, error)
 }
 
 // ConnectorLister returns stored connector account state.
@@ -82,6 +88,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/review", d.handleReviewQueueCreate)
 	mux.HandleFunc("DELETE /sync/v1/review/{id}", d.handleReviewQueueDelete)
 	mux.HandleFunc("POST /sync/v1/review/{id}/resolve", d.handleReviewQueueResolve)
+	mux.HandleFunc("GET /sync/v1/write-log", d.handleWriteLog)
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
@@ -195,6 +202,41 @@ func (d Deps) handleReviewQueueResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleWriteLog(w http.ResponseWriter, r *http.Request) {
+	if d.WriteLog == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"items": []writeLogItem{}}, 0)
+		return
+	}
+	items, err := d.WriteLog.ListWriteLog(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "write log unavailable"}, 0)
+		return
+	}
+	out := make([]writeLogItem, 0, len(items))
+	for _, item := range items {
+		out = append(out, writeLogItem{
+			WriteID:    item.ID,
+			Service:    item.Provider,
+			Op:         item.Operation,
+			Before:     string(item.Before),
+			After:      string(item.After),
+			Confidence: item.Confidence,
+			BatchID:    item.BatchID,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": out}, 0)
+}
+
+type writeLogItem struct {
+	WriteID    string  `json:"write_id"`
+	Service    string  `json:"service"`
+	Op         string  `json:"op"`
+	Before     string  `json:"before,omitempty"`
+	After      string  `json:"after,omitempty"`
+	Confidence float64 `json:"confidence"`
+	BatchID    string  `json:"batch_id,omitempty"`
 }
 
 func (d Deps) handleConnectors(w http.ResponseWriter, r *http.Request) {
