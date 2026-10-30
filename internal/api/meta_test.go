@@ -189,6 +189,42 @@ func TestHandleConnectorsReturnsSpotifyAccounts(t *testing.T) {
 	}
 }
 
+func TestHandleDisconnectSpotify(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:          "1.2.3",
+		Proto:            3,
+		Schema:           7,
+		Now:              time.Now,
+		ConnectorActions: connectorActionsStub{},
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/sync/v1/connectors/spotify/acct-1", nil)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if got := rec.Body.String(); got != "" && got != "\n" {
+		t.Fatalf("body = %q, want empty", got)
+	}
+}
+
+func TestHandleDisconnectSpotifyWithoutActions(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/sync/v1/connectors/spotify/acct-1", nil))
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
 type reviewQueueStub struct{}
 
 func (reviewQueueStub) ListReviewQueue(context.Context) ([]writeback.ReviewItem, error) {
@@ -201,6 +237,12 @@ type connectorListerStub struct {
 
 func (c connectorListerStub) ListSpotifyAccounts(context.Context) ([]connectors.SpotifyAuthState, error) {
 	return c.accounts, nil
+}
+
+type connectorActionsStub struct{}
+
+func (connectorActionsStub) DisconnectSpotify(context.Context, string, string) error {
+	return nil
 }
 
 func TestHandleMetaSetsCacheControl(t *testing.T) {

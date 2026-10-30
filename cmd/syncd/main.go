@@ -61,6 +61,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Features:         []string{"meta", "review_queue", "connectors"},
 		ReviewQueue:      queueRepo,
 		Connectors:       connectors.NewRepo(db),
+		ConnectorActions: connectors.NewRepo(db),
 	})
 
 	srv := &http.Server{

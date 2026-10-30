@@ -28,6 +28,7 @@ type Deps struct {
 	Now         func() time.Time
 	ReviewQueue ReviewQueueLister
 	Connectors  ConnectorLister
+	ConnectorActions ConnectorActions
 }
 
 // ReviewQueueLister returns the current low-confidence matches.
@@ -38,6 +39,11 @@ type ReviewQueueLister interface {
 // ConnectorLister returns stored connector account state.
 type ConnectorLister interface {
 	ListSpotifyAccounts(context.Context) ([]connectors.SpotifyAuthState, error)
+}
+
+// ConnectorActions mutates stored connector account state.
+type ConnectorActions interface {
+	DisconnectSpotify(context.Context, string, string) error
 }
 
 // New builds the router with middleware applied.
@@ -54,6 +60,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /healthz", d.handleHealth)
 	mux.HandleFunc("GET /sync/v1/review", d.handleReviewQueue)
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
+	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -123,4 +130,21 @@ func (d Deps) handleConnectors(w http.ResponseWriter, r *http.Request) {
 		out = append(out, item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"spotify": out}, 0)
+}
+
+func (d Deps) handleDisconnectSpotify(w http.ResponseWriter, r *http.Request) {
+	if d.ConnectorActions == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "connector actions unavailable"}, 0)
+		return
+	}
+	accountID := r.PathValue("accountID")
+	if accountID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_id required"}, 0)
+		return
+	}
+	if err := d.ConnectorActions.DisconnectSpotify(r.Context(), accountID, "user_requested"); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "disconnect failed"}, 0)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
