@@ -58,10 +58,11 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		ReleasesURL:      cfg.ReleasesURL,
 		MinBuild:         cfg.MinBuild,
 		RecommendedBuild: cfg.RecommendedBuild,
-		Features:         []string{"meta", "review_queue", "connectors"},
+		Features:         []string{"meta", "review_queue", "connectors", "spotify_library"},
 		ReviewQueue:      queueRepo,
 		Connectors:       connectors.NewRepo(db),
 		ConnectorActions: connectors.NewRepo(db),
+		SpotifyLibrary:   connectors.NewRepo(db),
 	})
 
 	srv := &http.Server{

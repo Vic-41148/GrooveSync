@@ -3,13 +3,18 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Vic-41148/groovesync/internal/connectors"
+	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/writeback"
+	_ "modernc.org/sqlite"
 )
 
 func TestProtoMin(t *testing.T) {
@@ -113,14 +118,14 @@ func TestMetaExposesReviewQueueFlag(t *testing.T) {
 func TestMetaPreservesFeatureList(t *testing.T) {
 	t.Parallel()
 
-	h := New(Deps{
-		Version:    "1.2.3",
-		Proto:      3,
-		Schema:     7,
-		Now:        time.Now,
-		Features:    []string{"meta", "review_queue", "connectors"},
-		Connectors: connectorListerStub{},
-	})
+		h := New(Deps{
+			Version:    "1.2.3",
+			Proto:      3,
+			Schema:     7,
+			Now:        time.Now,
+			Features:    []string{"meta", "review_queue", "connectors", "spotify_library"},
+			Connectors: connectorListerStub{},
+		})
 
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil))
@@ -133,8 +138,8 @@ func TestMetaPreservesFeatureList(t *testing.T) {
 	if !ok {
 		t.Fatalf("features type = %T, want []any", got["features"])
 	}
-	if len(features) != 3 {
-		t.Fatalf("features len = %d, want 3", len(features))
+	if len(features) != 4 {
+		t.Fatalf("features len = %d, want 4", len(features))
 	}
 }
 
@@ -225,6 +230,101 @@ func TestHandleDisconnectSpotifyWithoutActions(t *testing.T) {
 	}
 }
 
+func TestSpotifyLibraryContains(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	seedSpotifyRowsAPI(t, db)
+
+	h := New(Deps{
+		Version:        "1.2.3",
+		Proto:          3,
+		Schema:         7,
+		Now:            time.Now,
+		SpotifyLibrary:  connectors.NewRepo(db),
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/me/library/contains?uris=spotify:track:uri:1", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	contains, ok := got["contains"].([]any)
+	if !ok {
+		t.Fatalf("contains type = %T, want []any", got["contains"])
+	}
+	if len(contains) != 1 || contains[0] != true {
+		t.Fatalf("contains = %#v, want [true]", contains)
+	}
+}
+
+func TestSpotifyLibraryWriteQueuesItems(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	seedSpotifyRowsAPI(t, db)
+
+	h := New(Deps{
+		Version:       "1.2.3",
+		Proto:         3,
+		Schema:        7,
+		Now:           time.Now,
+		SpotifyLibrary: connectors.NewRepo(db),
+	})
+
+	req := httptest.NewRequest(http.MethodPut, "/sync/v1/me/library", strings.NewReader(`{"uris":["spotify:track:uri:1"]}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusAccepted)
+	}
+	var count int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM write_queue`).Scan(&count); err != nil {
+		t.Fatalf("count write_queue: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("write_queue count = %d, want 1", count)
+	}
+}
+
+func openAPIConnectorTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "syncd-api.db")
+	db, err := sql.Open("sqlite", store.DSNForTest(path))
+	if err != nil {
+		t.Fatalf("sql.Open: %v", err)
+	}
+	if err := store.Migrate(context.Background(), db); err != nil {
+		t.Fatalf("store.Migrate: %v", err)
+	}
+	return db
+}
+
+func seedSpotifyRowsAPI(t *testing.T, db *sql.DB) {
+	t.Helper()
+
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO alias (service, service_id, canonical_id, confidence, method) VALUES (?, 'uri:1', 'track-1', 0.99, 'manual')`, connectors.ProviderSpotify); err != nil {
+		t.Fatalf("insert alias: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO service_state (canonical_id, service, base_state, last_seen) VALUES ('track-1', ?, 'liked', ?)`, connectors.ProviderSpotify, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert service_state: %v", err)
+	}
+}
+
 type reviewQueueStub struct{}
 
 func (reviewQueueStub) ListReviewQueue(context.Context) ([]writeback.ReviewItem, error) {
@@ -243,6 +343,16 @@ type connectorActionsStub struct{}
 
 func (connectorActionsStub) DisconnectSpotify(context.Context, string, string) error {
 	return nil
+}
+
+type spotifyLibraryStub struct{}
+
+func (spotifyLibraryStub) QueueSpotifyLibraryWrite(context.Context, string, string, []string) error {
+	return nil
+}
+
+func (spotifyLibraryStub) SpotifyLibraryContains(context.Context, []string) ([]bool, error) {
+	return []bool{true}, nil
 }
 
 func TestHandleMetaSetsCacheControl(t *testing.T) {

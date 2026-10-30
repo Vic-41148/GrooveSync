@@ -4,8 +4,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Vic-41148/groovesync/internal/connectors"
@@ -29,6 +32,7 @@ type Deps struct {
 	ReviewQueue ReviewQueueLister
 	Connectors  ConnectorLister
 	ConnectorActions ConnectorActions
+	SpotifyLibrary   SpotifyLibraryActions
 }
 
 // ReviewQueueLister returns the current low-confidence matches.
@@ -46,6 +50,12 @@ type ConnectorActions interface {
 	DisconnectSpotify(context.Context, string, string) error
 }
 
+// SpotifyLibraryActions handles Spotify URI writes and lookups.
+type SpotifyLibraryActions interface {
+	QueueSpotifyLibraryWrite(context.Context, string, string, []string) error
+	SpotifyLibraryContains(context.Context, []string) ([]bool, error)
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -61,6 +71,9 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/review", d.handleReviewQueue)
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
+	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
+	mux.HandleFunc("DELETE /sync/v1/me/library", d.handleSpotifyLibraryWrite("unlike"))
+	mux.HandleFunc("GET /sync/v1/me/library/contains", d.handleSpotifyLibraryContains)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -147,4 +160,87 @@ func (d Deps) handleDisconnectSpotify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleSpotifyLibraryWrite(operation string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if d.SpotifyLibrary == nil {
+			writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "spotify library unavailable"}, 0)
+			return
+		}
+		uris, err := decodeSpotifyURIs(r)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+			return
+		}
+		if err := d.SpotifyLibrary.QueueSpotifyLibraryWrite(r.Context(), requestIDFrom(r.Context()), operation, uris); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]any{"queued": len(uris)}, 0)
+	}
+}
+
+func (d Deps) handleSpotifyLibraryContains(w http.ResponseWriter, r *http.Request) {
+	if d.SpotifyLibrary == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "spotify library unavailable"}, 0)
+		return
+	}
+	uris := spotifyURIsFromQuery(r)
+	if len(uris) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "uris required"}, 0)
+		return
+	}
+	contains, err := d.SpotifyLibrary.SpotifyLibraryContains(r.Context(), uris)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "spotify library unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"contains": contains}, 0)
+}
+
+type spotifyLibraryWriteRequest struct {
+	URIs []string `json:"uris"`
+}
+
+func decodeSpotifyURIs(r *http.Request) ([]string, error) {
+	if r.Body == nil {
+		return nil, http.ErrBodyNotAllowed
+	}
+	defer r.Body.Close()
+	var req spotifyLibraryWriteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		return nil, fmt.Errorf("decode request body: %w", err)
+	}
+	return sanitizeSpotifyURIs(req.URIs)
+}
+
+func spotifyURIsFromQuery(r *http.Request) []string {
+	values := r.URL.Query()["uris"]
+	if len(values) == 0 {
+		values = r.URL.Query()["ids"]
+	}
+	var uris []string
+	for _, value := range values {
+		for _, item := range strings.Split(value, ",") {
+			uris = append(uris, item)
+		}
+	}
+	out, _ := sanitizeSpotifyURIs(uris)
+	return out
+}
+
+func sanitizeSpotifyURIs(uris []string) ([]string, error) {
+	out := make([]string, 0, len(uris))
+	for _, uri := range uris {
+		uri = strings.TrimSpace(uri)
+		if uri == "" {
+			continue
+		}
+		out = append(out, uri)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("uris required")
+	}
+	return out, nil
 }

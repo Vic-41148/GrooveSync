@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -207,6 +208,44 @@ func TestSpotifyWriteExecutorRejectsBadPayload(t *testing.T) {
 	}
 	if attempts != 1 {
 		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestSpotifyLibraryContains(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	seedSpotifyRows(t, db)
+
+	repo := NewRepo(db)
+	contains, err := repo.SpotifyLibraryContains(context.Background(), []string{"spotify:track:uri:1", "spotify:track:missing"})
+	if err != nil {
+		t.Fatalf("SpotifyLibraryContains() error = %v", err)
+	}
+	if len(contains) != 2 || !contains[0] || contains[1] {
+		t.Fatalf("SpotifyLibraryContains() = %#v, want [true false]", contains)
+	}
+}
+
+func TestQueueSpotifyLibraryWrite(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	seedSpotifyRows(t, db)
+
+	repo := NewRepo(db)
+	if err := repo.QueueSpotifyLibraryWrite(context.Background(), "req-1", "like", []string{"spotify:track:uri:1"}); err != nil {
+		t.Fatalf("QueueSpotifyLibraryWrite() error = %v", err)
+	}
+
+	var writeID, service, op, payload string
+	if err := db.QueryRowContext(context.Background(), `SELECT write_id, service, op, payload FROM write_queue WHERE write_id = 'req-1:like:0'`).Scan(&writeID, &service, &op, &payload); err != nil {
+		t.Fatalf("query write_queue: %v", err)
+	}
+	if writeID != "req-1:like:0" || service != ProviderSpotify || op != "like" || !strings.Contains(payload, `"canonical_id":"track-1"`) {
+		t.Fatalf("write_queue = %q %q %q %q", writeID, service, op, payload)
 	}
 }
 

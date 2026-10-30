@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -311,6 +312,126 @@ ORDER BY account_id ASC
 		return nil, fmt.Errorf("connectors: iterate spotify accounts: %w", err)
 	}
 	return out, nil
+}
+
+// QueueSpotifyLibraryWrite stores a like or unlike request for later execution.
+func (r *Repo) QueueSpotifyLibraryWrite(ctx context.Context, requestID, operation string, uris []string) error {
+	if requestID == "" {
+		return errors.New("connectors: request id is required")
+	}
+	if operation != "like" && operation != "unlike" {
+		return fmt.Errorf("connectors: unsupported spotify library operation %q", operation)
+	}
+	if len(uris) == 0 {
+		return errors.New("connectors: spotify library uris are required")
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("connectors: begin spotify library tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	for i, uri := range uris {
+		canonicalID, err := r.spotifyCanonicalID(ctx, tx, uri)
+		if err != nil {
+			return err
+		}
+		writeID := fmt.Sprintf("%s:%s:%d", requestID, operation, i)
+		payload := fmt.Sprintf(`{"canonical_id":%q,"confidence":1,"batch_id":%q}`, canonicalID, requestID)
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO write_queue (write_id, service, op, payload)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(write_id) DO UPDATE SET
+    service = excluded.service,
+    op = excluded.op,
+    payload = excluded.payload
+`, writeID, ProviderSpotify, operation, payload); err != nil {
+			return fmt.Errorf("connectors: queue spotify write %q: %w", uri, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("connectors: commit spotify library tx: %w", err)
+	}
+	return nil
+}
+
+// SpotifyLibraryContains reports whether each URI is currently marked liked.
+func (r *Repo) SpotifyLibraryContains(ctx context.Context, uris []string) ([]bool, error) {
+	if len(uris) == 0 {
+		return []bool{}, nil
+	}
+
+	out := make([]bool, 0, len(uris))
+	for _, uri := range uris {
+		canonicalID, err := r.spotifyCanonicalID(ctx, nil, uri)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) || strings.Contains(err.Error(), "unknown spotify uri") {
+				out = append(out, false)
+				continue
+			}
+			return nil, err
+		}
+		var state string
+		err = r.db.QueryRowContext(ctx, `
+SELECT ss.base_state
+FROM service_state ss
+WHERE ss.service = ? AND ss.canonical_id = ?
+`, ProviderSpotify, canonicalID).Scan(&state)
+		switch {
+		case err == nil:
+			out = append(out, state == "liked")
+		case errors.Is(err, sql.ErrNoRows):
+			out = append(out, false)
+		case err != nil:
+			return nil, fmt.Errorf("connectors: check spotify library for %q: %w", uri, err)
+		}
+	}
+	return out, nil
+}
+
+func (r *Repo) spotifyCanonicalID(ctx context.Context, tx *sql.Tx, uri string) (string, error) {
+	serviceID := spotifyLibraryServiceID(uri)
+	if serviceID == "" {
+		return "", errors.New("connectors: spotify uri is required")
+	}
+
+	type rowQueryer interface {
+		QueryRowContext(context.Context, string, ...any) *sql.Row
+	}
+	var queryer rowQueryer = r.db
+	if tx != nil {
+		queryer = tx
+	}
+
+	var canonicalID string
+	if err := queryer.QueryRowContext(ctx, `
+SELECT canonical_id
+FROM alias
+WHERE service = ? AND service_id = ?
+`, ProviderSpotify, serviceID).Scan(&canonicalID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", fmt.Errorf("connectors: unknown spotify uri %q: %w", uri, sql.ErrNoRows)
+		}
+		return "", fmt.Errorf("connectors: resolve spotify uri %q: %w", uri, err)
+	}
+	return canonicalID, nil
+}
+
+func spotifyLibraryServiceID(uri string) string {
+	uri = strings.TrimSpace(uri)
+	if uri == "" {
+		return ""
+	}
+	if strings.HasPrefix(uri, "spotify:") {
+		uri = strings.TrimPrefix(uri, "spotify:")
+		if idx := strings.IndexByte(uri, ':'); idx >= 0 {
+			return uri[idx+1:]
+		}
+		return uri
+	}
+	return uri
 }
 
 func nullableTime(t time.Time) any {
