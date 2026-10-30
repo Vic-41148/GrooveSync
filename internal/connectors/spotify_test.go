@@ -3,10 +3,12 @@ package connectors
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/Vic-41148/groovesync/internal/writeback"
 	"github.com/Vic-41148/groovesync/internal/store"
 	_ "modernc.org/sqlite"
 )
@@ -115,6 +117,162 @@ func TestSpotifyRepoInvalidGrantClearsTokensWithoutPurgingLibraryData(t *testing
 	}
 	if state.Status != SpotifyStatusReconnectRequired {
 		t.Fatalf("status = %q, want %q", state.Status, SpotifyStatusReconnectRequired)
+	}
+}
+
+func TestSpotifyWriteExecutor(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	ctx := context.Background()
+	payload, err := json.Marshal(map[string]any{
+		"canonical_id": "track-1",
+		"confidence":   0.97,
+		"batch_id":     "batch-1",
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO write_queue (write_id, service, op, payload) VALUES ('write-2', ?, 'like', ?)`, ProviderSpotify, string(payload)); err != nil {
+		t.Fatalf("insert write_queue: %v", err)
+	}
+
+	report, err := writeback.Processor{
+		Store: writeback.NewRepo(db),
+		Now:   func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) },
+		Executors: map[string]writeback.Executor{
+			ProviderSpotify: SpotifyWriteExecutor(db),
+		},
+	}.ProcessDue(ctx)
+	if err != nil {
+		t.Fatalf("ProcessDue() error = %v", err)
+	}
+	if report.Ran != 1 {
+		var lastError string
+		if scanErr := db.QueryRowContext(ctx, `SELECT last_error FROM write_queue WHERE write_id = 'write-2'`).Scan(&lastError); scanErr == nil {
+			t.Fatalf("report = %#v, want one run, last_error=%q", report, lastError)
+		}
+		t.Fatalf("report = %#v, want one run", report)
+	}
+	assertTableCount(t, db, "write_queue", 0)
+
+	var state string
+	if err := db.QueryRowContext(ctx, `SELECT base_state FROM service_state WHERE canonical_id = 'track-1' AND service = ?`, ProviderSpotify).Scan(&state); err != nil {
+		t.Fatalf("query service_state: %v", err)
+	}
+	if state != string(writeback.StateLiked) {
+		t.Fatalf("base_state = %q, want liked", state)
+	}
+	var op string
+	var before, after sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT op, before, after FROM write_log WHERE write_id = 'write-2'`).Scan(&op, &before, &after); err != nil {
+		t.Fatalf("query write_log: %v", err)
+	}
+	if op != "like" || !after.Valid || after.String != string(writeback.StateLiked) {
+		t.Fatalf("write_log = %q %v %v, want like to liked", op, before, after)
+	}
+}
+
+func TestSpotifyWriteExecutorRejectsBadPayload(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO write_queue (write_id, service, op, payload) VALUES ('write-3', ?, 'like', '{}')`, ProviderSpotify); err != nil {
+		t.Fatalf("insert write_queue: %v", err)
+	}
+
+	report, err := writeback.Processor{
+		Store: writeback.NewRepo(db),
+		Now:   func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) },
+		Executors: map[string]writeback.Executor{
+			ProviderSpotify: SpotifyWriteExecutor(db),
+		},
+	}.ProcessDue(ctx)
+	if err != nil {
+		t.Fatalf("ProcessDue() error = %v", err)
+	}
+	if report.Retried != 1 || report.Failed != 1 {
+		t.Fatalf("report = %#v, want one retry", report)
+	}
+	var attempts int
+	if err := db.QueryRowContext(ctx, `SELECT attempts FROM write_queue WHERE write_id = 'write-3'`).Scan(&attempts); err != nil {
+		t.Fatalf("query write_queue: %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", attempts)
+	}
+}
+
+func TestYouTubeWriteExecutor(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-yt', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	ctx := context.Background()
+	payload, err := json.Marshal(map[string]any{"canonical_id": "track-yt", "confidence": 0.5, "batch_id": "batch-yt"})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO write_queue (write_id, service, op, payload) VALUES ('write-yt', ?, 'like', ?)`, ProviderYouTube, string(payload)); err != nil {
+		t.Fatalf("insert write_queue: %v", err)
+	}
+
+	report, err := writeback.Processor{
+		Store: writeback.NewRepo(db),
+		Now:   func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) },
+		Executors: map[string]writeback.Executor{
+			ProviderYouTube: YouTubeWriteExecutor(db),
+		},
+	}.ProcessDue(ctx)
+	if err != nil {
+		t.Fatalf("ProcessDue() error = %v", err)
+	}
+	if report.Ran != 1 {
+		t.Fatalf("report = %#v, want one run", report)
+	}
+}
+
+func TestListenBrainzWriteExecutor(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	if _, err := db.ExecContext(context.Background(), `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-lb', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	ctx := context.Background()
+	payload, err := json.Marshal(map[string]any{"canonical_id": "track-lb", "confidence": 0.5, "batch_id": "batch-lb"})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO write_queue (write_id, service, op, payload) VALUES ('write-lb', ?, 'love', ?)`, ProviderListenBrainz, string(payload)); err != nil {
+		t.Fatalf("insert write_queue: %v", err)
+	}
+
+	report, err := writeback.Processor{
+		Store: writeback.NewRepo(db),
+		Now:   func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) },
+		Executors: map[string]writeback.Executor{
+			ProviderListenBrainz: ListenBrainzWriteExecutor(db),
+		},
+	}.ProcessDue(ctx)
+	if err != nil {
+		t.Fatalf("ProcessDue() error = %v", err)
+	}
+	if report.Ran != 1 {
+		t.Fatalf("report = %#v, want one run", report)
 	}
 }
 

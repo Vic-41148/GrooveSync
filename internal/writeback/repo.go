@@ -79,17 +79,21 @@ ORDER BY next_attempt ASC, write_id ASC
 	var items []QueueItem
 	for rows.Next() {
 		var (
-			id, provider, op, payload, nextText, lastErr string
-			attempts                                     int
+			id, provider, op, payload string
+			nextText, lastErr         sql.NullString
+			attempts                  int
 		)
 		if err := rows.Scan(&id, &provider, &op, &payload, &attempts, &nextText, &lastErr); err != nil {
 			return nil, fmt.Errorf("writeback: scan queue: %w", err)
 		}
-		item := QueueItem{ID: id, Provider: provider, Operation: op, Payload: payload, LastError: lastErr, Attempts: attempts}
-		if nextText != "" {
-			if ts, err := time.Parse(time.RFC3339Nano, nextText); err == nil {
+		item := QueueItem{ID: id, Provider: provider, Operation: op, Payload: payload, Attempts: attempts}
+		if nextText.Valid && nextText.String != "" {
+			if ts, err := time.Parse(time.RFC3339Nano, nextText.String); err == nil {
 				item.NextAttempt = ts
 			}
+		}
+		if lastErr.Valid {
+			item.LastError = lastErr.String
 		}
 		items = append(items, item)
 	}
