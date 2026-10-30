@@ -231,6 +231,71 @@ func TestHandleDisconnectSpotifyWithoutActions(t *testing.T) {
 	}
 }
 
+func TestHandleSpotifyInvalidGrant(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	seedSpotifyRowsAPI(t, db)
+
+	repo := connectors.NewRepo(db)
+	if err := repo.UpsertSpotifyAuth(context.Background(), connectors.SpotifyAuthState{
+		AccountID:    "acct-1",
+		Status:       connectors.SpotifyStatusConnected,
+		AuthorizedAt: time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC),
+		AccessToken:  "access",
+		RefreshToken: "refresh",
+	}); err != nil {
+		t.Fatalf("UpsertSpotifyAuth() error = %v", err)
+	}
+
+	h := New(Deps{
+		Version:          "1.2.3",
+		Proto:            3,
+		Schema:           7,
+		Now:              func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) },
+		ConnectorActions: repo,
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/spotify/acct-1/invalid-grant", nil))
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+
+	state, err := repo.GetSpotifyAccount(context.Background(), "acct-1")
+	if err != nil {
+		t.Fatalf("GetSpotifyAccount() error = %v", err)
+	}
+	if state.Status != connectors.SpotifyStatusReconnectRequired {
+		t.Fatalf("status = %q, want %q", state.Status, connectors.SpotifyStatusReconnectRequired)
+	}
+	if state.StatusReason != "invalid_grant" {
+		t.Fatalf("status_reason = %q, want invalid_grant", state.StatusReason)
+	}
+	var tokenCount int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM connector_token`).Scan(&tokenCount); err != nil {
+		t.Fatalf("count connector_token: %v", err)
+	}
+	if tokenCount != 0 {
+		t.Fatalf("connector_token count = %d, want 0", tokenCount)
+	}
+}
+
+func TestHandleSpotifyInvalidGrantWithoutConnectorActions(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/spotify/acct-1/invalid-grant", nil))
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
 func TestSpotifyLibraryContains(t *testing.T) {
 	t.Parallel()
 
@@ -776,6 +841,10 @@ func (c connectorListerStub) ListSpotifyAccounts(context.Context) ([]connectors.
 type connectorActionsStub struct{}
 
 func (connectorActionsStub) DisconnectSpotify(context.Context, string, string) error {
+	return nil
+}
+
+func (connectorActionsStub) MarkSpotifyInvalidGrant(context.Context, string, string, time.Time) error {
 	return nil
 }
 

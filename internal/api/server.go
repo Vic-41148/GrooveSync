@@ -64,6 +64,7 @@ type ConnectorLister interface {
 // ConnectorActions mutates stored connector account state.
 type ConnectorActions interface {
 	DisconnectSpotify(context.Context, string, string) error
+	MarkSpotifyInvalidGrant(context.Context, string, string, time.Time) error
 }
 
 // SpotifyLibraryActions handles Spotify URI writes and lookups.
@@ -94,6 +95,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/plan", d.handleBuildPlan)
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
+	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/invalid-grant", d.handleSpotifyInvalidGrant)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
 	mux.HandleFunc("DELETE /sync/v1/me/library", d.handleSpotifyLibraryWrite("unlike"))
 	mux.HandleFunc("GET /sync/v1/me/library/contains", d.handleSpotifyLibraryContains)
@@ -237,7 +239,9 @@ func (d Deps) handleUndoWriteLog(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "write log unavailable"}, 0)
 		return
 	}
-	undo, ok := d.WriteLog.(interface{ UndoWriteLog(context.Context, writeback.UndoScope) ([]writeback.WriteLog, error) })
+	undo, ok := d.WriteLog.(interface {
+		UndoWriteLog(context.Context, writeback.UndoScope) ([]writeback.WriteLog, error)
+	})
 	if !ok {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "write log unavailable"}, 0)
 		return
@@ -264,7 +268,9 @@ func (d Deps) handleUndoWriteLogBatch(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "write log unavailable"}, 0)
 		return
 	}
-	undo, ok := d.WriteLog.(interface{ UndoWriteLog(context.Context, writeback.UndoScope) ([]writeback.WriteLog, error) })
+	undo, ok := d.WriteLog.(interface {
+		UndoWriteLog(context.Context, writeback.UndoScope) ([]writeback.WriteLog, error)
+	})
 	if !ok {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "write log unavailable"}, 0)
 		return
@@ -287,45 +293,45 @@ func (d Deps) handleUndoWriteLogBatch(w http.ResponseWriter, r *http.Request) {
 }
 
 type writeLogItem struct {
-	WriteID    string  `json:"write_id"`
-	Service    string  `json:"service"`
-	CanonicalID string `json:"canonical_id,omitempty"`
-	Op         string  `json:"op"`
-	Before     string  `json:"before,omitempty"`
-	After      string  `json:"after,omitempty"`
-	Confidence float64 `json:"confidence"`
-	BatchID    string  `json:"batch_id,omitempty"`
+	WriteID     string  `json:"write_id"`
+	Service     string  `json:"service"`
+	CanonicalID string  `json:"canonical_id,omitempty"`
+	Op          string  `json:"op"`
+	Before      string  `json:"before,omitempty"`
+	After       string  `json:"after,omitempty"`
+	Confidence  float64 `json:"confidence"`
+	BatchID     string  `json:"batch_id,omitempty"`
 }
 
 type buildPlanRequest struct {
-	Snapshots          []writeback.Snapshot  `json:"snapshots"`
-	ConfidenceThreshold float64              `json:"confidence_threshold"`
-	Mode               writeback.RolloutMode `json:"mode"`
-	BaselineCount      int                  `json:"baseline_count"`
-	FetchedCount       int                  `json:"fetched_count"`
+	Snapshots           []writeback.Snapshot  `json:"snapshots"`
+	ConfidenceThreshold float64               `json:"confidence_threshold"`
+	Mode                writeback.RolloutMode `json:"mode"`
+	BaselineCount       int                   `json:"baseline_count"`
+	FetchedCount        int                   `json:"fetched_count"`
 }
 
 type buildPlanResponse struct {
-	Mode       string              `json:"mode"`
-	DryRun     bool                `json:"dry_run"`
-	WouldWrite bool                `json:"would_write"`
-	Warnings   []string            `json:"warnings"`
-	Items      []buildPlanItem      `json:"items"`
+	Mode       string          `json:"mode"`
+	DryRun     bool            `json:"dry_run"`
+	WouldWrite bool            `json:"would_write"`
+	Warnings   []string        `json:"warnings"`
+	Items      []buildPlanItem `json:"items"`
 }
 
 type buildPlanItem struct {
-	Provider    string        `json:"provider"`
-	ItemID      string        `json:"item_id"`
-	Action      string        `json:"action"`
-	Write       bool          `json:"write"`
-	Reason      string        `json:"reason"`
-	WinnerAt    string        `json:"winner_at,omitempty"`
-	LocalAt     string        `json:"local_at,omitempty"`
-	RemoteAt    string        `json:"remote_at,omitempty"`
-	Confidence  float64       `json:"confidence"`
-	NeedsReview bool          `json:"needs_review"`
-	UndoBefore  string        `json:"undo_before"`
-	UndoAfter   string        `json:"undo_after"`
+	Provider    string  `json:"provider"`
+	ItemID      string  `json:"item_id"`
+	Action      string  `json:"action"`
+	Write       bool    `json:"write"`
+	Reason      string  `json:"reason"`
+	WinnerAt    string  `json:"winner_at,omitempty"`
+	LocalAt     string  `json:"local_at,omitempty"`
+	RemoteAt    string  `json:"remote_at,omitempty"`
+	Confidence  float64 `json:"confidence"`
+	NeedsReview bool    `json:"needs_review"`
+	UndoBefore  string  `json:"undo_before"`
+	UndoAfter   string  `json:"undo_after"`
 }
 
 func (d Deps) handleBuildPlan(w http.ResponseWriter, r *http.Request) {
@@ -446,6 +452,23 @@ func (d Deps) handleDisconnectSpotify(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := d.ConnectorActions.DisconnectSpotify(r.Context(), accountID, "user_requested"); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "disconnect failed"}, 0)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleSpotifyInvalidGrant(w http.ResponseWriter, r *http.Request) {
+	if d.ConnectorActions == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "connector actions unavailable"}, 0)
+		return
+	}
+	accountID := r.PathValue("accountID")
+	if accountID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_id required"}, 0)
+		return
+	}
+	if err := d.ConnectorActions.MarkSpotifyInvalidGrant(r.Context(), accountID, "invalid_grant", d.Now().UTC()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "invalid grant update failed"}, 0)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
