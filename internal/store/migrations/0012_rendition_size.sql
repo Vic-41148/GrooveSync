@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 GrooveSync Authors
+
 -- +goose Up
 ALTER TABLE rendition ADD COLUMN size_bytes INTEGER NOT NULL DEFAULT 0;
 

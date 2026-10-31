@@ -1,7 +1,7 @@
+#!/usr/bin/env python3
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (C) 2026 GrooveSync Authors
 
-#!/usr/bin/env python3
 """
 Add SPDX license headers to source files.
 
@@ -16,9 +16,18 @@ import sys
 TYPES = {
     '.go': '// SPDX-License-Identifier: AGPL-3.0-or-later\n// Copyright (C) {year} {holder}\n',
     '.py': '# SPDX-License-Identifier: AGPL-3.0-or-later\n# Copyright (C) {year} {holder}\n',
+    '.sh': '# SPDX-License-Identifier: AGPL-3.0-or-later\n# Copyright (C) {year} {holder}\n',
+    '.sql': '-- SPDX-License-Identifier: AGPL-3.0-or-later\n-- Copyright (C) {year} {holder}\n',
     '.js': '/* SPDX-License-Identifier: AGPL-3.0-or-later */\n/* Copyright (C) {year} {holder} */\n',
     '.rs': '// SPDX-License-Identifier: AGPL-3.0-or-later\n// Copyright (C) {year} {holder}\n',
 }
+
+
+def insert_header(text, header):
+    """Insert the header at the top, after a shebang when one is present."""
+    lines = text.splitlines(keepends=True)
+    at = 1 if lines and lines[0].startswith('#!') else 0
+    return ''.join(lines[:at]) + header + '\n' + ''.join(lines[at:])
 
 
 def main():
@@ -56,7 +65,7 @@ def main():
                 continue
             changes.append(path)
             if args.apply:
-                new = header + '\n' + text
+                new = insert_header(text, header)
                 with open(path, 'wb') as fh:
                     fh.write(new.encode('utf-8'))
     if args.apply:

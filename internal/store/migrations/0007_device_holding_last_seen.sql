@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 GrooveSync Authors
+
 -- +goose Up
 ALTER TABLE device_holding ADD COLUMN last_seen TEXT;
 

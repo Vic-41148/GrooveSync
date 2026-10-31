@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# Copyright (C) 2026 GrooveSync Authors
+
 set -euo pipefail
 # Fail if any dependency uses a license outside the allowed set.
 #

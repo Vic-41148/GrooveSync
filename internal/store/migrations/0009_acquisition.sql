@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 GrooveSync Authors
+
 -- +goose Up
 -- The acquisition worker is optional and lives outside this repo. It only ever
 -- reads and writes this table, so removing it leaves the core untouched.

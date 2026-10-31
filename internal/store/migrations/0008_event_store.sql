@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 GrooveSync Authors
+
 -- +goose Up
 ALTER TABLE event ADD COLUMN source TEXT NOT NULL DEFAULT 'local';
 ALTER TABLE event ADD COLUMN percent_played REAL NOT NULL DEFAULT 0;

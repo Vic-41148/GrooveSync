@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 GrooveSync Authors
+
 -- +goose Up
 ALTER TABLE device ADD COLUMN token_hash TEXT;
 ALTER TABLE device ADD COLUMN sync_mode TEXT NOT NULL DEFAULT 'app';

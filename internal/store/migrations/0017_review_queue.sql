@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 GrooveSync Authors
+
 -- +goose Up
 ALTER TABLE review_queue ADD COLUMN method TEXT NOT NULL DEFAULT '';
 ALTER TABLE review_queue ADD COLUMN confidence REAL NOT NULL DEFAULT 0;

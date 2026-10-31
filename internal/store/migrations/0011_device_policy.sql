@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- Copyright (C) 2026 GrooveSync Authors
+
 -- +goose Up
 ALTER TABLE device ADD COLUMN scope TEXT NOT NULL DEFAULT 'everything';
 ALTER TABLE device ADD COLUMN affinity_threshold REAL NOT NULL DEFAULT 0;
