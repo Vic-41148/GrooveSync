@@ -13,10 +13,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -26,12 +28,19 @@ func main() {
 	mode := flag.String("mode", "auth", "operation mode: auth or upload")
 	file := flag.String("file", "", "file to upload when mode=upload")
 	chunkSize := flag.Int64("chunk-size", 4*1024*1024, "upload chunk size in bytes")
+	token := flag.String("token", os.Getenv("SYNCD_ADMIN_TOKEN"), "bearer token sent with every request")
 	flag.Parse()
 
 	switch *mode {
 	case "auth":
 		startURL := fmt.Sprintf("%s/sync/v1/connectors/spotify/%s/start-auth?return_to=/", strings.TrimRight(*server, "/"), *account)
-		resp, err := http.Post(startURL, "application/json", nil)
+		req, err := http.NewRequest(http.MethodPost, startURL, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "start-auth request: %v\n", err)
+			os.Exit(2)
+		}
+		authorize(req, *token)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "start-auth request failed: %v\n", err)
 			os.Exit(2)
@@ -78,10 +87,14 @@ func main() {
 			fmt.Fprintf(os.Stderr, "encode request: %v\n", err)
 			os.Exit(2)
 		}
-		req, _ := http.NewRequest(http.MethodPost, postURL, buf)
+		req, err = http.NewRequest(http.MethodPost, postURL, buf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "complete-auth request: %v\n", err)
+			os.Exit(2)
+		}
 		req.Header.Set("Content-Type", "application/json")
-		client := &http.Client{}
-		resp2, err := client.Do(req)
+		authorize(req, *token)
+		resp2, err := http.DefaultClient.Do(req)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "complete-auth request failed: %v\n", err)
 			os.Exit(2)
@@ -96,7 +109,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "-file is required in upload mode")
 			os.Exit(2)
 		}
-		if err := uploadFile(*server, *file, *chunkSize); err != nil {
+		if err := uploadFile(*server, *token, *file, *chunkSize); err != nil {
 			fmt.Fprintf(os.Stderr, "upload failed: %v\n", err)
 			os.Exit(2)
 		}
@@ -107,8 +120,26 @@ func main() {
 	}
 }
 
+// authorize adds the bearer token when one is configured.
+func authorize(req *http.Request, token string) {
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+}
+
+// get performs an authenticated GET, since every /sync/v1 route requires the
+// token when the server has one configured.
+func get(url, token string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	authorize(req, token)
+	return http.DefaultClient.Do(req)
+}
+
 // uploadFile uploads a file in chunks and then downloads it back.
-func uploadFile(server, filename string, chunkSize int64) error {
+func uploadFile(server, token, filename string, chunkSize int64) error {
 	f, err := os.Open(filename)
 	if err != nil {
 		return err
@@ -133,7 +164,6 @@ func uploadFile(server, filename string, chunkSize int64) error {
 	}
 
 	// chunked upload
-	client := &http.Client{}
 	var start int64
 	for start < size {
 		end := start + chunkSize - 1
@@ -144,13 +174,14 @@ func uploadFile(server, filename string, chunkSize int64) error {
 			return err
 		}
 		part := io.LimitReader(f, end-start+1)
-		putURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s?name=%s", strings.TrimRight(server, "/"), sum, filepath.Base(filename))
+		putURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s?name=%s", strings.TrimRight(server, "/"), sum, url.QueryEscape(filepath.Base(filename)))
 		req, err := http.NewRequest(http.MethodPut, putURL, part)
 		if err != nil {
 			return err
 		}
 		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
-		resp, err := client.Do(req)
+		authorize(req, token)
+		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			return err
 		}
@@ -166,8 +197,8 @@ func uploadFile(server, filename string, chunkSize int64) error {
 
 	// poll status
 	statusURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s", strings.TrimRight(server, "/"), sum)
-	for i := 0; i < 20; i++ {
-		resp2, err := http.Get(statusURL)
+	for i := 0; i < 60; i++ {
+		resp2, err := get(statusURL, token)
 		if err != nil {
 			return err
 		}
@@ -184,7 +215,7 @@ func uploadFile(server, filename string, chunkSize int64) error {
 		if st.Complete {
 			// download the file
 			fileURL := fmt.Sprintf("%s/sync/v1/library/files/%s", strings.TrimRight(server, "/"), sum)
-			r, err := http.Get(fileURL)
+			r, err := get(fileURL, token)
 			if err != nil {
 				return err
 			}
@@ -217,8 +248,7 @@ func uploadFile(server, filename string, chunkSize int64) error {
 			fmt.Printf("verified: hash %s\n", sum)
 			return nil
 		}
-		// simple sleep
-		_ = exec.Command("sleep", "1").Run()
+		time.Sleep(time.Second)
 	}
 	return fmt.Errorf("upload did not complete in time")
 }
