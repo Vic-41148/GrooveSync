@@ -5,6 +5,7 @@ package devices
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -52,5 +53,42 @@ func TestRegisterSyncModeTransitions(t *testing.T) {
 				t.Fatalf("sync mode = %q, want %q", got.SyncMode, tc.want)
 			}
 		})
+	}
+}
+
+func TestRegisterReportsStoredModeOnReRegister(t *testing.T) {
+	t.Parallel()
+
+	db := openDeviceDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := Repo{DB: db, Now: func() time.Time { return time.Now().UTC() }, Token: fixedToken("token")}
+
+	if _, err := repo.Register(ctx, Device{ID: "phone", Name: "Phone", SyncMode: ModeExternal}); err != nil {
+		t.Fatalf("seed Register() error = %v", err)
+	}
+
+	reg, err := repo.Register(ctx, Device{ID: "phone", Name: "Phone"})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if reg.Device.SyncMode != ModeExternal {
+		t.Fatalf("response sync mode = %q, want %q", reg.Device.SyncMode, ModeExternal)
+	}
+	got, err := repo.Get(ctx, "phone")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.SyncMode != ModeExternal {
+		t.Fatalf("stored sync mode = %q, want %q", got.SyncMode, ModeExternal)
+	}
+	if got.Policy != reg.Device.Policy {
+		t.Fatalf("stored policy = %+v, response policy = %+v", got.Policy, reg.Device.Policy)
+	}
+
+	// An external device never mirrors deletions. If an omitted mode were
+	// normalised as app this would be accepted and stored.
+	if _, err := repo.Register(ctx, Device{ID: "phone", Name: "Phone", Policy: Policy{MirrorDeletions: true}}); !errors.Is(err, ErrInvalidDevice) {
+		t.Fatalf("Register(mirror deletions) error = %v, want ErrInvalidDevice", err)
 	}
 }

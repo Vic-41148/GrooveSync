@@ -133,27 +133,19 @@ func (r Repo) Register(ctx context.Context, device Device) (Registration, error)
 	}
 
 	// rawMode is the client's supplied value. An empty rawMode means the
-	// client didn't set it; effectiveMode is what we return and use for
-	// policy normalization (defaults to app for new devices).
+	// client didn't set it; the stored mode (or app for a new device) decides
+	// how policy is normalised and what the caller gets back.
 	rawMode := device.SyncMode
-	effectiveMode := rawMode
-	if effectiveMode == "" {
-		effectiveMode = ModeApp
-	}
 	if rawMode != "" && !validMode(rawMode) {
 		return Registration{}, fmt.Errorf("%w: unsupported sync mode %q", ErrInvalidDevice, rawMode)
 	}
 
-	policy, err := normalizePolicy(device.Policy, effectiveMode)
+	normalizedURLs, err := normalizeURLs(device.URLs)
 	if err != nil {
 		return Registration{}, err
 	}
-	device.Policy = policy
-	device.URLs, err = normalizeURLs(device.URLs)
-	if err != nil {
-		return Registration{}, err
-	}
-	urls, err := json.Marshal(device.URLs)
+	device.URLs = normalizedURLs
+	urls, err := json.Marshal(normalizedURLs)
 	if err != nil {
 		return Registration{}, fmt.Errorf("devices: encode urls: %w", err)
 	}
@@ -164,11 +156,39 @@ func (r Repo) Register(ctx context.Context, device Device) (Registration, error)
 	}
 	now := r.now()
 
-	// Use SQL to coalesce an empty incoming sync_mode into the DB default for
-	// inserts while preserving the existing DB value on conflict when the
-	// incoming value is empty. We pass rawMode so the statement can detect an
-	// omitted value and avoid overwriting an existing mode.
-	if _, err := r.DB.ExecContext(ctx, `
+	// The mode is read in the same transaction as the upsert so policy is
+	// normalised against the mode the device will actually keep, and the
+	// caller is never told a mode that differs from storage.
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return Registration{}, fmt.Errorf("devices: begin register %s: %w", device.ID, err)
+	}
+	defer tx.Rollback()
+
+	effectiveMode := rawMode
+	var storedMode string
+	err = tx.QueryRowContext(ctx, `SELECT sync_mode FROM device WHERE id = ?`, device.ID).Scan(&storedMode)
+	switch {
+	case err == nil:
+		if rawMode == "" {
+			effectiveMode = SyncMode(storedMode)
+		}
+	case errors.Is(err, sql.ErrNoRows):
+	default:
+		return Registration{}, fmt.Errorf("devices: read sync mode %s: %w", device.ID, err)
+	}
+	if effectiveMode == "" {
+		effectiveMode = ModeApp
+	}
+
+	policy, err := normalizePolicy(device.Policy, effectiveMode)
+	if err != nil {
+		return Registration{}, err
+	}
+
+	// The upsert coalesces an empty incoming sync_mode into the DB default on
+	// insert and keeps the stored value on conflict.
+	if _, err := tx.ExecContext(ctx, `
 INSERT INTO device (
     id, name, platform, build, last_seen, token_hash, sync_mode,
     scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality, urls
@@ -191,9 +211,12 @@ ON CONFLICT(id) DO UPDATE SET
 		string(policy.Scope), policy.AffinityThreshold, policy.StorageCapBytes, string(policy.NetworkRule), boolInt(policy.MirrorDeletions), string(policy.Quality), string(urls), string(rawMode), string(rawMode)); err != nil {
 		return Registration{}, fmt.Errorf("devices: register %s: %w", device.ID, err)
 	}
+	if err := tx.Commit(); err != nil {
+		return Registration{}, fmt.Errorf("devices: commit register %s: %w", device.ID, err)
+	}
 
-	// Report the effective mode to the caller (app when omitted).
 	device.SyncMode = effectiveMode
+	device.Policy = policy
 	device.LastSeen = now
 	if device.CreatedAt.IsZero() {
 		device.CreatedAt = now
