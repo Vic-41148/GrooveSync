@@ -125,3 +125,10 @@ func (s *statusRecorder) Write(p []byte) (int, error) {
 	}
 	return s.ResponseWriter.Write(p)
 }
+
+// Flush keeps streaming handlers working through the logging wrapper.
+func (s *statusRecorder) Flush() {
+	if flusher, ok := s.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}

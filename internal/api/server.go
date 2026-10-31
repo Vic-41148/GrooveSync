@@ -48,6 +48,7 @@ type Deps struct {
 	SpotifyLibrary     SpotifyLibraryActions
 	Devices            DeviceRegistry
 	EventLog           EventLog
+	EventStream        EventBroadcaster
 	Mix                MixSource
 	Acquisition        AcquisitionQueue
 	AcquisitionSwitch  AcquisitionSwitch
@@ -265,6 +266,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("PUT /sync/v1/devices/{id}/holdings", d.handleDeviceHoldingsReport)
 	mux.HandleFunc("GET /sync/v1/devices/{id}/plan", d.handleDevicePlan)
 	mux.HandleFunc("GET /sync/v1/events", d.handleEvents)
+	mux.HandleFunc("GET /sync/v1/events/stream", d.handleEventStream)
 	mux.HandleFunc("POST /sync/v1/events", d.handleEventsAppend)
 	mux.HandleFunc("GET /sync/v1/score", d.handleScores)
 	mux.HandleFunc("GET /sync/v1/mix", d.handleMix)
@@ -557,6 +559,7 @@ func (d Deps) handleReviewQueueResolve(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "review queue unavailable"}, 0)
 		return
 	}
+	d.publish("review", map[string]any{"id": id, "resolved": true})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1343,7 +1346,60 @@ func (d Deps) handleEventsAppend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "events unavailable"}, 0)
 		return
 	}
+	d.publish("events", map[string]any{"stored": stored})
 	writeJSON(w, http.StatusOK, map[string]any{"stored": stored}, 0)
+}
+
+func (d Deps) handleEventStream(w http.ResponseWriter, r *http.Request) {
+	if d.EventStream == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "event stream unavailable"}, 0)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "streaming unsupported"}, 0)
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	events, cancel := d.EventStream.Subscribe()
+	defer cancel()
+	if _, err := fmt.Fprint(w, "event: ready\ndata: {}\n\n"); err != nil {
+		return
+	}
+	flusher.Flush()
+
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case event, ok := <-events:
+			if !ok {
+				return
+			}
+			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Event, event.Data); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-ticker.C:
+			if _, err := fmt.Fprint(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
+}
+
+func (d Deps) publish(event string, payload any) {
+	if d.EventStream != nil {
+		d.EventStream.Publish(event, payload)
+	}
 }
 
 func (d Deps) handleScores(w http.ResponseWriter, r *http.Request) {
@@ -1562,6 +1618,7 @@ func (d Deps) handleAcquisitionCreate(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
 		return
 	}
+	d.publish("acquisition", newAcquisitionResponse(request))
 	writeJSON(w, http.StatusCreated, map[string]any{"request": newAcquisitionResponse(request)}, 0)
 }
 
@@ -1756,6 +1813,7 @@ func (d Deps) handleLibrarySync(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "library sync failed"}, 0)
 		return
 	}
+	d.publish("library", result)
 	writeJSON(w, http.StatusOK, result, 0)
 }
 

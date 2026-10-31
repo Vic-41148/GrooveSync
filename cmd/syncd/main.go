@@ -142,6 +142,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		features = append(features, "listenbrainz")
 	}
 
+	stream := api.NewEventStream()
 	h := api.New(api.Deps{
 		Logger:             logger,
 		Version:            version(),
@@ -159,6 +160,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		SpotifyLibrary:     connectorRepo,
 		Devices:            deviceRepo,
 		EventLog:           eventStore,
+		EventStream:        stream,
 		Mix:                eventStore,
 		Acquisition:        acquisitionRepo,
 		AcquisitionSwitch:  acquisitionRepo,
