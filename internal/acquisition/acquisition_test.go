@@ -271,6 +271,50 @@ func fixedID(id string) func() (string, error) {
 	return func() (string, error) { return id, nil }
 }
 
+func TestSuggest(t *testing.T) {
+	t.Parallel()
+
+	db := openAcquisitionDB(t)
+	ctx := context.Background()
+	if _, err := db.Exec(`INSERT INTO track (canonical_id, title, artist, album) VALUES ('wanted', 'Wanted', 'Artist', 'Album'), ('held', 'Held', 'Artist', NULL), ('queued', 'Queued', 'Artist', NULL), ('cold', 'Cold', 'Artist', NULL)`); err != nil {
+		t.Fatalf("insert tracks: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO rendition (canonical_id, kind, path_or_uri) VALUES ('held', 'file', '/music/held.flac')`); err != nil {
+		t.Fatalf("insert rendition: %v", err)
+	}
+	repo := Repo{DB: db, Now: func() time.Time { return time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC) }, NewID: fixedID("req-1")}
+	if _, err := repo.Create(ctx, "queued", "Queued Artist"); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	scores := []Score{
+		{CanonicalID: "wanted", Value: 0.9},
+		{CanonicalID: "held", Value: 0.9},
+		{CanonicalID: "queued", Value: 0.9},
+		{CanonicalID: "cold", Value: 0.2},
+		{CanonicalID: "missing", Value: 0.9},
+	}
+	suggestions, err := repo.Suggest(ctx, scores, 0.5, 10)
+	if err != nil {
+		t.Fatalf("Suggest() error = %v", err)
+	}
+	want := []Suggestion{{
+		CanonicalID: "wanted",
+		Title:       "Wanted",
+		Artist:      "Artist",
+		Album:       "Album",
+		Query:       "Artist Wanted",
+		Score:       0.9,
+	}}
+	if len(suggestions) != 1 || suggestions[0] != want[0] {
+		t.Fatalf("suggestions = %#v, want %#v", suggestions, want)
+	}
+
+	if _, err := repo.Suggest(ctx, scores, 2, 10); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("Suggest() with a bad threshold error = %v, want ErrInvalidRequest", err)
+	}
+}
+
 func openAcquisitionDB(t *testing.T) *sql.DB {
 	t.Helper()
 

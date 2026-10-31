@@ -530,6 +530,60 @@ func TestScoresUnavailable(t *testing.T) {
 	}
 }
 
+func TestAcquisitionSuggestions(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, album) VALUES ('wanted', 'Wanted', 'Artist', 'Album'), ('held', 'Held', 'Artist', NULL)`); err != nil {
+		t.Fatalf("insert tracks: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO rendition (canonical_id, kind, path_or_uri) VALUES ('held', 'file', '/music/held.flac')`); err != nil {
+		t.Fatalf("insert rendition: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO event (event_id, device_id, canonical_id, type, value, hlc_timestamp) VALUES ('e1', 'phone', 'wanted', 'like', 1, '2026-10-30T12:00:00Z/0/phone'), ('e2', 'phone', 'held', 'like', 1, '2026-10-30T12:00:01Z/0/phone')`); err != nil {
+		t.Fatalf("insert events: %v", err)
+	}
+
+	repo := acquisition.Repo{DB: db}
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 15, Now: time.Now, Acquisition: repo, EventLog: taste.NewStore(db)})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/acquisition/suggestions?threshold=0.5", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got struct {
+		Suggestions []acquisition.Suggestion `json:"suggestions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(got.Suggestions) != 1 || got.Suggestions[0].CanonicalID != "wanted" || got.Suggestions[0].Query != "Artist Wanted" {
+		t.Fatalf("suggestions = %#v, want the wanted track", got.Suggestions)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/acquisition/suggestions", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	requests, err := repo.List(ctx, acquisition.StateQueued)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(requests) != 1 || requests[0].CanonicalID != "wanted" {
+		t.Fatalf("requests = %#v, want one queued request", requests)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/acquisition/suggestions?threshold=2", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad threshold status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
 func TestAcquisitionLifecycle(t *testing.T) {
 	t.Parallel()
 

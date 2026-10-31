@@ -295,6 +295,74 @@ DELETE FROM acquisition_request WHERE state IN (?, ?)
 	return nil
 }
 
+// Score is one track affinity value, supplied by the caller so a suggestion
+// pass stays a plain read over the library and queue.
+type Score struct {
+	CanonicalID string
+	Value       float64
+}
+
+// Suggestion is a high-affinity track with no local file and no request in
+// flight.
+type Suggestion struct {
+	CanonicalID string  `json:"canonical_id"`
+	Title       string  `json:"title"`
+	Artist      string  `json:"artist"`
+	Album       string  `json:"album,omitempty"`
+	Query       string  `json:"query"`
+	Score       float64 `json:"score"`
+}
+
+// Suggest returns tracks worth acquiring. A track needs affinity at or above
+// the threshold, no file rendition, and no queued or claimed request.
+func (r Repo) Suggest(ctx context.Context, scores []Score, threshold float64, limit int) ([]Suggestion, error) {
+	if r.DB == nil {
+		return nil, errors.New("acquisition: database is required")
+	}
+	if threshold < 0 || threshold > 1 {
+		return nil, fmt.Errorf("%w: threshold must be between 0 and 1", ErrInvalidRequest)
+	}
+	if limit <= 0 {
+		limit = 25
+	}
+
+	out := make([]Suggestion, 0, limit)
+	for _, score := range scores {
+		if len(out) >= limit {
+			break
+		}
+		canonicalID := strings.TrimSpace(score.CanonicalID)
+		if canonicalID == "" || score.Value < threshold {
+			continue
+		}
+		var suggestion Suggestion
+		err := r.DB.QueryRowContext(ctx, `
+SELECT t.canonical_id, t.title, t.artist, COALESCE(t.album, '')
+FROM track t
+WHERE t.canonical_id = ?
+  AND NOT EXISTS (
+      SELECT 1 FROM rendition r WHERE r.canonical_id = t.canonical_id AND r.kind = 'file'
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM acquisition_request a
+      WHERE a.canonical_id = t.canonical_id AND a.state IN (?, ?)
+  )
+`, canonicalID, string(StateQueued), string(StateClaimed)).Scan(
+			&suggestion.CanonicalID, &suggestion.Title, &suggestion.Artist, &suggestion.Album,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("acquisition: suggest %s: %w", canonicalID, err)
+		}
+		suggestion.Score = score.Value
+		suggestion.Query = strings.TrimSpace(suggestion.Artist + " " + suggestion.Title)
+		out = append(out, suggestion)
+	}
+	return out, nil
+}
+
 func (r Repo) expectOne(ctx context.Context, res sql.Result, id string) error {
 	affected, err := res.RowsAffected()
 	if err != nil {

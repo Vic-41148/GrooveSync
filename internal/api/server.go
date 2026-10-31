@@ -132,6 +132,7 @@ type AcquisitionQueue interface {
 	Create(context.Context, string, string) (acquisition.Request, error)
 	List(context.Context, ...acquisition.State) ([]acquisition.Request, error)
 	Clear(context.Context) (int, error)
+	Suggest(context.Context, []acquisition.Score, float64, int) ([]acquisition.Suggestion, error)
 }
 
 // RolloutSettings reads and writes the persisted write-back mode.
@@ -255,6 +256,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/mix", d.handleMix)
 	mux.HandleFunc("GET /sync/v1/acquisition", d.handleAcquisition)
 	mux.HandleFunc("POST /sync/v1/acquisition", d.handleAcquisitionCreate)
+	mux.HandleFunc("GET /sync/v1/acquisition/suggestions", d.handleAcquisitionSuggestions)
+	mux.HandleFunc("POST /sync/v1/acquisition/suggestions", d.handleAcquisitionSuggestionsQueue)
 	mux.HandleFunc("DELETE /sync/v1/acquisition", d.handleAcquisitionClear)
 	mux.HandleFunc("GET /sync/v1/settings", d.handleSettings)
 	mux.HandleFunc("PATCH /sync/v1/settings", d.handleSettingsUpdate)
@@ -1473,6 +1476,98 @@ func (d Deps) handleAcquisitionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"request": newAcquisitionResponse(request)}, 0)
+}
+
+func (d Deps) handleAcquisitionSuggestions(w http.ResponseWriter, r *http.Request) {
+	if d.Acquisition == nil || d.EventLog == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"suggestions": []acquisition.Suggestion{}}, 0)
+		return
+	}
+	threshold, limit, err := d.suggestionQuery(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+		return
+	}
+	suggestions, err := d.acquisitionSuggestions(r, threshold, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"suggestions": suggestions}, 0)
+}
+
+func (d Deps) handleAcquisitionSuggestionsQueue(w http.ResponseWriter, r *http.Request) {
+	if d.Acquisition == nil || d.EventLog == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	threshold, limit, err := d.suggestionQuery(r)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+		return
+	}
+	suggestions, err := d.acquisitionSuggestions(r, threshold, limit)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	queued := 0
+	for _, suggestion := range suggestions {
+		if _, err := d.Acquisition.Create(r.Context(), suggestion.CanonicalID, suggestion.Query); err != nil {
+			if errors.Is(err, acquisition.ErrDisabled) {
+				writeJSON(w, http.StatusConflict, map[string]string{"error": "acquisition disabled"}, 0)
+				return
+			}
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
+			return
+		}
+		queued++
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"queued": queued}, 0)
+}
+
+func (d Deps) suggestionQuery(r *http.Request) (float64, int, error) {
+	query := r.URL.Query()
+	threshold := 0.5
+	if raw := query.Get("threshold"); raw != "" {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil || parsed <= 0 || parsed > 1 {
+			return 0, 0, errors.New("invalid threshold")
+		}
+		threshold = parsed
+	}
+	limit := 25
+	if raw := query.Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			return 0, 0, errors.New("invalid limit")
+		}
+		limit = parsed
+		if limit > 200 {
+			limit = 200
+		}
+	}
+	return threshold, limit, nil
+}
+
+func (d Deps) acquisitionSuggestions(r *http.Request, threshold float64, limit int) ([]acquisition.Suggestion, error) {
+	events, err := d.EventLog.List(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	scores := taste.NewLog(events...).ScoreTracks(taste.DefaultConfig(), d.Now().UTC())
+	values := make([]acquisition.Score, 0, len(scores))
+	for _, scored := range scores {
+		values = append(values, acquisition.Score{CanonicalID: scored.CanonicalID, Value: scored.Score})
+	}
+	suggestions, err := d.Acquisition.Suggest(r.Context(), values, threshold, limit)
+	if err != nil {
+		return nil, err
+	}
+	if suggestions == nil {
+		suggestions = []acquisition.Suggestion{}
+	}
+	return suggestions, nil
 }
 
 func (d Deps) handleAcquisitionClear(w http.ResponseWriter, r *http.Request) {
