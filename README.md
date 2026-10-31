@@ -39,6 +39,32 @@ service has no authentication layer yet, so anyone who can reach those URLs can
 reach the sync endpoints. Keep it on a trusted network or behind a VPN such as
 Tailscale, and do not expose it to the internet.
 
+## Docker
+
+The image is multi-stage: a Go builder stage and a distroless static runtime
+with no shell or package manager. The service writes its SQLite database to
+`/data/syncd.db` and runs as the nonroot user (UID 65532).
+
+```sh
+docker build -t groovesync:dev .
+docker volume create groovesync-data
+docker run --rm -d --name groovesync \
+  -p 127.0.0.1:8080:8080 \
+  -v groovesync-data:/data \
+  groovesync:dev
+curl -sS http://127.0.0.1:8080/sync/v1/about
+docker stop groovesync
+```
+
+A named volume inherits the ownership of `/data` from the image, so the nonroot
+user can write without extra steps. A bind mount does not: prepare it with
+`mkdir -p data && chown -R 65532:65532 data` first.
+
+The container listens on all interfaces (`SYNCD_ADDR=0.0.0.0:8080`) because the
+loopback default is unreachable from outside the container. The example
+publishes only to the host loopback; the API has no authentication, so do not
+publish it on a LAN address or the internet.
+
 ## License
 
 This project is licensed under the GNU Affero General Public License v3 or later (AGPL-3.0-or-later). See LICENSE for the full text. By contributing, you agree to sign-off your commits using the Developer Certificate of Origin (DCO). For details on contribution and DCO sign-off see CONTRIBUTING.md.
