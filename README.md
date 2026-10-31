@@ -73,6 +73,8 @@ publish it on a LAN address or the internet.
 
 This project is licensed under the GNU Affero General Public License v3 or later (AGPL-3.0-or-later). See LICENSE for the full text. By contributing, you agree to sign-off your commits using the Developer Certificate of Origin (DCO). For details on contribution and DCO sign-off see CONTRIBUTING.md.
 
+Source published on the dev branch before 2026-10-31 carried a GPL-3.0 LICENSE file. Those copies remain available under GPL-3.0. This project is AGPL-3.0-or-later from that date forward.
+
 Third-party licenses and attribution
 
 This repository includes third-party dependencies licensed under permissive licenses (MIT, BSD-2/3-Clause, Apache-2.0, etc.). A bundled copy of dependency license texts and notices is included at /usr/share/licenses/groovesync/ inside the project (and the Docker image). See third_party_licenses/ for details.
