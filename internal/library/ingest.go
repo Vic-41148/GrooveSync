@@ -109,20 +109,45 @@ ORDER BY id ASC LIMIT 1
 	return canonicalID, nil
 }
 
+// provisionalTrack creates a placeholder for an upload that arrived without a
+// canonical id, and queues it so the identity is resolved instead of sitting
+// silently as an Unknown track.
 func provisionalTrack(ctx context.Context, tx *sql.Tx, hash, name string) (string, error) {
-	title := strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
-	if title == "" || title == "." || title == string(filepath.Separator) {
-		title = hash[:12]
-	}
+	title, artist := splitUploadName(name, hash)
 	canonicalID := "upload-" + hash[:16]
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO track (canonical_id, title, artist)
-VALUES (?, ?, 'Unknown')
+VALUES (?, ?, ?)
 ON CONFLICT(canonical_id) DO NOTHING
-`, canonicalID, title); err != nil {
+`, canonicalID, title, artist); err != nil {
 		return "", fmt.Errorf("library: insert provisional track %s: %w", canonicalID, err)
 	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO review_queue (canonical_id, service, service_id, reason, method, confidence)
+SELECT ?, 'upload', ?, 'uploaded file needs identity', 'upload', 0
+WHERE NOT EXISTS (
+    SELECT 1 FROM review_queue WHERE service = 'upload' AND service_id = ?
+)
+`, canonicalID, hash, hash); err != nil {
+		return "", fmt.Errorf("library: queue upload %s: %w", hash, err)
+	}
 	return canonicalID, nil
+}
+
+// splitUploadName reads the common "Artist - Title" shape and falls back to
+// the bare filename, which is all an untagged device upload carries.
+func splitUploadName(name, hash string) (title, artist string) {
+	base := strings.TrimSpace(strings.TrimSuffix(filepath.Base(name), filepath.Ext(name)))
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return hash[:12], "Unknown"
+	}
+	if parts := strings.Split(base, " - "); len(parts) == 2 {
+		left, right := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+		if left != "" && right != "" {
+			return right, left
+		}
+	}
+	return base, "Unknown"
 }
 
 func codecOf(path string) string {

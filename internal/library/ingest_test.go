@@ -53,6 +53,56 @@ WHERE r.kind = 'file' AND lower(r.sha256) = ?
 	if storedPath != path || codec != "flac" || size != int64(len("audio bytes")) {
 		t.Fatalf("rendition = %q %q %d, want the uploaded file", storedPath, codec, size)
 	}
+
+	var reason string
+	var queued int
+	if err := db.QueryRow(`SELECT COUNT(*), COALESCE(MAX(reason), '') FROM review_queue WHERE service = 'upload'`).Scan(&queued, &reason); err != nil {
+		t.Fatalf("load review queue: %v", err)
+	}
+	if queued != 1 || reason != "uploaded file needs identity" {
+		t.Fatalf("review queue = %d rows, reason %q, want one identity item", queued, reason)
+	}
+}
+
+func TestIngestParsesArtistFromName(t *testing.T) {
+	t.Parallel()
+
+	db := openLibraryDB(t)
+	defer db.Close()
+	path, hash := uploadFixture(t, "Massive Attack - Teardrop.flac", []byte("audio bytes"))
+
+	canonicalID, err := Ingestor{DB: db}.Ingest(context.Background(), "", path, hash, "Massive Attack - Teardrop.flac")
+	if err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+	var title, artist string
+	if err := db.QueryRow(`SELECT title, artist FROM track WHERE canonical_id = ?`, canonicalID).Scan(&title, &artist); err != nil {
+		t.Fatalf("load track: %v", err)
+	}
+	if title != "Teardrop" || artist != "Massive Attack" {
+		t.Fatalf("track = %q by %q, want the filename split", title, artist)
+	}
+}
+
+func TestIngestQueuesUnknownNamesOnce(t *testing.T) {
+	t.Parallel()
+
+	db := openLibraryDB(t)
+	defer db.Close()
+	path, hash := uploadFixture(t, "song.flac", []byte("audio bytes"))
+	ingestor := Ingestor{DB: db}
+	for i := 0; i < 2; i++ {
+		if _, err := ingestor.Ingest(context.Background(), "", path, hash, "song.flac"); err != nil {
+			t.Fatalf("Ingest() %d error = %v", i, err)
+		}
+	}
+	var queued int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM review_queue WHERE service = 'upload'`).Scan(&queued); err != nil {
+		t.Fatalf("count review queue: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("review queue = %d rows, want one", queued)
+	}
 }
 
 func TestIngestAttachesToKnownTrack(t *testing.T) {
@@ -76,6 +126,13 @@ func TestIngestAttachesToKnownTrack(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("tracks = %d, want no provisional track", count)
+	}
+	var queued int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM review_queue WHERE service = 'upload'`).Scan(&queued); err != nil {
+		t.Fatalf("count review queue: %v", err)
+	}
+	if queued != 0 {
+		t.Fatalf("review queue = %d rows, want none for an explicit track", queued)
 	}
 }
 
@@ -118,6 +175,13 @@ func TestIngestStoresContentOnce(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("renditions = %d, want the content stored once", count)
+	}
+	var queued int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM review_queue WHERE service = 'upload'`).Scan(&queued); err != nil {
+		t.Fatalf("count review queue: %v", err)
+	}
+	if queued != 0 {
+		t.Fatalf("review queue = %d rows, want none for held content", queued)
 	}
 }
 
