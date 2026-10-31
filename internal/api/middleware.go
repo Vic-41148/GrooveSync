@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
 package api
 
 import (
@@ -13,8 +16,8 @@ import (
 type contextKey int
 
 const (
-	requestIDKey contextKey = iota
-	requestIDHeader        = "X-Request-Id"
+	requestIDKey    contextKey = iota
+	requestIDHeader            = "X-Request-Id"
 )
 
 // withRequestID reuses a caller id when it is safe to log, so one id spans the
@@ -124,4 +127,11 @@ func (s *statusRecorder) Write(p []byte) (int, error) {
 		s.WriteHeader(http.StatusOK)
 	}
 	return s.ResponseWriter.Write(p)
+}
+
+// Flush keeps streaming handlers working through the logging wrapper.
+func (s *statusRecorder) Flush() {
+	if flusher, ok := s.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }

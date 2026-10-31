@@ -1,0 +1,58 @@
+# ---------------------------------------------------------------------------
+# Research and planning docs: local only, never pushed.
+#
+# The handbook, audit, roadmap and research corpus stay in ./docs but out of
+# the public repo. Delete the next line only if you deliberately want to
+# publish them.
+# ---------------------------------------------------------------------------
+/docs/
+
+# Local data -----------------------------------------------------------------
+/data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+*.part
+
+# Secrets and keys -----------------------------------------------------------
+*.jks
+*.keystore
+*.p12
+.env
+.env.*
+!.env.example
+local.properties
+secrets.properties
+
+# Go -------------------------------------------------------------------------
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Gradle / Android -----------------------------------------------------------
+.gradle/
+build/
+captures/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+
+# IDE / OS -------------------------------------------------------------------
+.idea/
+*.iml
+.vscode/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Archives and temp ----------------------------------------------------------
+*.zip
+*.tar.gz
+*.log

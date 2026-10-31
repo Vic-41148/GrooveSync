@@ -1,0 +1,567 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
+package writeback
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"sort"
+	"time"
+)
+
+// Repo persists writeback state in SQLite.
+type Repo struct {
+	db *sql.DB
+}
+
+// QueueStore is the persistence surface used by the queue processor.
+type QueueStore interface {
+	LoadQueue(context.Context) ([]QueueItem, error)
+	UpsertQueueItem(context.Context, QueueItem) error
+	DeleteQueueItem(context.Context, string) error
+}
+
+// ReviewQueueStore persists review queue items.
+type ReviewQueueStore interface {
+	AddReviewQueueItem(context.Context, ReviewItem) (int64, error)
+	DeleteReviewQueueItem(context.Context, int64) error
+	ResolveReviewQueueItem(context.Context, int64) error
+	ListReviewQueue(context.Context) ([]ReviewItem, error)
+}
+
+// WriteLogLister returns recorded write transitions.
+type WriteLogLister interface {
+	ListWriteLog(context.Context) ([]WriteLog, error)
+	UndoWriteLog(context.Context, UndoScope) ([]WriteLog, error)
+}
+
+// ReviewItem is a low-confidence match awaiting human review.
+type ReviewItem struct {
+	ID          int64
+	CanonicalID string
+	Provider    string
+	ServiceID   string
+	Reason      string
+	Method      string
+	Confidence  float64
+	CreatedAt   time.Time
+}
+
+// NewRepo builds a repository around a database handle.
+func NewRepo(db *sql.DB) *Repo {
+	return &Repo{db: db}
+}
+
+// UpsertQueueItem stores or updates a queued write.
+func (r *Repo) UpsertQueueItem(ctx context.Context, item QueueItem) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO write_queue (write_id, service, op, payload, attempts, next_attempt, last_error)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(write_id) DO UPDATE SET
+    service = excluded.service,
+    op = excluded.op,
+    payload = excluded.payload,
+    attempts = excluded.attempts,
+    next_attempt = excluded.next_attempt,
+    last_error = excluded.last_error
+`, item.ID, item.Provider, item.Operation, item.Payload, item.Attempts, item.NextAttempt.UTC().Format(time.RFC3339Nano), item.LastError)
+
+	if err != nil {
+		return fmt.Errorf("writeback: upsert queue item %q: %w", item.ID, err)
+	}
+	return nil
+}
+
+// DeleteQueueItem removes a queued write after success.
+func (r *Repo) DeleteQueueItem(ctx context.Context, id string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM write_queue WHERE write_id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("writeback: delete queue item %q: %w", id, err)
+	}
+	return nil
+}
+
+// LoadQueue reads queued items from the write_queue table ordered by schedule.
+func (r *Repo) LoadQueue(ctx context.Context) ([]QueueItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT write_id, service, op, payload, attempts, next_attempt, last_error
+FROM write_queue
+ORDER BY next_attempt ASC, write_id ASC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("writeback: load queue: %w", err)
+	}
+	defer rows.Close()
+
+	var items []QueueItem
+	for rows.Next() {
+		var (
+			id, provider, op, payload string
+			nextText, lastErr         sql.NullString
+			attempts                  int
+		)
+		if err := rows.Scan(&id, &provider, &op, &payload, &attempts, &nextText, &lastErr); err != nil {
+			return nil, fmt.Errorf("writeback: scan queue: %w", err)
+		}
+		item := QueueItem{ID: id, Provider: provider, Operation: op, Payload: payload, Attempts: attempts}
+		if nextText.Valid && nextText.String != "" {
+			if ts, err := time.Parse(time.RFC3339Nano, nextText.String); err == nil {
+				item.NextAttempt = ts
+			}
+		}
+		if lastErr.Valid {
+			item.LastError = lastErr.String
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("writeback: iterate queue: %w", err)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].NextAttempt.Equal(items[j].NextAttempt) {
+			return items[i].ID < items[j].ID
+		}
+		if items[i].NextAttempt.IsZero() {
+			return true
+		}
+		if items[j].NextAttempt.IsZero() {
+			return false
+		}
+		return items[i].NextAttempt.Before(items[j].NextAttempt)
+	})
+	return items, nil
+}
+
+// RolloutMode returns the stored write-back mode, defaulting to shadow. A
+// value this build does not know is treated as shadow rather than failing.
+func (r *Repo) RolloutMode(ctx context.Context) (RolloutMode, error) {
+	var value string
+	err := r.db.QueryRowContext(ctx, `SELECT value FROM setting WHERE key = ?`, rolloutModeKey).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ModeShadow, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("writeback: load rollout mode: %w", err)
+	}
+	mode := RolloutMode(value)
+	if !ValidRolloutMode(mode) {
+		return ModeShadow, nil
+	}
+	return mode, nil
+}
+
+// SetRolloutMode stores the write-back mode across restarts.
+func (r *Repo) SetRolloutMode(ctx context.Context, mode RolloutMode) error {
+	if !ValidRolloutMode(mode) {
+		return fmt.Errorf("writeback: unsupported rollout mode %q", mode)
+	}
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO setting (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+`, rolloutModeKey, string(mode), time.Now().UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("writeback: store rollout mode: %w", err)
+	}
+	return nil
+}
+
+// AppendWriteLog stores an undoable write record.
+func (r *Repo) AppendWriteLog(ctx context.Context, log WriteLog) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO write_log (write_id, service, canonical_id, op, before, after, confidence, batch_id)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`, log.ID, log.Provider, nullableString(log.CanonicalID), log.Operation, string(log.Before), string(log.After), log.Confidence, log.BatchID)
+	if err != nil {
+		return fmt.Errorf("writeback: append write log %q: %w", log.ID, err)
+	}
+	return nil
+}
+
+// ListWriteLog returns write records ordered from newest to oldest.
+func (r *Repo) ListWriteLog(ctx context.Context) ([]WriteLog, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT write_id, service, canonical_id, op, before, after, confidence, batch_id
+FROM write_log
+ORDER BY rowid DESC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("writeback: list write log: %w", err)
+	}
+	defer rows.Close()
+
+	var out []WriteLog
+	for rows.Next() {
+		var (
+			id, provider, op string
+			canonicalID      sql.NullString
+			before, after    sql.NullString
+			confidence       float64
+			batchID          sql.NullString
+		)
+		if err := rows.Scan(&id, &provider, &canonicalID, &op, &before, &after, &confidence, &batchID); err != nil {
+			return nil, fmt.Errorf("writeback: scan write log: %w", err)
+		}
+		item := WriteLog{ID: id, Provider: provider, Operation: op, Confidence: confidence}
+		if canonicalID.Valid {
+			item.CanonicalID = canonicalID.String
+		}
+		if before.Valid {
+			item.Before = State(before.String)
+		}
+		if after.Valid {
+			item.After = State(after.String)
+		}
+		if batchID.Valid {
+			item.BatchID = batchID.String
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("writeback: iterate write log: %w", err)
+	}
+	return out, nil
+}
+
+// UndoWriteLog restores service state from a write log entry or batch.
+func (r *Repo) UndoWriteLog(ctx context.Context, scope UndoScope) ([]WriteLog, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("writeback: begin undo tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	query := `
+SELECT write_id, service, canonical_id, op, before, after, confidence, batch_id
+FROM write_log
+WHERE write_id = ?
+`
+	args := []any{scope.WriteID}
+	if scope.BatchID != "" {
+		query = `
+SELECT write_id, service, canonical_id, op, before, after, confidence, batch_id
+FROM write_log
+WHERE batch_id = ?
+ORDER BY rowid DESC
+`
+		args = []any{scope.BatchID}
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("writeback: load undo targets: %w", err)
+	}
+	defer rows.Close()
+
+	var undone []WriteLog
+	for rows.Next() {
+		var item WriteLog
+		var before, after, batchID, canonicalID sql.NullString
+		if err := rows.Scan(&item.ID, &item.Provider, &canonicalID, &item.Operation, &before, &after, &item.Confidence, &batchID); err != nil {
+			return nil, fmt.Errorf("writeback: scan undo target: %w", err)
+		}
+		if canonicalID.Valid {
+			item.CanonicalID = canonicalID.String
+		}
+		if before.Valid {
+			item.Before = State(before.String)
+		}
+		if after.Valid {
+			item.After = State(after.String)
+		}
+		if batchID.Valid {
+			item.BatchID = batchID.String
+		}
+
+		if item.CanonicalID == "" {
+			return nil, fmt.Errorf("writeback: undo target %s has no canonical id", item.ID)
+		}
+		if item.Before == StateUnknown {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM service_state WHERE canonical_id = ? AND service = ?`, item.CanonicalID, item.Provider); err != nil {
+				return nil, fmt.Errorf("writeback: undo delete service state: %w", err)
+			}
+		} else {
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO service_state (canonical_id, service, base_state, last_seen, last_synced)
+VALUES (?, ?, ?, NULL, NULL)
+ON CONFLICT(canonical_id, service) DO UPDATE SET base_state = excluded.base_state
+`, item.CanonicalID, item.Provider, string(item.Before)); err != nil {
+				return nil, fmt.Errorf("writeback: undo restore service state: %w", err)
+			}
+		}
+		if err := enqueueUndoWrite(ctx, tx, item); err != nil {
+			return nil, err
+		}
+		undone = append(undone, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("writeback: iterate undo targets: %w", err)
+	}
+	if len(undone) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("writeback: commit undo tx: %w", err)
+	}
+	return undone, nil
+}
+
+func enqueueUndoWrite(ctx context.Context, tx *sql.Tx, item WriteLog) error {
+	operation, ok := reverseOperation(item.Operation)
+	if !ok {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM write_queue WHERE write_id = ?`, item.ID); err != nil {
+		return fmt.Errorf("writeback: cancel pending write %s: %w", item.ID, err)
+	}
+	payload, err := json.Marshal(struct {
+		CanonicalID string  `json:"canonical_id"`
+		Confidence  float64 `json:"confidence"`
+		BatchID     string  `json:"batch_id"`
+	}{CanonicalID: item.CanonicalID, Confidence: item.Confidence, BatchID: "undo:" + item.BatchID})
+	if err != nil {
+		return fmt.Errorf("writeback: encode undo payload %s: %w", item.ID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO write_queue (write_id, service, op, payload)
+VALUES (?, ?, ?, ?)
+ON CONFLICT(write_id) DO UPDATE SET
+    service = excluded.service,
+    op = excluded.op,
+    payload = excluded.payload,
+    attempts = 0,
+    next_attempt = NULL,
+    last_error = NULL
+`, "undo:"+item.ID, item.Provider, operation, string(payload)); err != nil {
+		return fmt.Errorf("writeback: enqueue undo write %s: %w", item.ID, err)
+	}
+	return nil
+}
+
+func reverseOperation(operation string) (string, bool) {
+	switch operation {
+	case "like":
+		return "unlike", true
+	case "unlike":
+		return "like", true
+	case "love":
+		return "hate", true
+	case "hate":
+		return "love", true
+	default:
+		return "", false
+	}
+}
+
+// UpsertTombstone keeps a tombstone alive until its TTL expires.
+func (r *Repo) UpsertTombstone(ctx context.Context, t Tombstone) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO tombstone (provider, external_id, expires_at)
+VALUES (?, ?, ?)
+ON CONFLICT(provider, external_id) DO UPDATE SET expires_at = excluded.expires_at
+`, t.Provider, t.ExternalID, t.ExpiresAt.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return fmt.Errorf("writeback: upsert tombstone %s/%s: %w", t.Provider, t.ExternalID, err)
+	}
+	return nil
+}
+
+// RearmTombstones extends the tombstones for the keys a sync pass saw, so a
+// removal that failed keeps blocking resurrection for another TTL. Keys with
+// no stored tombstone are ignored, as are rows already beyond the new expiry.
+func (r *Repo) RearmTombstones(ctx context.Context, now time.Time, ttl time.Duration, keys []TombstoneKey) (int, error) {
+	if len(keys) == 0 {
+		return 0, nil
+	}
+	if ttl <= 0 {
+		ttl = DefaultTombstoneTTL
+	}
+	expiresAt := now.UTC().Add(ttl).Format(time.RFC3339Nano)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("writeback: begin tombstone rearm tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+UPDATE tombstone SET expires_at = ?
+WHERE provider = ? AND external_id = ? AND expires_at < ?
+`)
+	if err != nil {
+		return 0, fmt.Errorf("writeback: prepare tombstone rearm: %w", err)
+	}
+	defer stmt.Close()
+
+	rearmed := 0
+	for _, key := range keys {
+		if key.Provider == "" || key.ExternalID == "" {
+			return 0, errors.New("writeback: rearm tombstone needs a provider and an external id")
+		}
+		res, err := stmt.ExecContext(ctx, expiresAt, key.Provider, key.ExternalID, expiresAt)
+		if err != nil {
+			return 0, fmt.Errorf("writeback: rearm tombstone %s/%s: %w", key.Provider, key.ExternalID, err)
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return 0, fmt.Errorf("writeback: rearm tombstone %s/%s: %w", key.Provider, key.ExternalID, err)
+		}
+		rearmed += int(affected)
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("writeback: commit tombstone rearm tx: %w", err)
+	}
+	return rearmed, nil
+}
+
+// ActiveTombstones returns unexpired tombstones.
+func (r *Repo) ActiveTombstones(ctx context.Context, asOf time.Time) ([]Tombstone, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT provider, external_id, expires_at
+FROM tombstone
+WHERE expires_at > ?
+ORDER BY provider, external_id
+`, asOf.UTC().Format(time.RFC3339Nano))
+	if err != nil {
+		return nil, fmt.Errorf("writeback: active tombstones: %w", err)
+	}
+	defer rows.Close()
+
+	var out []Tombstone
+	for rows.Next() {
+		var provider, externalID, expiresText string
+		if err := rows.Scan(&provider, &externalID, &expiresText); err != nil {
+			return nil, fmt.Errorf("writeback: scan tombstone: %w", err)
+		}
+		expiresAt, err := time.Parse(time.RFC3339Nano, expiresText)
+		if err != nil {
+			return nil, fmt.Errorf("writeback: parse tombstone expiry: %w", err)
+		}
+		out = append(out, Tombstone{Provider: provider, ExternalID: externalID, ExpiresAt: expiresAt})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("writeback: iterate tombstones: %w", err)
+	}
+	return out, nil
+}
+
+// AddReviewQueueItem inserts a review item for manual resolution.
+func (r *Repo) AddReviewQueueItem(ctx context.Context, item ReviewItem) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `
+INSERT INTO review_queue (canonical_id, service, service_id, reason, method, confidence)
+VALUES (?, ?, ?, ?, ?, ?)
+`, nullableString(item.CanonicalID), item.Provider, item.ServiceID, item.Reason, item.Method, item.Confidence)
+	if err != nil {
+		return 0, fmt.Errorf("writeback: add review item %s/%s: %w", item.Provider, item.ServiceID, err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, fmt.Errorf("writeback: review item id: %w", err)
+	}
+	return id, nil
+}
+
+// DeleteReviewQueueItem removes a review item once it has been handled.
+func (r *Repo) DeleteReviewQueueItem(ctx context.Context, id int64) error {
+	res, err := r.db.ExecContext(ctx, `DELETE FROM review_queue WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("writeback: delete review item %d: %w", id, err)
+	}
+	rows, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("writeback: review item rows affected %d: %w", id, err)
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// ResolveReviewQueueItem converts a review item into a manual alias decision.
+func (r *Repo) ResolveReviewQueueItem(ctx context.Context, id int64) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("writeback: begin resolve review tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var item ReviewItem
+	var canonical sql.NullString
+	if err := tx.QueryRowContext(ctx, `
+SELECT id, canonical_id, service, service_id, reason, method, confidence
+FROM review_queue
+WHERE id = ?
+`, id).Scan(&item.ID, &canonical, &item.Provider, &item.ServiceID, &item.Reason, &item.Method, &item.Confidence); err != nil {
+		if err == sql.ErrNoRows {
+			return sql.ErrNoRows
+		}
+		return fmt.Errorf("writeback: load review item %d: %w", id, err)
+	}
+	if canonical.Valid {
+		item.CanonicalID = canonical.String
+	}
+	if item.CanonicalID == "" {
+		return fmt.Errorf("writeback: review item %d has no canonical id", id)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO alias (service, service_id, canonical_id, confidence, method, decided_by)
+VALUES (?, ?, ?, 1, 'manual', 'manual')
+ON CONFLICT(service, service_id) DO UPDATE SET
+    canonical_id = excluded.canonical_id,
+    confidence = excluded.confidence,
+    method = excluded.method,
+    decided_by = excluded.decided_by
+`, item.Provider, item.ServiceID, item.CanonicalID); err != nil {
+		return fmt.Errorf("writeback: resolve review item %d alias: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM review_queue WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("writeback: resolve review item %d delete: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("writeback: commit resolve review tx: %w", err)
+	}
+	return nil
+}
+
+// ListReviewQueue returns all review items in creation order.
+func (r *Repo) ListReviewQueue(ctx context.Context) ([]ReviewItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, canonical_id, service, service_id, reason, method, confidence, created_at
+FROM review_queue
+ORDER BY id ASC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("writeback: list review queue: %w", err)
+	}
+	defer rows.Close()
+
+	var out []ReviewItem
+	for rows.Next() {
+		var item ReviewItem
+		var canonical sql.NullString
+		var created string
+		if err := rows.Scan(&item.ID, &canonical, &item.Provider, &item.ServiceID, &item.Reason, &item.Method, &item.Confidence, &created); err != nil {
+			return nil, fmt.Errorf("writeback: scan review item: %w", err)
+		}
+		if canonical.Valid {
+			item.CanonicalID = canonical.String
+		}
+		if ts, err := time.Parse(time.RFC3339Nano, created); err == nil {
+			item.CreatedAt = ts
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("writeback: iterate review queue: %w", err)
+	}
+	return out, nil
+}
+
+func nullableString(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
+}

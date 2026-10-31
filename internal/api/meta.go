@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
 package api
 
 import (
@@ -18,6 +21,7 @@ type metaResponse struct {
 	RecommendedBuild map[string]int `json:"recommended_build"`
 	Features         []string       `json:"features"`
 	ReleasesURL      string         `json:"releases_url"`
+	ReviewQueue      bool           `json:"review_queue"`
 }
 
 func (d Deps) handleMeta(w http.ResponseWriter, r *http.Request) {
@@ -30,6 +34,7 @@ func (d Deps) handleMeta(w http.ResponseWriter, r *http.Request) {
 		RecommendedBuild: mapOrEmpty(d.RecommendedBuild),
 		Features:         sliceOrEmpty(d.Features),
 		ReleasesURL:      d.ReleasesURL,
+		ReviewQueue:      d.ReviewQueue != nil,
 	}, time.Minute)
 }
 
