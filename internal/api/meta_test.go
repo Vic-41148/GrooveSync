@@ -1835,6 +1835,106 @@ func TestSpotifyLibraryWriteQueuesItems(t *testing.T) {
 	}
 }
 
+func TestHealthReport(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:       "1.2.3",
+		Proto:         3,
+		Schema:        13,
+		Now:           time.Now,
+		Features:      []string{"meta", "youtube"},
+		DB:            pingerStub{},
+		Connectors:    connectorListerStub{accounts: []connectors.SpotifyAuthState{{AccountID: "acct-1", Status: connectors.SpotifyStatusConnected}}},
+		YouTubeHealth: healthStub{},
+		ReviewQueue:   reviewQueueStub{},
+		Library:       libraryListerStub{count: 12},
+		Playlists:     playlistListerStub{playlists: []library.Playlist{{ID: "spotify:pl-1"}}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/health", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got struct {
+		Status     string `json:"status"`
+		Database   string `json:"database"`
+		Connectors struct {
+			Spotify []struct {
+				AccountID string `json:"account_id"`
+				Status    string `json:"status"`
+			} `json:"spotify"`
+			YouTube struct {
+				Status string `json:"status"`
+			} `json:"youtube"`
+		} `json:"connectors"`
+		Counts struct {
+			ReviewQueue   int `json:"review_queue"`
+			LibraryTracks int `json:"library_tracks"`
+			Playlists     int `json:"playlists"`
+		} `json:"counts"`
+		WritebackMode string `json:"writeback_mode"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Status != "ok" || got.Database != "ok" {
+		t.Fatalf("status = %q database = %q, want ok", got.Status, got.Database)
+	}
+	if len(got.Connectors.Spotify) != 1 || got.Connectors.Spotify[0].AccountID != "acct-1" {
+		t.Fatalf("spotify = %#v, want acct-1", got.Connectors.Spotify)
+	}
+	if got.Connectors.YouTube.Status != "ok" {
+		t.Fatalf("youtube status = %q, want ok", got.Connectors.YouTube.Status)
+	}
+	if got.Counts.LibraryTracks != 12 || got.Counts.Playlists != 1 {
+		t.Fatalf("counts = %#v, want 12 tracks and 1 playlist", got.Counts)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{
+		Version:       "1.2.3",
+		Proto:         3,
+		Schema:        13,
+		Now:           time.Now,
+		DB:            pingerStub{err: errors.New("db down")},
+		YouTubeHealth: healthStub{err: errors.New("sidecar down")},
+	}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/health", nil))
+	var degraded struct {
+		Status   string `json:"status"`
+		Database string `json:"database"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &degraded); err != nil {
+		t.Fatalf("unmarshal degraded response: %v", err)
+	}
+	if degraded.Status != "degraded" || degraded.Database != "unavailable" {
+		t.Fatalf("degraded status = %q database = %q, want degraded and unavailable", degraded.Status, degraded.Database)
+	}
+}
+
+type healthStub struct {
+	err error
+}
+
+func (s healthStub) Health(context.Context) error {
+	return s.err
+}
+
+type libraryListerStub struct {
+	tracks []library.Track
+	count  int
+	err    error
+}
+
+func (s libraryListerStub) List(context.Context, int, int) ([]library.Track, error) {
+	return s.tracks, s.err
+}
+
+func (s libraryListerStub) Count(context.Context) (int, error) {
+	return s.count, s.err
+}
+
 func TestReviewQueueCreate(t *testing.T) {
 	t.Parallel()
 

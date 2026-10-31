@@ -96,6 +96,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 
 	var youtubeImport api.YouTubeLikeImport
 	var youtubePlaylists api.YouTubePlaylistImport
+	var youtubeHealth api.HealthChecker
 	if cfg.YTMusicURL != "" {
 		client, err := ytmusic.NewClient(cfg.YTMusicURL)
 		if err != nil {
@@ -104,6 +105,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		importer := connectors.YouTubeImporter{DB: db, Client: client}
 		youtubeImport = importer
 		youtubePlaylists = importer
+		youtubeHealth = client
 		processor.Executors[connectors.ProviderYouTube] = connectors.YouTubeRemoteWriteExecutor(db, client)
 		features = append(features, "youtube")
 	}
@@ -144,6 +146,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Playlists:        libraryRepo,
 		YouTubeImport:    youtubeImport,
 		YouTubePlaylists: youtubePlaylists,
+		YouTubeHealth:    youtubeHealth,
 		Transfer:         transfer.Planner{DB: db, Devices: deviceRepo},
 		Rollout:          queueRepo,
 	})

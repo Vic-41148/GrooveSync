@@ -59,6 +59,7 @@ type Deps struct {
 	YouTubeImport      YouTubeLikeImport
 	YouTubePlaylists   YouTubePlaylistImport
 	Playlists          PlaylistLister
+	YouTubeHealth      HealthChecker
 	Transfer           TransferPlanner
 	Rollout            RolloutSettings
 }
@@ -159,6 +160,11 @@ type MetadataEnricher interface {
 	Run(context.Context, int) (metadata.BackfillResult, error)
 }
 
+// HealthChecker reports whether an external service is usable.
+type HealthChecker interface {
+	Health(context.Context) error
+}
+
 // SpotifyLikeImport mirrors liked songs into canonical tracks.
 type SpotifyLikeImport interface {
 	Import(context.Context, string, connectors.ImportOptions) (connectors.ImportResult, error)
@@ -201,6 +207,7 @@ func New(d Deps) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sync/v1/meta", d.handleMeta)
 	mux.HandleFunc("GET /healthz", d.handleHealth)
+	mux.HandleFunc("GET /sync/v1/health", d.handleHealthReport)
 	mux.HandleFunc("GET /sync/v1/review", d.handleReviewQueue)
 	mux.HandleFunc("POST /sync/v1/review", d.handleReviewQueueCreate)
 	mux.HandleFunc("DELETE /sync/v1/review/{id}", d.handleReviewQueueDelete)
@@ -266,6 +273,105 @@ func (d Deps) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 		payload["db"] = "ok"
 	}
+	writeJSON(w, http.StatusOK, payload, 0)
+}
+
+func (d Deps) handleHealthReport(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+
+	status := "ok"
+	payload := map[string]any{
+		"version":  d.Version,
+		"schema":   d.Schema,
+		"features": d.Features,
+	}
+	if payload["features"] == nil {
+		payload["features"] = []string{}
+	}
+
+	database := "unconfigured"
+	if d.DB != nil {
+		if err := d.DB.PingContext(ctx); err != nil {
+			database = "unavailable"
+			status = "degraded"
+		} else {
+			database = "ok"
+		}
+	}
+	payload["database"] = database
+
+	connectors := map[string]any{}
+	if d.Connectors != nil {
+		accounts, err := d.spotifyAccounts(ctx)
+		if err != nil {
+			connectors["spotify"] = "unavailable"
+			status = "degraded"
+		} else {
+			connectors["spotify"] = accounts
+		}
+	}
+	if d.YouTubeHealth != nil {
+		youtube := map[string]string{"status": "ok"}
+		if err := d.YouTubeHealth.Health(ctx); err != nil {
+			youtube["status"] = "unavailable"
+			youtube["reason"] = err.Error()
+			status = "degraded"
+		}
+		connectors["youtube"] = youtube
+	}
+	payload["connectors"] = connectors
+
+	counts := map[string]any{}
+	if d.ReviewQueue != nil {
+		items, err := d.ReviewQueue.ListReviewQueue(ctx)
+		if err != nil {
+			counts["review_queue"] = "unavailable"
+			status = "degraded"
+		} else {
+			counts["review_queue"] = len(items)
+		}
+	}
+	if d.Library != nil {
+		if total, err := d.Library.Count(ctx); err != nil {
+			counts["library_tracks"] = "unavailable"
+			status = "degraded"
+		} else {
+			counts["library_tracks"] = total
+		}
+	}
+	if d.Playlists != nil {
+		playlists, err := d.Playlists.ListPlaylists(ctx)
+		if err != nil {
+			counts["playlists"] = "unavailable"
+			status = "degraded"
+		} else {
+			counts["playlists"] = len(playlists)
+		}
+	}
+	payload["counts"] = counts
+
+	if d.Rollout != nil {
+		mode, err := d.Rollout.RolloutMode(ctx)
+		if err != nil {
+			payload["writeback_mode"] = "unavailable"
+			status = "degraded"
+		} else {
+			payload["writeback_mode"] = string(mode)
+		}
+	}
+	if d.AcquisitionSwitch != nil {
+		enabled, err := d.AcquisitionSwitch.Enabled(ctx)
+		if err != nil {
+			payload["acquisition_enabled"] = "unavailable"
+			status = "degraded"
+		} else {
+			payload["acquisition_enabled"] = enabled
+		}
+	}
+
+	payload["status"] = status
 	writeJSON(w, http.StatusOK, payload, 0)
 }
 
@@ -554,28 +660,34 @@ func buildPlanItems(items []writeback.PlanItem) []buildPlanItem {
 	return out
 }
 
-func (d Deps) handleConnectors(w http.ResponseWriter, r *http.Request) {
-	type spotifyAccount struct {
-		AccountID           string `json:"account_id"`
-		Status              string `json:"status"`
-		AuthorizedAt        string `json:"authorized_at,omitempty"`
-		ExpiringAt          string `json:"expiring_at,omitempty"`
-		ReconnectRequiredAt string `json:"reconnect_required_at,omitempty"`
-		DisconnectedAt      string `json:"disconnected_at,omitempty"`
-		StatusReason        string `json:"status_reason,omitempty"`
-	}
+type spotifyAccount struct {
+	AccountID           string `json:"account_id"`
+	Status              string `json:"status"`
+	AuthorizedAt        string `json:"authorized_at,omitempty"`
+	ExpiringAt          string `json:"expiring_at,omitempty"`
+	ReconnectRequiredAt string `json:"reconnect_required_at,omitempty"`
+	DisconnectedAt      string `json:"disconnected_at,omitempty"`
+	StatusReason        string `json:"status_reason,omitempty"`
+}
 
+func (d Deps) handleConnectors(w http.ResponseWriter, r *http.Request) {
 	if d.Connectors == nil {
 		writeJSON(w, http.StatusOK, map[string]any{"spotify": []spotifyAccount{}}, 0)
 		return
 	}
-
-	accounts, err := d.Connectors.ListSpotifyAccounts(r.Context())
+	out, err := d.spotifyAccounts(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "connectors unavailable"}, 0)
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"spotify": out}, 0)
+}
 
+func (d Deps) spotifyAccounts(ctx context.Context) ([]spotifyAccount, error) {
+	accounts, err := d.Connectors.ListSpotifyAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]spotifyAccount, 0, len(accounts))
 	for _, account := range accounts {
 		item := spotifyAccount{
@@ -597,7 +709,7 @@ func (d Deps) handleConnectors(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, item)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"spotify": out}, 0)
+	return out, nil
 }
 
 func (d Deps) handleDisconnectSpotify(w http.ResponseWriter, r *http.Request) {
