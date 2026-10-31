@@ -74,3 +74,44 @@ func TestDeviceTokenAllows(t *testing.T) {
 		t.Fatalf("status = %d, want not %d", rec.Code, http.StatusUnauthorized)
 	}
 }
+
+func TestAdminTokenRequiredForDeviceRegistration(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{AdminToken: "admin-secret", Devices: mockDevices{ok: true}})
+	for _, tc := range []struct {
+		name  string
+		token string
+		want  int
+	}{
+		{name: "no token", want: http.StatusUnauthorized},
+		{name: "wrong token", token: "nope", want: http.StatusUnauthorized},
+		// An empty body still reaches the handler, so a non-401 status proves
+		// the admin token passed the middleware.
+		{name: "admin token", token: "admin-secret", want: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/sync/v1/devices", nil)
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.want)
+			}
+		})
+	}
+}
+
+func TestMissingTokenRejected(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{AdminToken: "admin-secret"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}

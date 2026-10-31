@@ -390,3 +390,36 @@ func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 		t.Fatal("Load() error = nil, want error")
 	}
 }
+
+func TestCheckExposure(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name       string
+		addr       string
+		adminToken string
+		wantErr    bool
+	}{
+		{name: "loopback without token", addr: "127.0.0.1:8080"},
+		{name: "localhost without token", addr: "localhost:8080"},
+		{name: "ipv6 loopback without token", addr: "[::1]:8080"},
+		{name: "all interfaces without token", addr: "0.0.0.0:8080", wantErr: true},
+		{name: "empty host without token", addr: ":8080", wantErr: true},
+		{name: "lan ip without token", addr: "192.168.1.10:8080", wantErr: true},
+		{name: "all interfaces with token", addr: "0.0.0.0:8080", adminToken: "secret"},
+		{name: "lan ip with token", addr: "192.168.1.10:8080", adminToken: "secret"},
+		{name: "malformed addr", addr: "8080", wantErr: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := CheckExposure(tc.addr, tc.adminToken)
+			if tc.wantErr && err == nil {
+				t.Fatalf("CheckExposure(%q, %q) = nil, want error", tc.addr, tc.adminToken)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("CheckExposure(%q, %q) = %v, want nil", tc.addr, tc.adminToken, err)
+			}
+		})
+	}
+}

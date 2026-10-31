@@ -46,6 +46,11 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		return err
 	}
 
+	adminToken := strings.TrimSpace(getenv("SYNCD_ADMIN_TOKEN"))
+	if err := config.CheckExposure(cfg.Addr, adminToken); err != nil {
+		return err
+	}
+
 	logger := logging.New(cfg.LogLevel)
 	db, err := store.Open(parent, cfg.DBPath)
 	if err != nil {
@@ -224,7 +229,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		ConnectorHealth:          connectors.HealthRepo{DB: db},
 		Transfer:                 transfer.Planner{DB: db, Devices: deviceRepo},
 		Rollout:                  queueRepo,
-		AdminToken:               os.Getenv("SYNCD_ADMIN_TOKEN"),
+		AdminToken:               adminToken,
 		SpotifyClientID:          strings.TrimSpace(getenv("SYNCD_SPOTIFY_CLIENT_ID")),
 		SpotifyClientSecret:      strings.TrimSpace(getenv("SYNCD_SPOTIFY_CLIENT_SECRET")),
 		SpotifyReturnToWhitelist: strings.TrimSpace(getenv("SYNCD_SPOTIFY_RETURN_TO_WHITELIST")),

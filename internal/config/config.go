@@ -9,6 +9,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -196,6 +197,28 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		cfg.RecommendedBuild[platform] = recommended
 	}
 	return cfg, nil
+}
+
+// CheckExposure refuses a routable bind address when no admin token is set.
+// Without the token every /sync/v1 route is open, so an exposed listener would
+// let any peer read the library or enrol a device.
+func CheckExposure(addr, adminToken string) error {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("config: addr %q: %w", addr, err)
+	}
+	if adminToken != "" || isLoopbackHost(host) {
+		return nil
+	}
+	return fmt.Errorf("config: refusing to listen on %q without SYNCD_ADMIN_TOKEN", addr)
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func envInt(getenv func(string) string, key string) (int, error) {

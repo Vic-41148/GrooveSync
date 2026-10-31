@@ -139,9 +139,8 @@ func (s *statusRecorder) Flush() {
 }
 
 // withAuth enforces bearer token authentication for /sync/v1/* endpoints.
-// It is intentionally permissive when the server is not configured with an
-// AdminToken and no device registry is present so existing tests that don't
-// set up auth remain functional.
+// A missing AdminToken leaves the API open, which config.CheckExposure only
+// permits on a loopback bind.
 func withAuth(d DepsGetter, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only protect API paths under /sync/v1/
@@ -154,15 +153,6 @@ func withAuth(d DepsGetter, next http.Handler) http.Handler {
 		// keeps existing tests and simple local setups working without tokens.
 		// When an admin token is set the middleware enforces authentication.
 		if d == nil || d.AdminToken() == "" {
-			next.ServeHTTP(w, r)
-			return
-		}
-
-		// Allow public device registration: this endpoint must accept unauthenticated
-		// requests so new devices can obtain a token. Keep the check here rather
-		// than in the router so the middleware does not interfere with its
-		// behaviour when a device registry is present.
-		if r.Method == "POST" && r.URL.Path == "/sync/v1/devices" {
 			next.ServeHTTP(w, r)
 			return
 		}
