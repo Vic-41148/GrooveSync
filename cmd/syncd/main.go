@@ -23,6 +23,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/taste"
+	"github.com/Vic-41148/groovesync/internal/transfer"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 )
 
@@ -120,7 +121,8 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 			Client: connectors.SpotifyClient{},
 			Tokens: connectors.SpotifyRepoTokenSource{Repo: connectorRepo},
 		},
-		Rollout: queueRepo,
+		Transfer: transfer.Planner{DB: db, Devices: deviceRepo},
+		Rollout:  queueRepo,
 	})
 
 	srv := &http.Server{

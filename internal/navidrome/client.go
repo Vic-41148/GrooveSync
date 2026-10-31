@@ -41,6 +41,7 @@ type Song struct {
 	DurationSeconds int    `json:"duration"`
 	Path            string `json:"path"`
 	Suffix          string `json:"suffix"`
+	SizeBytes       int64  `json:"size"`
 	MusicBrainzID   string `json:"musicBrainzId"`
 	ISRC            string `json:"isrc"`
 }

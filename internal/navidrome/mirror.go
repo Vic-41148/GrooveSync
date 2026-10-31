@@ -177,17 +177,20 @@ ORDER BY id ASC LIMIT 1
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
 		if _, err := tx.ExecContext(ctx, `
-INSERT INTO rendition (canonical_id, kind, path_or_uri, codec)
-VALUES (?, 'file', ?, ?)
-`, canonicalID, path, nullText(song.Suffix)); err != nil {
+INSERT INTO rendition (canonical_id, kind, path_or_uri, codec, size_bytes)
+VALUES (?, 'file', ?, ?, ?)
+`, canonicalID, path, nullText(song.Suffix), song.SizeBytes); err != nil {
 			return fmt.Errorf("navidrome: insert rendition %s: %w", path, err)
 		}
 	case err != nil:
 		return fmt.Errorf("navidrome: load rendition %s: %w", path, err)
 	default:
 		if _, err := tx.ExecContext(ctx, `
-UPDATE rendition SET codec = COALESCE(NULLIF(?, ''), codec) WHERE id = ?
-`, song.Suffix, id); err != nil {
+UPDATE rendition
+SET codec = COALESCE(NULLIF(?, ''), codec),
+    size_bytes = CASE WHEN ? > 0 THEN ? ELSE size_bytes END
+WHERE id = ?
+`, song.Suffix, song.SizeBytes, song.SizeBytes, id); err != nil {
 			return fmt.Errorf("navidrome: update rendition %s: %w", path, err)
 		}
 	}

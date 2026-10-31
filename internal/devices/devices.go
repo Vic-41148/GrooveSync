@@ -188,34 +188,65 @@ ORDER BY id ASC
 
 	var out []Device
 	for rows.Next() {
-		var device Device
-		var mode, scope, network, quality string
-		var mirrorDeletions int
-		var createdAt, lastSeen sql.NullString
-		if err := rows.Scan(
-			&device.ID, &device.Name, &device.Platform, &device.Build, &mode,
-			&scope, &device.Policy.AffinityThreshold, &device.Policy.StorageCapBytes,
-			&network, &mirrorDeletions, &quality, &createdAt, &lastSeen,
-		); err != nil {
-			return nil, fmt.Errorf("devices: scan: %w", err)
+		device, err := scanDevice(rows)
+		if err != nil {
+			return nil, err
 		}
-		device.SyncMode = SyncMode(mode)
-		device.Policy = Policy{
-			Scope:             Scope(scope),
-			AffinityThreshold: device.Policy.AffinityThreshold,
-			StorageCapBytes:   device.Policy.StorageCapBytes,
-			NetworkRule:       NetworkRule(network),
-			MirrorDeletions:   mirrorDeletions != 0,
-			Quality:           Quality(quality),
-		}
-		device.CreatedAt = parseTime(createdAt)
-		device.LastSeen = parseTime(lastSeen)
 		out = append(out, device)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("devices: iterate: %w", err)
 	}
 	return out, nil
+}
+
+// Get returns one device without token material.
+func (r Repo) Get(ctx context.Context, id string) (Device, error) {
+	if r.DB == nil {
+		return Device{}, errors.New("devices: database is required")
+	}
+	device, err := scanDevice(r.DB.QueryRowContext(ctx, `
+SELECT id, name, platform, build, sync_mode, scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality, created_at, last_seen
+FROM device
+WHERE id = ?
+`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Device{}, ErrDeviceNotFound
+	}
+	if err != nil {
+		return Device{}, err
+	}
+	return device, nil
+}
+
+type deviceScanner interface {
+	Scan(...any) error
+}
+
+func scanDevice(row deviceScanner) (Device, error) {
+	var device Device
+	var mode, scope, network, quality string
+	var mirrorDeletions int
+	var createdAt, lastSeen sql.NullString
+	if err := row.Scan(
+		&device.ID, &device.Name, &device.Platform, &device.Build, &mode,
+		&scope, &device.Policy.AffinityThreshold, &device.Policy.StorageCapBytes,
+		&network, &mirrorDeletions, &quality, &createdAt, &lastSeen,
+	); err != nil {
+		return Device{}, err
+	}
+	device.SyncMode = SyncMode(mode)
+	device.Policy = Policy{
+		Scope:             Scope(scope),
+		AffinityThreshold: device.Policy.AffinityThreshold,
+		StorageCapBytes:   device.Policy.StorageCapBytes,
+		NetworkRule:       NetworkRule(network),
+		MirrorDeletions:   mirrorDeletions != 0,
+		Quality:           Quality(quality),
+	}
+	device.CreatedAt = parseTime(createdAt)
+	device.LastSeen = parseTime(lastSeen)
+	return device, nil
 }
 
 // SetSyncMode updates the per-device sync mode.

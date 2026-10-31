@@ -21,6 +21,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/metadata"
 	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/taste"
+	"github.com/Vic-41148/groovesync/internal/transfer"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 )
 
@@ -54,6 +55,7 @@ type Deps struct {
 	Library            LibraryLister
 	Enrich             MetadataEnricher
 	SpotifyImport      SpotifyLikeImport
+	Transfer           TransferPlanner
 	Rollout            RolloutSettings
 }
 
@@ -158,6 +160,11 @@ type SpotifyLikeImport interface {
 	Import(context.Context, string, connectors.ImportOptions) (connectors.ImportResult, error)
 }
 
+// TransferPlanner builds the file plan for one device.
+type TransferPlanner interface {
+	Plan(context.Context, string) (transfer.Plan, error)
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -192,6 +199,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("DELETE /sync/v1/devices/{id}", d.handleDeviceDelete)
 	mux.HandleFunc("GET /sync/v1/devices/{id}/holdings", d.handleDeviceHoldings)
 	mux.HandleFunc("PUT /sync/v1/devices/{id}/holdings", d.handleDeviceHoldingsReport)
+	mux.HandleFunc("GET /sync/v1/devices/{id}/plan", d.handleDevicePlan)
 	mux.HandleFunc("GET /sync/v1/events", d.handleEvents)
 	mux.HandleFunc("POST /sync/v1/events", d.handleEventsAppend)
 	mux.HandleFunc("GET /sync/v1/score", d.handleScores)
@@ -859,6 +867,24 @@ func (d Deps) handleDeviceHoldingsReport(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleDevicePlan(w http.ResponseWriter, r *http.Request) {
+	if d.Transfer == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "transfer planning unavailable"}, 0)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	plan, err := d.Transfer.Plan(r.Context(), id)
+	if err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, plan, 0)
 }
 
 func writeDeviceError(w http.ResponseWriter, err error) {

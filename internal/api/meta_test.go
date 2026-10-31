@@ -22,6 +22,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/taste"
+	"github.com/Vic-41148/groovesync/internal/transfer"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 	_ "modernc.org/sqlite"
 )
@@ -252,6 +253,56 @@ func TestDevicePolicy(t *testing.T) {
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("missing device status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
+}
+
+func TestDevicePlan(t *testing.T) {
+	t.Parallel()
+
+	plan := transfer.Plan{
+		DeviceID:      "phone",
+		Downloads:     []transfer.File{{CanonicalID: "track-1", Hash: "hash-1", Path: "Song.flac", SizeBytes: 42}},
+		Deletes:       []transfer.File{},
+		Unchanged:     2,
+		DownloadBytes: 42,
+		Warnings:      []string{},
+	}
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 12, Now: time.Now, Transfer: transferStub{plan: plan}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/plan", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got transfer.Plan
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(got.Downloads) != 1 || got.Downloads[0].Hash != "hash-1" || got.Unchanged != 2 {
+		t.Fatalf("plan = %#v, want the stub plan", got)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 12, Now: time.Now, Transfer: transferStub{err: devices.ErrDeviceNotFound}}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices/missing/plan", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing device status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 12, Now: time.Now}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/plan", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("unavailable status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
+type transferStub struct {
+	plan transfer.Plan
+	err  error
+}
+
+func (s transferStub) Plan(context.Context, string) (transfer.Plan, error) {
+	return s.plan, s.err
 }
 
 func TestDeviceHoldings(t *testing.T) {
