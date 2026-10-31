@@ -22,6 +22,7 @@ const (
 	// second. The agent links back to the project so they can reach us.
 	DefaultMusicBrainzURL   = "https://musicbrainz.org/ws/2"
 	DefaultMusicBrainzAgent = "GrooveSync/1.0 (https://github.com/Vic-41148/groovesync)"
+	DefaultListenBrainzURL  = "https://api.listenbrainz.org"
 )
 
 // Config is the single resolved configuration for a syncd process.
@@ -36,6 +37,7 @@ type Config struct {
 	NavidromePassword string
 	MusicBrainzURL    string
 	MusicBrainzAgent  string
+	ListenBrainzURL   string
 	YTMusicURL        string
 	ReleasesURL       string
 	// LibrarySyncInterval is zero when the mirror only runs on request.
@@ -63,6 +65,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		NavidromePassword: envOr(getenv, "SYNCD_NAVIDROME_PASSWORD", ""),
 		MusicBrainzURL:    envOr(getenv, "SYNCD_MUSICBRAINZ_URL", DefaultMusicBrainzURL),
 		MusicBrainzAgent:  envOr(getenv, "SYNCD_MUSICBRAINZ_AGENT", DefaultMusicBrainzAgent),
+		ListenBrainzURL:   envOr(getenv, "SYNCD_LISTENBRAINZ_URL", DefaultListenBrainzURL),
 		YTMusicURL:        envOr(getenv, "SYNCD_YTMUSIC_URL", ""),
 		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
 		Proto:             DefaultProto,
@@ -98,6 +101,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "debug, info, warn or error")
 	fs.StringVar(&cfg.NavidromeURL, "navidrome-url", cfg.NavidromeURL, "base URL of the Navidrome instance")
 	fs.StringVar(&cfg.MusicBrainzURL, "musicbrainz-url", cfg.MusicBrainzURL, "base URL of the MusicBrainz web service")
+	fs.StringVar(&cfg.ListenBrainzURL, "listenbrainz-url", cfg.ListenBrainzURL, "base URL of the ListenBrainz API")
 	fs.StringVar(&cfg.YTMusicURL, "ytmusic-url", cfg.YTMusicURL, "base URL of the YouTube Music sidecar")
 	fs.StringVar(&cfg.ReleasesURL, "releases-url", cfg.ReleasesURL, "where clients download builds from")
 	fs.DurationVar(&cfg.LibrarySyncInterval, "library-sync-interval", cfg.LibrarySyncInterval, "how often to refresh the library mirror, zero to disable")

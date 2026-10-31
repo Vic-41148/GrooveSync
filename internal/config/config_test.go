@@ -210,6 +210,31 @@ func TestLoadParsesYouTubeSettings(t *testing.T) {
 	}
 }
 
+func TestLoadParsesListenBrainzSettings(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(func(key string) string {
+		if key == "SYNCD_LISTENBRAINZ_URL" {
+			return "http://listenbrainz.internal"
+		}
+		return ""
+	}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.ListenBrainzURL != "http://listenbrainz.internal" {
+		t.Fatalf("listenbrainz url = %q, want the environment value", cfg.ListenBrainzURL)
+	}
+
+	cfg, err = Load(func(string) string { return "" }, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() defaults error = %v", err)
+	}
+	if cfg.ListenBrainzURL != DefaultListenBrainzURL {
+		t.Fatalf("listenbrainz default = %q, want %q", cfg.ListenBrainzURL, DefaultListenBrainzURL)
+	}
+}
+
 func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 	t.Parallel()
 

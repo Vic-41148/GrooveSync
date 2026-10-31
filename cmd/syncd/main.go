@@ -18,6 +18,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/library"
+	"github.com/Vic-41148/groovesync/internal/listenbrainz"
 	"github.com/Vic-41148/groovesync/internal/logging"
 	"github.com/Vic-41148/groovesync/internal/metadata"
 	"github.com/Vic-41148/groovesync/internal/navidrome"
@@ -110,6 +111,16 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		features = append(features, "youtube")
 	}
 
+	var listenBrainz api.ListenBrainzImport
+	if cfg.ListenBrainzURL != "" {
+		client, err := listenbrainz.NewClient(cfg.ListenBrainzURL)
+		if err != nil {
+			return err
+		}
+		listenBrainz = connectors.ListenBrainzImporter{DB: db, Client: client}
+		features = append(features, "listenbrainz")
+	}
+
 	h := api.New(api.Deps{
 		Logger:             logger,
 		Version:            version(),
@@ -143,13 +154,14 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 			Client: connectors.SpotifyClient{},
 			Tokens: connectors.SpotifyRepoTokenSource{Repo: connectorRepo},
 		},
-		Playlists:        libraryRepo,
-		YouTubeImport:    youtubeImport,
-		YouTubePlaylists: youtubePlaylists,
-		YouTubeHealth:    youtubeHealth,
-		ConnectorHealth:  connectors.HealthRepo{DB: db},
-		Transfer:         transfer.Planner{DB: db, Devices: deviceRepo},
-		Rollout:          queueRepo,
+		Playlists:          libraryRepo,
+		YouTubeImport:      youtubeImport,
+		YouTubePlaylists:   youtubePlaylists,
+		YouTubeHealth:      youtubeHealth,
+		ListenBrainzImport: listenBrainz,
+		ConnectorHealth:    connectors.HealthRepo{DB: db},
+		Transfer:           transfer.Planner{DB: db, Devices: deviceRepo},
+		Rollout:            queueRepo,
 	})
 
 	srv := &http.Server{

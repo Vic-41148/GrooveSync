@@ -58,6 +58,7 @@ type Deps struct {
 	SpotifyPlaylists   SpotifyPlaylistImport
 	YouTubeImport      YouTubeLikeImport
 	YouTubePlaylists   YouTubePlaylistImport
+	ListenBrainzImport ListenBrainzImport
 	Playlists          PlaylistLister
 	YouTubeHealth      HealthChecker
 	ConnectorHealth    ConnectorHealthStore
@@ -192,6 +193,11 @@ type YouTubePlaylistImport interface {
 	ImportPlaylists(context.Context, connectors.PlaylistImportOptions) (connectors.ImportResult, error)
 }
 
+// ListenBrainzImport mirrors recording feedback into like state.
+type ListenBrainzImport interface {
+	ImportFeedback(context.Context, string, int, connectors.ImportOptions) (connectors.ImportResult, error)
+}
+
 // PlaylistLister returns the stored playlists.
 type PlaylistLister interface {
 	ListPlaylists(context.Context) ([]library.Playlist, error)
@@ -230,6 +236,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/playlists/import", d.handleSpotifyPlaylistImport)
 	mux.HandleFunc("POST /sync/v1/connectors/youtube/import", d.handleYouTubeImport)
 	mux.HandleFunc("POST /sync/v1/connectors/youtube/playlists/import", d.handleYouTubePlaylistImport)
+	mux.HandleFunc("POST /sync/v1/connectors/listenbrainz/{user}/import", d.handleListenBrainzImport)
 	mux.HandleFunc("GET /sync/v1/playlists", d.handlePlaylists)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
 	mux.HandleFunc("DELETE /sync/v1/me/library", d.handleSpotifyLibraryWrite("unlike"))
@@ -887,6 +894,44 @@ func (d Deps) handleYouTubePlaylistImport(w http.ResponseWriter, r *http.Request
 		return
 	}
 	d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthOK, "")
+	writeJSON(w, http.StatusOK, result, 0)
+}
+
+func (d Deps) handleListenBrainzImport(w http.ResponseWriter, r *http.Request) {
+	if d.ListenBrainzImport == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "listenbrainz import unavailable"}, 0)
+		return
+	}
+	user := r.PathValue("user")
+	if user == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "user required"}, 0)
+		return
+	}
+	score := 0
+	if raw := r.URL.Query().Get("score"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || (parsed != -1 && parsed != 0 && parsed != 1) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid score"}, 0)
+			return
+		}
+		score = parsed
+	}
+	threshold := 0.0
+	if raw := r.URL.Query().Get("threshold"); raw != "" {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil || parsed <= 0 || parsed > 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid threshold"}, 0)
+			return
+		}
+		threshold = parsed
+	}
+	result, err := d.ListenBrainzImport.ImportFeedback(r.Context(), user, score, connectors.ImportOptions{Threshold: threshold})
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderListenBrainz, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "listenbrainz import failed"}, 0)
+		return
+	}
+	d.reportConnectorHealth(r.Context(), connectors.ProviderListenBrainz, connectors.HealthOK, "")
 	writeJSON(w, http.StatusOK, result, 0)
 }
 

@@ -1387,6 +1387,60 @@ func TestYouTubePlaylistImport(t *testing.T) {
 	}
 }
 
+func TestListenBrainzImport(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:            "1.2.3",
+		Proto:              3,
+		Schema:             14,
+		Now:                time.Now,
+		ListenBrainzImport: listenBrainzImportStub{result: connectors.ImportResult{Seen: 3, Matched: 2, Queued: 1}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/listenbrainz/vic/import?score=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got connectors.ImportResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got != (connectors.ImportResult{Seen: 3, Matched: 2, Queued: 1}) {
+		t.Fatalf("result = %#v, want the feedback counts", got)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/listenbrainz/vic/import?score=2", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad score status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 14, Now: time.Now}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/listenbrainz/vic/import", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("unavailable status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 14, Now: time.Now, ListenBrainzImport: listenBrainzImportStub{err: errors.New("api down")}}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/listenbrainz/vic/import", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("api failure status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+}
+
+type listenBrainzImportStub struct {
+	result connectors.ImportResult
+	err    error
+}
+
+func (s listenBrainzImportStub) ImportFeedback(context.Context, string, int, connectors.ImportOptions) (connectors.ImportResult, error) {
+	return s.result, s.err
+}
+
 type youtubeImportStub struct {
 	result connectors.ImportResult
 	err    error
