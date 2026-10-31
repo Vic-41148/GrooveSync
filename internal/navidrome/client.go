@@ -93,6 +93,11 @@ func (c *Client) Ping(ctx context.Context) error {
 	return err
 }
 
+// Health reports whether the server is reachable for the health panel.
+func (c *Client) Health(ctx context.Context) error {
+	return c.Ping(ctx)
+}
+
 // Albums lists every album in name order, paging until the server runs out.
 func (c *Client) Albums(ctx context.Context) ([]Album, error) {
 	var out []Album

@@ -73,6 +73,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 
 	features := []string{"meta", "review_queue", "connectors", "spotify_library", "spotify_import", "plan", "write_log", "devices", "events", "score", "mix", "library", "acquisition", "settings"}
 	var libraryMirror api.LibraryMirror
+	var navidromeHealth api.HealthChecker
 	if cfg.NavidromeURL != "" {
 		if cfg.NavidromeUser == "" || cfg.NavidromePassword == "" {
 			return errors.New("syncd: a Navidrome URL needs SYNCD_NAVIDROME_USER and SYNCD_NAVIDROME_PASSWORD")
@@ -82,6 +83,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 			return err
 		}
 		libraryMirror = navidrome.Mirror{DB: db, Client: client, Ignore: cfg.IgnoreGlobs}
+		navidromeHealth = client
 		features = append(features, "library_sync")
 	}
 
@@ -190,6 +192,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		YouTubeImport:      youtubeImport,
 		YouTubePlaylists:   youtubePlaylists,
 		YouTubeHealth:      youtubeHealth,
+		NavidromeHealth:    navidromeHealth,
 		ListenBrainzImport: listenBrainz,
 		ConnectorHealth:    connectors.HealthRepo{DB: db},
 		Transfer:           transfer.Planner{DB: db, Devices: deviceRepo},

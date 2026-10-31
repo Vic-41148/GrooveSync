@@ -65,6 +65,7 @@ type Deps struct {
 	ListenBrainzImport ListenBrainzImport
 	Playlists          PlaylistLister
 	YouTubeHealth      HealthChecker
+	NavidromeHealth    HealthChecker
 	ConnectorHealth    ConnectorHealthStore
 	Transfer           TransferPlanner
 	Rollout            RolloutSettings
@@ -361,6 +362,15 @@ func (d Deps) handleHealthReport(w http.ResponseWriter, r *http.Request) {
 			status = "degraded"
 		}
 		connectorState["youtube"] = youtube
+	}
+	if d.NavidromeHealth != nil {
+		navidromeState := map[string]string{"status": "ok"}
+		if err := d.NavidromeHealth.Health(ctx); err != nil {
+			navidromeState["status"] = "unavailable"
+			navidromeState["reason"] = err.Error()
+			status = "degraded"
+		}
+		connectorState["navidrome"] = navidromeState
 	}
 	payload["connectors"] = connectorState
 

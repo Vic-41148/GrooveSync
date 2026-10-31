@@ -2043,6 +2043,7 @@ func TestHealthReport(t *testing.T) {
 		DB:                pingerStub{},
 		Connectors:        connectorListerStub{accounts: []connectors.SpotifyAuthState{{AccountID: "acct-1", Status: connectors.SpotifyStatusConnected}}},
 		YouTubeHealth:     healthStub{},
+		NavidromeHealth:   healthStub{},
 		ReviewQueue:       reviewQueueStub{},
 		Library:           libraryListerStub{count: 12},
 		Playlists:         playlistListerStub{playlists: []library.Playlist{{ID: "spotify:pl-1"}}},
@@ -2071,6 +2072,9 @@ func TestHealthReport(t *testing.T) {
 			YouTube struct {
 				Status string `json:"status"`
 			} `json:"youtube"`
+			Navidrome struct {
+				Status string `json:"status"`
+			} `json:"navidrome"`
 		} `json:"connectors"`
 		Counts struct {
 			ReviewQueue           int `json:"review_queue"`
@@ -2101,6 +2105,9 @@ func TestHealthReport(t *testing.T) {
 	if got.Connectors.YouTube.Status != "ok" {
 		t.Fatalf("youtube status = %q, want ok", got.Connectors.YouTube.Status)
 	}
+	if got.Connectors.Navidrome.Status != "ok" {
+		t.Fatalf("navidrome status = %q, want ok", got.Connectors.Navidrome.Status)
+	}
 	if got.Counts.LibraryTracks != 12 || got.Counts.Playlists != 1 {
 		t.Fatalf("counts = %#v, want 12 tracks and 1 playlist", got.Counts)
 	}
@@ -2122,22 +2129,32 @@ func TestHealthReport(t *testing.T) {
 
 	rec = httptest.NewRecorder()
 	New(Deps{
-		Version:       "1.2.3",
-		Proto:         3,
-		Schema:        13,
-		Now:           time.Now,
-		DB:            pingerStub{err: errors.New("db down")},
-		YouTubeHealth: healthStub{err: errors.New("sidecar down")},
+		Version:         "1.2.3",
+		Proto:           3,
+		Schema:          13,
+		Now:             time.Now,
+		DB:              pingerStub{err: errors.New("db down")},
+		YouTubeHealth:   healthStub{err: errors.New("sidecar down")},
+		NavidromeHealth: healthStub{err: errors.New("navidrome down")},
 	}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/health", nil))
 	var degraded struct {
-		Status   string `json:"status"`
-		Database string `json:"database"`
+		Status     string `json:"status"`
+		Database   string `json:"database"`
+		Connectors struct {
+			Navidrome struct {
+				Status string `json:"status"`
+				Reason string `json:"reason"`
+			} `json:"navidrome"`
+		} `json:"connectors"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &degraded); err != nil {
 		t.Fatalf("unmarshal degraded response: %v", err)
 	}
 	if degraded.Status != "degraded" || degraded.Database != "unavailable" {
 		t.Fatalf("degraded status = %q database = %q, want degraded and unavailable", degraded.Status, degraded.Database)
+	}
+	if degraded.Connectors.Navidrome.Status != "unavailable" || degraded.Connectors.Navidrome.Reason != "navidrome down" {
+		t.Fatalf("navidrome = %#v, want the health error", degraded.Connectors.Navidrome)
 	}
 }
 
