@@ -26,3 +26,7 @@ The service currently exposes:
 ## License
 
 This project is licensed under the GNU Affero General Public License v3 or later (AGPL-3.0-or-later). See LICENSE for the full text. By contributing, you agree to sign-off your commits using the Developer Certificate of Origin (DCO). For details on contribution and DCO sign-off see CONTRIBUTING.md.
+
+Third-party licenses and attribution
+
+This repository includes third-party dependencies licensed under permissive licenses (MIT, BSD-2/3-Clause, Apache-2.0, etc.). A bundled copy of dependency license texts and notices is included at /usr/share/licenses/measure/ inside the project (and the Docker image). See third_party_licenses/ for details.
