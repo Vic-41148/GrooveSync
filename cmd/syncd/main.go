@@ -91,6 +91,12 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		features = append(features, "library_hash")
 	}
 
+	var libraryFiles api.LibraryFiles
+	if cfg.MusicRoot != "" {
+		libraryFiles = library.FileStore{DB: db, Root: cfg.MusicRoot}
+		features = append(features, "library_files")
+	}
+
 	var enricher api.MetadataEnricher
 	var enrichStats api.MetadataStats
 	if cfg.MusicBrainzURL != "" {
@@ -167,6 +173,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		LibrarySync:        libraryMirror,
 		Library:            libraryRepo,
 		LibraryHashes:      libraryHashes,
+		LibraryFiles:       libraryFiles,
 		Enrich:             enricher,
 		EnrichStats:        enrichStats,
 		SpotifyImport: connectors.SpotifyImporter{

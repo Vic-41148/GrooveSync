@@ -89,11 +89,15 @@ LIMIT ?
 }
 
 func (h HashBackfill) resolve(path string) string {
+	return resolvePath(h.Root, path)
+}
+
+func resolvePath(root, path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" || filepath.IsAbs(path) {
 		return path
 	}
-	root := strings.TrimSpace(h.Root)
+	root = strings.TrimSpace(root)
 	if root == "" {
 		return path
 	}

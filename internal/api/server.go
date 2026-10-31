@@ -55,6 +55,7 @@ type Deps struct {
 	LibrarySync        LibraryMirror
 	Library            LibraryLister
 	LibraryHashes      LibraryHasher
+	LibraryFiles       LibraryFiles
 	Enrich             MetadataEnricher
 	EnrichStats        MetadataStats
 	SpotifyImport      SpotifyLikeImport
@@ -165,6 +166,11 @@ type LibraryLister interface {
 // LibraryHasher stores content digests for mirrored files.
 type LibraryHasher interface {
 	Run(context.Context, int) (library.HashResult, error)
+}
+
+// LibraryFiles opens a mirrored file by content hash.
+type LibraryFiles interface {
+	Open(context.Context, string) (library.Content, error)
 }
 
 // MetadataEnricher fills missing identifiers from an upstream database.
@@ -281,6 +287,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/library/hash", d.handleLibraryHash)
 	mux.HandleFunc("POST /sync/v1/library/enrich", d.handleLibraryEnrich)
 	mux.HandleFunc("GET /sync/v1/library", d.handleLibrary)
+	mux.HandleFunc("GET /sync/v1/library/files/{hash}", d.handleLibraryFile)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -1859,6 +1866,31 @@ func (d Deps) handleLibraryEnrich(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result, 0)
+}
+
+func (d Deps) handleLibraryFile(w http.ResponseWriter, r *http.Request) {
+	if d.LibraryFiles == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "file downloads unavailable"}, 0)
+		return
+	}
+	hash := strings.ToLower(strings.TrimSpace(r.PathValue("hash")))
+	content, err := d.LibraryFiles.Open(r.Context(), hash)
+	switch {
+	case errors.Is(err, library.ErrInvalidHash):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid hash"}, 0)
+		return
+	case errors.Is(err, library.ErrFileNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "file not found"}, 0)
+		return
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "file unavailable"}, 0)
+		return
+	}
+	defer content.Reader.Close()
+
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("ETag", `"`+hash+`"`)
+	http.ServeContent(w, r, content.Name, content.ModTime, content.Reader)
 }
 
 func (d Deps) handleLibrary(w http.ResponseWriter, r *http.Request) {
