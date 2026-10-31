@@ -86,6 +86,22 @@ WHERE NOT EXISTS (
 `, canonicalID, path, hash, codecOf(path), info.Size(), hash); err != nil {
 		return "", fmt.Errorf("library: insert rendition %s: %w", hash, err)
 	}
+
+	// Ensure every observed path for this content is recorded. Use the
+	// rendition row that holds this hash (the one we may have just inserted or
+	// an existing row) and record the path in content_path. This preserves a
+	// single stored content while tracking multiple contribution paths.
+	var renditionID int64
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM rendition WHERE kind = 'file' AND lower(sha256) = ? ORDER BY id ASC LIMIT 1`, hash).Scan(&renditionID); err != nil {
+		return "", fmt.Errorf("library: find rendition id %s: %w", hash, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO content_path (rendition_id, path_or_uri, source)
+VALUES (?, ?, 'upload')
+ON CONFLICT(rendition_id, path_or_uri) DO NOTHING
+`, renditionID, path); err != nil {
+		return "", fmt.Errorf("library: insert content_path %s: %w", path, err)
+	}
 	if err := tx.Commit(); err != nil {
 		return "", fmt.Errorf("library: commit ingest: %w", err)
 	}

@@ -183,6 +183,15 @@ func TestIngestStoresContentOnce(t *testing.T) {
 	if queued != 0 {
 		t.Fatalf("review queue = %d rows, want none for held content", queued)
 	}
+
+	// Ensure content_path recorded both paths for the same stored rendition
+	var cpCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM content_path`).Scan(&cpCount); err != nil {
+		t.Fatalf("count content_path: %v", err)
+	}
+	if cpCount != 2 {
+		t.Fatalf("content_path = %d rows, want 2", cpCount)
+	}
 }
 
 func TestIngestRejectsBadInput(t *testing.T) {
