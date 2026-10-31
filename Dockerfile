@@ -5,7 +5,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/syncd ./cmd/syncd \
+RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/syncd ./server/cmd/syncd \
  && mkdir -p /out/data
 
 FROM gcr.io/distroless/static:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
