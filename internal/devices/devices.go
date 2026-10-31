@@ -131,13 +131,20 @@ func (r Repo) Register(ctx context.Context, device Device) (Registration, error)
 	if device.Build < 0 {
 		return Registration{}, fmt.Errorf("%w: build must not be negative", ErrInvalidDevice)
 	}
-	if device.SyncMode == "" {
-		device.SyncMode = ModeApp
+
+	// rawMode is the client's supplied value. An empty rawMode means the
+	// client didn't set it; effectiveMode is what we return and use for
+	// policy normalization (defaults to app for new devices).
+	rawMode := device.SyncMode
+	effectiveMode := rawMode
+	if effectiveMode == "" {
+		effectiveMode = ModeApp
 	}
-	if !validMode(device.SyncMode) {
-		return Registration{}, fmt.Errorf("%w: unsupported sync mode %q", ErrInvalidDevice, device.SyncMode)
+	if rawMode != "" && !validMode(rawMode) {
+		return Registration{}, fmt.Errorf("%w: unsupported sync mode %q", ErrInvalidDevice, rawMode)
 	}
-	policy, err := normalizePolicy(device.Policy, device.SyncMode)
+
+	policy, err := normalizePolicy(device.Policy, effectiveMode)
 	if err != nil {
 		return Registration{}, err
 	}
@@ -156,18 +163,23 @@ func (r Repo) Register(ctx context.Context, device Device) (Registration, error)
 		return Registration{}, err
 	}
 	now := r.now()
+
+	// Use SQL to coalesce an empty incoming sync_mode into the DB default for
+	// inserts while preserving the existing DB value on conflict when the
+	// incoming value is empty. We pass rawMode so the statement can detect an
+	// omitted value and avoid overwriting an existing mode.
 	if _, err := r.DB.ExecContext(ctx, `
 INSERT INTO device (
     id, name, platform, build, last_seen, token_hash, sync_mode,
     scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality, urls
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), 'app'), ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     platform = excluded.platform,
     build = excluded.build,
     last_seen = excluded.last_seen,
     token_hash = excluded.token_hash,
-    sync_mode = excluded.sync_mode,
+    sync_mode = CASE WHEN ? = '' OR ? IS NULL THEN device.sync_mode ELSE excluded.sync_mode END,
     scope = excluded.scope,
     affinity_threshold = excluded.affinity_threshold,
     storage_cap_bytes = excluded.storage_cap_bytes,
@@ -175,11 +187,13 @@ ON CONFLICT(id) DO UPDATE SET
     mirror_deletions = excluded.mirror_deletions,
     quality = excluded.quality,
     urls = excluded.urls
-`, device.ID, device.Name, device.Platform, device.Build, now.Format(time.RFC3339Nano), hashToken(token), string(device.SyncMode),
-		string(policy.Scope), policy.AffinityThreshold, policy.StorageCapBytes, string(policy.NetworkRule), boolInt(policy.MirrorDeletions), string(policy.Quality), string(urls)); err != nil {
+`, device.ID, device.Name, device.Platform, device.Build, now.Format(time.RFC3339Nano), hashToken(token), string(rawMode),
+		string(policy.Scope), policy.AffinityThreshold, policy.StorageCapBytes, string(policy.NetworkRule), boolInt(policy.MirrorDeletions), string(policy.Quality), string(urls), string(rawMode), string(rawMode)); err != nil {
 		return Registration{}, fmt.Errorf("devices: register %s: %w", device.ID, err)
 	}
 
+	// Report the effective mode to the caller (app when omitted).
+	device.SyncMode = effectiveMode
 	device.LastSeen = now
 	if device.CreatedAt.IsZero() {
 		device.CreatedAt = now

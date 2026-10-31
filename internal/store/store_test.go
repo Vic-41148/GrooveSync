@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/pressly/goose/v3"
 )
 
 func TestDSN(t *testing.T) {
@@ -118,6 +120,34 @@ func TestMigrateAppliesCoreSchema(t *testing.T) {
 				t.Fatalf("%s table = %q, want %s", table, name, table)
 			}
 		})
+	}
+}
+
+func TestMigrationKeepsDeviceSyncMode(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	goose.SetBaseFS(migrationsFS)
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		t.Fatalf("goose dialect: %v", err)
+	}
+	if err := goose.UpToContext(ctx, db, "migrations", 6); err != nil {
+		t.Fatalf("migrate to 6: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO device (id, name, sync_mode) VALUES ('phone', 'Phone', 'external')`); err != nil {
+		t.Fatalf("seed device: %v", err)
+	}
+	if err := goose.UpContext(ctx, db, "migrations"); err != nil {
+		t.Fatalf("migrate to head: %v", err)
+	}
+
+	var mode string
+	if err := db.QueryRowContext(ctx, `SELECT sync_mode FROM device WHERE id = ?`, "phone").Scan(&mode); err != nil {
+		t.Fatalf("read sync mode: %v", err)
+	}
+	if mode != "external" {
+		t.Fatalf("sync_mode = %q, want external", mode)
 	}
 }
 
