@@ -57,6 +57,7 @@ type Deps struct {
 	SpotifyImport      SpotifyLikeImport
 	SpotifyPlaylists   SpotifyPlaylistImport
 	YouTubeImport      YouTubeLikeImport
+	YouTubePlaylists   YouTubePlaylistImport
 	Playlists          PlaylistLister
 	Transfer           TransferPlanner
 	Rollout            RolloutSettings
@@ -173,6 +174,11 @@ type YouTubeLikeImport interface {
 	ImportLikes(context.Context, connectors.ImportOptions) (connectors.ImportResult, error)
 }
 
+// YouTubePlaylistImport mirrors YouTube Music playlists into canonical tracks.
+type YouTubePlaylistImport interface {
+	ImportPlaylists(context.Context, connectors.PlaylistImportOptions) (connectors.ImportResult, error)
+}
+
 // PlaylistLister returns the stored playlists.
 type PlaylistLister interface {
 	ListPlaylists(context.Context) ([]library.Playlist, error)
@@ -209,6 +215,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/import", d.handleSpotifyImport)
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/playlists/import", d.handleSpotifyPlaylistImport)
 	mux.HandleFunc("POST /sync/v1/connectors/youtube/import", d.handleYouTubeImport)
+	mux.HandleFunc("POST /sync/v1/connectors/youtube/playlists/import", d.handleYouTubePlaylistImport)
 	mux.HandleFunc("GET /sync/v1/playlists", d.handlePlaylists)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
 	mux.HandleFunc("DELETE /sync/v1/me/library", d.handleSpotifyLibraryWrite("unlike"))
@@ -710,6 +717,32 @@ func (d Deps) handleYouTubeImport(w http.ResponseWriter, r *http.Request) {
 	result, err := d.YouTubeImport.ImportLikes(r.Context(), connectors.ImportOptions{Threshold: threshold})
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube import failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, result, 0)
+}
+
+func (d Deps) handleYouTubePlaylistImport(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubePlaylists == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "youtube playlist import unavailable"}, 0)
+		return
+	}
+	threshold := 0.0
+	query := r.URL.Query()
+	if raw := query.Get("threshold"); raw != "" {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil || parsed <= 0 || parsed > 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid threshold"}, 0)
+			return
+		}
+		threshold = parsed
+	}
+	result, err := d.YouTubePlaylists.ImportPlaylists(r.Context(), connectors.PlaylistImportOptions{
+		ImportOptions: connectors.ImportOptions{Threshold: threshold},
+		PlaylistIDs:   query["playlist"],
+	})
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube playlist import failed"}, 0)
 		return
 	}
 	writeJSON(w, http.StatusOK, result, 0)

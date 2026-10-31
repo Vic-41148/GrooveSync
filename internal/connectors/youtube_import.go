@@ -17,6 +17,8 @@ import (
 // YouTubeLibrary is the sidecar surface the importer needs.
 type YouTubeLibrary interface {
 	Likes(context.Context) ([]ytmusic.Track, error)
+	Playlists(context.Context) ([]ytmusic.Playlist, error)
+	PlaylistTracks(context.Context, string) ([]ytmusic.Track, error)
 }
 
 // YouTubeImporter mirrors YouTube Music likes into canonical tracks. The
@@ -58,7 +60,7 @@ func (i YouTubeImporter) ImportLikes(ctx context.Context, opts ImportOptions) (I
 			continue
 		}
 		result.Seen++
-		outcome, canonicalID, err := i.store(ctx, track, pool, threshold, opts)
+		outcome, canonicalID, err := i.store(ctx, track, pool, threshold, opts, true)
 		if err != nil {
 			return result, err
 		}
@@ -85,7 +87,96 @@ func (i YouTubeImporter) ImportLikes(ctx context.Context, opts ImportOptions) (I
 	return result, nil
 }
 
-func (i YouTubeImporter) store(ctx context.Context, track ytmusic.Track, pool []localCandidate, threshold float64, opts ImportOptions) (importOutcome, string, error) {
+// ImportPlaylists mirrors YouTube Music playlists into canonical tracks.
+// Playlist membership is not a like: it creates tracks and aliases but never
+// touches like state.
+func (i YouTubeImporter) ImportPlaylists(ctx context.Context, opts PlaylistImportOptions) (ImportResult, error) {
+	if i.DB == nil {
+		return ImportResult{}, errors.New("connectors: database is required for import")
+	}
+	if i.Client == nil {
+		return ImportResult{}, errors.New("connectors: youtube sidecar is required")
+	}
+	threshold := opts.Threshold
+	if threshold <= 0 {
+		threshold = 0.8
+	}
+
+	playlists, err := i.Client.Playlists(ctx)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	wanted := make(map[string]bool, len(opts.PlaylistIDs))
+	for _, id := range opts.PlaylistIDs {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			wanted[trimmed] = true
+		}
+	}
+
+	pool, err := SpotifyImporter{DB: i.DB}.localCandidates(ctx)
+	if err != nil {
+		return ImportResult{}, err
+	}
+
+	var result ImportResult
+	for _, playlist := range playlists {
+		if len(wanted) > 0 && !wanted[playlist.ID] {
+			continue
+		}
+		tracks, err := i.Client.PlaylistTracks(ctx, playlist.ID)
+		if err != nil {
+			return result, err
+		}
+		ids := make([]string, len(tracks))
+		for idx, track := range tracks {
+			if track.VideoID == "" {
+				continue
+			}
+			outcome, canonicalID, err := i.store(ctx, track, pool, threshold, opts.ImportOptions, false)
+			if err != nil {
+				return result, err
+			}
+			switch outcome {
+			case importCreated:
+				result.Created++
+			case importMatched:
+				result.Matched++
+			case importQueued:
+				result.Queued++
+			}
+			if canonicalID == "" {
+				continue
+			}
+			ids[idx] = canonicalID
+			if outcome == importCreated {
+				pool = append(pool, localCandidate{
+					CanonicalID: canonicalID,
+					Track: identity.Track{
+						Title:      track.Title,
+						Artist:     strings.Join(track.Artists, ", "),
+						DurationMS: track.DurationMS,
+					},
+					NormTitle: identity.NormalizeTitle(track.Title),
+				})
+			}
+		}
+		if err := writePlaylistItems(ctx, i.DB, ProviderYouTube, playlist.ID, playlist.Name, "", false, i.now(opts.ImportOptions), ids); err != nil {
+			return result, err
+		}
+		result.Playlists++
+		result.Seen += len(tracks)
+	}
+	return result, nil
+}
+
+func (i YouTubeImporter) now(opts ImportOptions) time.Time {
+	if opts.Now != nil {
+		return opts.Now().UTC()
+	}
+	return time.Now().UTC()
+}
+
+func (i YouTubeImporter) store(ctx context.Context, track ytmusic.Track, pool []localCandidate, threshold float64, opts ImportOptions, markLiked bool) (importOutcome, string, error) {
 	tx, err := i.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, "", fmt.Errorf("connectors: begin youtube import tx: %w", err)
@@ -103,8 +194,10 @@ SELECT canonical_id FROM alias WHERE service = ? AND service_id = ?
 `, ProviderYouTube, track.VideoID).Scan(&canonicalID)
 	switch {
 	case err == nil:
-		if err := touchLikeState(ctx, tx, ProviderYouTube, canonicalID, now, now); err != nil {
-			return 0, "", err
+		if markLiked {
+			if err := touchLikeState(ctx, tx, ProviderYouTube, canonicalID, now, now); err != nil {
+				return 0, "", err
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return 0, "", fmt.Errorf("connectors: commit youtube import tx: %w", err)
@@ -165,8 +258,10 @@ ON CONFLICT(service, service_id) DO NOTHING
 `, ProviderYouTube, track.VideoID, canonicalID, confidence, string(method)); err != nil {
 		return 0, "", fmt.Errorf("connectors: store youtube alias %s: %w", track.VideoID, err)
 	}
-	if err := touchLikeState(ctx, tx, ProviderYouTube, canonicalID, now, now); err != nil {
-		return 0, "", err
+	if markLiked {
+		if err := touchLikeState(ctx, tx, ProviderYouTube, canonicalID, now, now); err != nil {
+			return 0, "", err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, "", fmt.Errorf("connectors: commit youtube import tx: %w", err)

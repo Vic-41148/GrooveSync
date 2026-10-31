@@ -95,12 +95,15 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	}
 
 	var youtubeImport api.YouTubeLikeImport
+	var youtubePlaylists api.YouTubePlaylistImport
 	if cfg.YTMusicURL != "" {
 		client, err := ytmusic.NewClient(cfg.YTMusicURL)
 		if err != nil {
 			return err
 		}
-		youtubeImport = connectors.YouTubeImporter{DB: db, Client: client}
+		importer := connectors.YouTubeImporter{DB: db, Client: client}
+		youtubeImport = importer
+		youtubePlaylists = importer
 		processor.Executors[connectors.ProviderYouTube] = connectors.YouTubeRemoteWriteExecutor(db, client)
 		features = append(features, "youtube")
 	}
@@ -138,10 +141,11 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 			Client: connectors.SpotifyClient{},
 			Tokens: connectors.SpotifyRepoTokenSource{Repo: connectorRepo},
 		},
-		Playlists:     libraryRepo,
-		YouTubeImport: youtubeImport,
-		Transfer:      transfer.Planner{DB: db, Devices: deviceRepo},
-		Rollout:       queueRepo,
+		Playlists:        libraryRepo,
+		YouTubeImport:    youtubeImport,
+		YouTubePlaylists: youtubePlaylists,
+		Transfer:         transfer.Planner{DB: db, Devices: deviceRepo},
+		Rollout:          queueRepo,
 	})
 
 	srv := &http.Server{

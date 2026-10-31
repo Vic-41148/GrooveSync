@@ -1335,12 +1335,66 @@ func TestYouTubeImport(t *testing.T) {
 	}
 }
 
+func TestYouTubePlaylistImport(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:          "1.2.3",
+		Proto:            3,
+		Schema:           13,
+		Now:              time.Now,
+		YouTubePlaylists: youtubePlaylistStub{result: connectors.ImportResult{Seen: 6, Matched: 4, Created: 2, Playlists: 1}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/youtube/playlists/import?threshold=0.9&playlist=pl-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got connectors.ImportResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got != (connectors.ImportResult{Seen: 6, Matched: 4, Created: 2, Playlists: 1}) {
+		t.Fatalf("result = %#v, want the youtube playlist counts", got)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/youtube/playlists/import?threshold=2", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad threshold status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/youtube/playlists/import", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("unavailable status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now, YouTubePlaylists: youtubePlaylistStub{err: errors.New("sidecar down")}}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/youtube/playlists/import", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("sidecar failure status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+}
+
 type youtubeImportStub struct {
 	result connectors.ImportResult
 	err    error
 }
 
 func (s youtubeImportStub) ImportLikes(context.Context, connectors.ImportOptions) (connectors.ImportResult, error) {
+	return s.result, s.err
+}
+
+type youtubePlaylistStub struct {
+	result connectors.ImportResult
+	err    error
+}
+
+func (s youtubePlaylistStub) ImportPlaylists(context.Context, connectors.PlaylistImportOptions) (connectors.ImportResult, error) {
 	return s.result, s.err
 }
 

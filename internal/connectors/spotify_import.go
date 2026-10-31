@@ -295,49 +295,7 @@ func (i SpotifyImporter) storePlaylistTracks(ctx context.Context, tracks []Spoti
 }
 
 func (i SpotifyImporter) writePlaylist(ctx context.Context, playlist SpotifyPlaylist, ids []string, opts ImportOptions) error {
-	playlistID := ProviderSpotify + ":" + playlist.ID
-	tx, err := i.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("connectors: begin playlist tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx, `
-INSERT INTO playlist (id, service, service_id, name, owner, collaborative, updated_at)
-VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?)
-ON CONFLICT(service, service_id) DO UPDATE SET
-    name = excluded.name,
-    owner = excluded.owner,
-    collaborative = excluded.collaborative,
-    updated_at = excluded.updated_at
-`, playlistID, ProviderSpotify, playlist.ID, playlist.Name, playlist.Owner, boolValue(playlist.Collaborative), i.now(opts).Format(time.RFC3339Nano)); err != nil {
-		return fmt.Errorf("connectors: store playlist %s: %w", playlist.ID, err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM playlist_item WHERE playlist_id = ?`, playlistID); err != nil {
-		return fmt.Errorf("connectors: clear playlist %s: %w", playlist.ID, err)
-	}
-	for position, canonicalID := range ids {
-		if canonicalID == "" {
-			continue
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO playlist_item (playlist_id, position, canonical_id)
-VALUES (?, ?, ?)
-`, playlistID, position, canonicalID); err != nil {
-			return fmt.Errorf("connectors: store playlist item %s at %d: %w", playlist.ID, position, err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("connectors: commit playlist tx: %w", err)
-	}
-	return nil
-}
-
-func boolValue(value bool) int {
-	if value {
-		return 1
-	}
-	return 0
+	return writePlaylistItems(ctx, i.DB, ProviderSpotify, playlist.ID, playlist.Name, playlist.Owner, playlist.Collaborative, i.now(opts), ids)
 }
 
 func (i SpotifyImporter) likedURIs(ctx context.Context, accountID string) (map[string]bool, error) {
