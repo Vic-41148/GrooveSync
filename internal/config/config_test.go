@@ -112,6 +112,54 @@ func TestLoadParsesLibrarySyncInterval(t *testing.T) {
 	}
 }
 
+func TestLoadParsesEnrichSettings(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		interval  string
+		limit     string
+		want      time.Duration
+		wantLimit int
+		wantErr   bool
+	}{
+		{name: "disabled by default", wantLimit: 25},
+		{name: "interval and limit", interval: "12h", limit: "50", want: 12 * time.Hour, wantLimit: 50},
+		{name: "negative interval", interval: "-1m", wantLimit: 25, wantErr: true},
+		{name: "garbage limit", limit: "many", wantLimit: 25, wantErr: true},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg, err := Load(func(key string) string {
+				switch key {
+				case "SYNCD_ENRICH_INTERVAL":
+					return tc.interval
+				case "SYNCD_ENRICH_LIMIT":
+					return tc.limit
+				default:
+					return ""
+				}
+			}, nil, &bytes.Buffer{})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("Load() error = nil, want failure")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+			if cfg.EnrichInterval != tc.want || cfg.EnrichLimit != tc.wantLimit {
+				t.Fatalf("enrich settings = %v %d, want %v %d", cfg.EnrichInterval, cfg.EnrichLimit, tc.want, tc.wantLimit)
+			}
+		})
+	}
+}
+
 func TestLoadParsesMusicBrainzSettings(t *testing.T) {
 	t.Parallel()
 

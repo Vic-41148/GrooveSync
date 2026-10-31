@@ -140,6 +140,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	defer stop()
 	go runQueueLoop(ctx, logger, processor)
 	go runLibraryLoop(ctx, logger, libraryMirror, cfg.LibrarySyncInterval)
+	go runEnrichLoop(ctx, logger, enricher, cfg.EnrichInterval, cfg.EnrichLimit)
 
 	select {
 	case <-ctx.Done():
@@ -198,6 +199,29 @@ func runLibraryLoop(ctx context.Context, logger interface{ Warn(string, ...any) 
 func syncLibrary(ctx context.Context, logger interface{ Warn(string, ...any) }, mirror api.LibraryMirror) {
 	if _, err := mirror.Sync(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Warn("library sync failed", "error", err)
+	}
+}
+
+func runEnrichLoop(ctx context.Context, logger interface{ Warn(string, ...any) }, enricher api.MetadataEnricher, interval time.Duration, limit int) {
+	if enricher == nil || interval <= 0 {
+		return
+	}
+	enrichTracks(ctx, logger, enricher, limit)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			enrichTracks(ctx, logger, enricher, limit)
+		}
+	}
+}
+
+func enrichTracks(ctx context.Context, logger interface{ Warn(string, ...any) }, enricher api.MetadataEnricher, limit int) {
+	if _, err := enricher.Run(ctx, limit); err != nil && !errors.Is(err, context.Canceled) {
+		logger.Warn("metadata enrichment failed", "error", err)
 	}
 }
 

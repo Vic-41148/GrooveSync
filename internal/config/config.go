@@ -39,8 +39,11 @@ type Config struct {
 	ReleasesURL       string
 	// LibrarySyncInterval is zero when the mirror only runs on request.
 	LibrarySyncInterval time.Duration
-	Proto               int
-	ShutdownWait        time.Duration
+	// EnrichInterval is zero when MusicBrainz backfill only runs on request.
+	EnrichInterval time.Duration
+	EnrichLimit    int
+	Proto          int
+	ShutdownWait   time.Duration
 	// Build floors per platform, 0 meaning "any build". Kept in config so a
 	// release can raise a floor without a rebuild.
 	MinBuild         map[string]int
@@ -72,6 +75,20 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	}
 	cfg.LibrarySyncInterval = interval
 
+	enrichInterval, err := envDuration(getenv, "SYNCD_ENRICH_INTERVAL")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.EnrichInterval = enrichInterval
+	enrichLimit, err := envInt(getenv, "SYNCD_ENRICH_LIMIT")
+	if err != nil {
+		return Config{}, err
+	}
+	if enrichLimit == 0 {
+		enrichLimit = 25
+	}
+	cfg.EnrichLimit = enrichLimit
+
 	fs := flag.NewFlagSet("syncd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.Addr, "addr", cfg.Addr, "listen address (loopback by default)")
@@ -81,6 +98,8 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.StringVar(&cfg.MusicBrainzURL, "musicbrainz-url", cfg.MusicBrainzURL, "base URL of the MusicBrainz web service")
 	fs.StringVar(&cfg.ReleasesURL, "releases-url", cfg.ReleasesURL, "where clients download builds from")
 	fs.DurationVar(&cfg.LibrarySyncInterval, "library-sync-interval", cfg.LibrarySyncInterval, "how often to refresh the library mirror, zero to disable")
+	fs.DurationVar(&cfg.EnrichInterval, "enrich-interval", cfg.EnrichInterval, "how often to backfill metadata, zero to disable")
+	fs.IntVar(&cfg.EnrichLimit, "enrich-limit", cfg.EnrichLimit, "tracks to backfill per pass")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
