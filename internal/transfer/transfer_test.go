@@ -249,6 +249,65 @@ func TestPlanQualityPreference(t *testing.T) {
 	}
 }
 
+func TestPlanEvictionSuggestions(t *testing.T) {
+	t.Parallel()
+
+	db := openTransferDB(t)
+	ctx := context.Background()
+	for _, id := range []string{"liked", "cold", "warm"} {
+		seedTrack(t, db, id, id)
+		seedRendition(t, db, id, testHash(id), id+".flac", "flac", 100)
+	}
+	seedState(t, db, "liked", "liked")
+	seedEvent(t, db, "warm", "play")
+	repo := seedDevice(t, db, devices.Device{ID: "phone", Name: "Phone"})
+	if err := repo.SetPolicy(ctx, "phone", devices.Policy{StorageCapBytes: 150}); err != nil {
+		t.Fatalf("SetPolicy() error = %v", err)
+	}
+	if err := repo.ReportHoldings(ctx, "phone", []devices.Holding{
+		{CanonicalID: "liked", Hash: testHash("liked")},
+		{CanonicalID: "cold", Hash: testHash("cold")},
+		{CanonicalID: "warm", Hash: testHash("warm")},
+	}); err != nil {
+		t.Fatalf("ReportHoldings() error = %v", err)
+	}
+
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(plan.Evictions) != 1 || plan.Evictions[0].CanonicalID != "cold" {
+		t.Fatalf("evictions = %#v, want the cold track only", plan.Evictions)
+	}
+	if len(plan.Deletes) != 0 {
+		t.Fatalf("deletes = %#v, want eviction suggestions only", plan.Deletes)
+	}
+}
+
+func TestPlanEvictionsWithinCap(t *testing.T) {
+	t.Parallel()
+
+	db := openTransferDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-1", "Song")
+	seedRendition(t, db, "track-1", testHash("1"), "Song.flac", "flac", 100)
+	repo := seedDevice(t, db, devices.Device{ID: "phone", Name: "Phone"})
+	if err := repo.SetPolicy(ctx, "phone", devices.Policy{StorageCapBytes: 200}); err != nil {
+		t.Fatalf("SetPolicy() error = %v", err)
+	}
+	if err := repo.ReportHoldings(ctx, "phone", []devices.Holding{{CanonicalID: "track-1", Hash: testHash("1")}}); err != nil {
+		t.Fatalf("ReportHoldings() error = %v", err)
+	}
+
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(plan.Evictions) != 0 {
+		t.Fatalf("evictions = %#v, want none below the cap", plan.Evictions)
+	}
+}
+
 func TestPlanPlaylistScope(t *testing.T) {
 	t.Parallel()
 

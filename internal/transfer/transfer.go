@@ -22,11 +22,12 @@ type File struct {
 	SizeBytes   int64  `json:"size_bytes"`
 }
 
-// Plan is what one device should download and drop.
+// Plan is what one device should download, drop or consider evicting.
 type Plan struct {
 	DeviceID      string   `json:"device_id"`
 	Downloads     []File   `json:"downloads"`
 	Deletes       []File   `json:"deletes"`
+	Evictions     []File   `json:"evictions"`
 	Unchanged     int      `json:"unchanged"`
 	DownloadBytes int64    `json:"download_bytes"`
 	Warnings      []string `json:"warnings"`
@@ -139,6 +140,15 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 	}
 	plan.DownloadBytes = downloadBytes
 
+	evictions, err := p.evictions(ctx, holdings, renditions, device.Policy.StorageCapBytes, used)
+	if err != nil {
+		return Plan{}, err
+	}
+	plan.Evictions = evictions
+	if len(evictions) > 0 {
+		plan.Warnings = append(plan.Warnings, "storage cap exceeded; eviction suggestions follow")
+	}
+
 	if device.Policy.MirrorDeletions {
 		for _, holding := range holdings {
 			if inScope[holding.CanonicalID] {
@@ -159,6 +169,109 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 		})
 	}
 	return plan, nil
+}
+
+// recentPlayWindow protects a track from an eviction suggestion for two weeks
+// after it was played.
+const recentPlayWindow = 14 * 24 * time.Hour
+
+type evictionCandidate struct {
+	file  File
+	score float64
+}
+
+// evictions suggests files to remove when the device holds more than its cap.
+// Low affinity goes first, and liked or recently played tracks are never
+// suggested.
+func (p Planner) evictions(ctx context.Context, holdings []devices.Holding, renditions map[string][]rendition, capBytes, used int64) ([]File, error) {
+	if capBytes <= 0 || used <= capBytes {
+		return nil, nil
+	}
+	events, err := taste.NewStore(p.DB).List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	asOf := time.Now().UTC()
+	if p.Now != nil {
+		asOf = p.Now().UTC()
+	}
+
+	liked, err := p.likedSet(ctx)
+	if err != nil {
+		return nil, err
+	}
+	protected := make(map[string]bool, len(events))
+	for _, event := range events {
+		if event.Type != taste.EventPlay {
+			continue
+		}
+		if event.HLC.Wall.After(asOf.Add(-recentPlayWindow)) {
+			protected[event.CanonicalID] = true
+		}
+	}
+	scores := make(map[string]float64)
+	for _, scored := range taste.NewLog(events...).ScoreTracks(taste.DefaultConfig(), asOf) {
+		scores[scored.CanonicalID] = scored.Score
+	}
+
+	candidates := make([]evictionCandidate, 0, len(holdings))
+	for _, holding := range holdings {
+		if liked[holding.CanonicalID] || protected[holding.CanonicalID] {
+			continue
+		}
+		size := sizeOf(renditions[holding.CanonicalID], holding.Hash)
+		if size <= 0 {
+			continue
+		}
+		candidates = append(candidates, evictionCandidate{
+			file: File{
+				CanonicalID: holding.CanonicalID,
+				Hash:        holding.Hash,
+				Path:        pathOf(renditions[holding.CanonicalID], holding.Hash),
+				SizeBytes:   size,
+			},
+			score: scores[holding.CanonicalID],
+		})
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			return candidates[i].file.CanonicalID < candidates[j].file.CanonicalID
+		}
+		return candidates[i].score < candidates[j].score
+	})
+
+	var out []File
+	for _, candidate := range candidates {
+		if used <= capBytes {
+			break
+		}
+		used -= candidate.file.SizeBytes
+		out = append(out, candidate.file)
+	}
+	return out, nil
+}
+
+func (p Planner) likedSet(ctx context.Context) (map[string]bool, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+SELECT DISTINCT canonical_id FROM service_state WHERE base_state = 'liked'
+`)
+	if err != nil {
+		return nil, fmt.Errorf("transfer: list liked tracks: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]bool)
+	for rows.Next() {
+		var canonicalID string
+		if err := rows.Scan(&canonicalID); err != nil {
+			return nil, fmt.Errorf("transfer: scan liked track: %w", err)
+		}
+		out[canonicalID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("transfer: iterate liked tracks: %w", err)
+	}
+	return out, nil
 }
 
 func (p Planner) targets(ctx context.Context, policy devices.Policy) ([]target, error) {
