@@ -194,6 +194,59 @@ func TestIngestStoresContentOnce(t *testing.T) {
 	}
 }
 
+func TestIngestKeepsBothRenditionsForSamePathDifferentHash(t *testing.T) {
+	t.Parallel()
+
+	db := openLibraryDB(t)
+	defer db.Close()
+	seedTrack(t, db, "track-1", "Song", "Artist", "Album", "", "")
+	ingestor := Ingestor{DB: db}
+
+	content1 := []byte("audio bytes 1")
+	content2 := []byte("audio bytes 2")
+
+	path, hash1 := uploadFixture(t, "song.flac", content1)
+	sum1 := sha256.Sum256(content1)
+	hash1 = hex.EncodeToString(sum1[:])
+
+	// Overwrite the file to have different content and hash
+	if err := os.WriteFile(path, content2, 0o644); err != nil {
+		t.Fatalf("overwrite: %v", err)
+	}
+	sum2 := sha256.Sum256(content2)
+	hash2 := hex.EncodeToString(sum2[:])
+
+	// First ingest
+	_, err := ingestor.IngestWithSource(context.Background(), "track-1", path, hash1, "song.flac", "sync")
+	if err != nil {
+		t.Fatalf("first IngestWithSource() error = %v", err)
+	}
+
+	// Second ingest with same path but different hash
+	_, err = ingestor.IngestWithSource(context.Background(), "track-1", path, hash2, "song.flac", "sync")
+	if err != nil {
+		t.Fatalf("second IngestWithSource() error = %v", err)
+	}
+
+	// Assert 2 renditions exist for the track
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM rendition WHERE canonical_id = 'track-1'`).Scan(&count); err != nil {
+		t.Fatalf("query rendition count: %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("renditions count = %d, want 2", count)
+	}
+
+	// Assert both paths are recorded in content_path (even if they are the same string)
+	var cpCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM content_path WHERE rendition_id IN (SELECT id FROM rendition WHERE canonical_id = 'track-1')`).Scan(&cpCount); err != nil {
+		t.Fatalf("query content_path count: %v", err)
+	}
+	if cpCount != 2 {
+		t.Fatalf("content_path count = %d, want 2", cpCount)
+	}
+}
+
 func TestIngestRejectsBadInput(t *testing.T) {
 	t.Parallel()
 
