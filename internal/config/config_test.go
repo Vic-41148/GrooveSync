@@ -68,6 +68,39 @@ func TestLoadParsesNavidromeCredentials(t *testing.T) {
 	}
 }
 
+func TestLoadParsesMusicBrainzSettings(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(func(key string) string {
+		switch key {
+		case "SYNCD_MUSICBRAINZ_URL":
+			return "http://musicbrainz.internal/ws/2"
+		case "SYNCD_MUSICBRAINZ_AGENT":
+			return "GrooveSync/test"
+		default:
+			return ""
+		}
+	}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.MusicBrainzURL != "http://musicbrainz.internal/ws/2" || cfg.MusicBrainzAgent != "GrooveSync/test" {
+		t.Fatalf("musicbrainz config = %q %q, want the environment values", cfg.MusicBrainzURL, cfg.MusicBrainzAgent)
+	}
+}
+
+func TestLoadMusicBrainzDefaults(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(func(string) string { return "" }, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.MusicBrainzURL != DefaultMusicBrainzURL || cfg.MusicBrainzAgent != DefaultMusicBrainzAgent {
+		t.Fatalf("musicbrainz defaults = %q %q, want the package defaults", cfg.MusicBrainzURL, cfg.MusicBrainzAgent)
+	}
+}
+
 func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 	t.Parallel()
 

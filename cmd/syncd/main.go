@@ -19,6 +19,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/library"
 	"github.com/Vic-41148/groovesync/internal/logging"
+	"github.com/Vic-41148/groovesync/internal/metadata"
 	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/taste"
@@ -81,6 +82,16 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		features = append(features, "library_sync")
 	}
 
+	var enricher api.MetadataEnricher
+	if cfg.MusicBrainzURL != "" {
+		client, err := metadata.NewMusicBrainz(cfg.MusicBrainzURL, cfg.MusicBrainzAgent)
+		if err != nil {
+			return err
+		}
+		enricher = metadata.Backfill{DB: db, Lookup: client}
+		features = append(features, "metadata_enrich")
+	}
+
 	h := api.New(api.Deps{
 		Logger:             logger,
 		Version:            version(),
@@ -103,6 +114,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		AcquisitionSwitch:  acquisitionRepo,
 		LibrarySync:        libraryMirror,
 		Library:            libraryRepo,
+		Enrich:             enricher,
 		Rollout:            queueRepo,
 	})
 

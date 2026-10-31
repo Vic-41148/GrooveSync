@@ -17,6 +17,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/library"
+	"github.com/Vic-41148/groovesync/internal/metadata"
 	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/store"
 	"github.com/Vic-41148/groovesync/internal/taste"
@@ -886,6 +887,79 @@ func TestLibraryListWithoutSource(t *testing.T) {
 	if got["total"] != float64(0) {
 		t.Fatalf("total = %v, want 0", got["total"])
 	}
+}
+
+func TestLibraryEnrich(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version: "1.2.3",
+		Proto:   3,
+		Schema:  10,
+		Now:     time.Now,
+		Enrich:  enrichStub{result: metadata.BackfillResult{Checked: 3, Updated: 2, Missing: 1}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/enrich?limit=3", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got metadata.BackfillResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got != (metadata.BackfillResult{Checked: 3, Updated: 2, Missing: 1}) {
+		t.Fatalf("result = %#v, want the enrichment counts", got)
+	}
+}
+
+func TestLibraryEnrichRejectsBadLimit(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, Enrich: enrichStub{}})
+	for _, url := range []string{
+		"/sync/v1/library/enrich?limit=0",
+		"/sync/v1/library/enrich?limit=201",
+		"/sync/v1/library/enrich?limit=many",
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, url, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want %d", url, rec.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestLibraryEnrichUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/enrich", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
+func TestLibraryEnrichFailure(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, Enrich: enrichStub{err: errors.New("musicbrainz down")}})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/enrich", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+}
+
+type enrichStub struct {
+	result metadata.BackfillResult
+	err    error
+}
+
+func (e enrichStub) Run(context.Context, int) (metadata.BackfillResult, error) {
+	return e.result, e.err
 }
 
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {

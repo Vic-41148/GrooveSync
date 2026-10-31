@@ -18,6 +18,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/connectors"
 	"github.com/Vic-41148/groovesync/internal/devices"
 	"github.com/Vic-41148/groovesync/internal/library"
+	"github.com/Vic-41148/groovesync/internal/metadata"
 	"github.com/Vic-41148/groovesync/internal/navidrome"
 	"github.com/Vic-41148/groovesync/internal/taste"
 	"github.com/Vic-41148/groovesync/internal/writeback"
@@ -51,6 +52,7 @@ type Deps struct {
 	AcquisitionSwitch  AcquisitionSwitch
 	LibrarySync        LibraryMirror
 	Library            LibraryLister
+	Enrich             MetadataEnricher
 	Rollout            RolloutSettings
 }
 
@@ -144,6 +146,11 @@ type LibraryLister interface {
 	Count(context.Context) (int, error)
 }
 
+// MetadataEnricher fills missing identifiers from an upstream database.
+type MetadataEnricher interface {
+	Run(context.Context, int) (metadata.BackfillResult, error)
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -186,6 +193,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/settings", d.handleSettings)
 	mux.HandleFunc("PATCH /sync/v1/settings", d.handleSettingsUpdate)
 	mux.HandleFunc("POST /sync/v1/library/sync", d.handleLibrarySync)
+	mux.HandleFunc("POST /sync/v1/library/enrich", d.handleLibraryEnrich)
 	mux.HandleFunc("GET /sync/v1/library", d.handleLibrary)
 
 	var h http.Handler = mux
@@ -1123,6 +1131,28 @@ func (d Deps) handleLibrarySync(w http.ResponseWriter, r *http.Request) {
 	result, err := d.LibrarySync.Sync(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "library sync failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, result, 0)
+}
+
+func (d Deps) handleLibraryEnrich(w http.ResponseWriter, r *http.Request) {
+	limit := 25
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 200 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"}, 0)
+			return
+		}
+		limit = parsed
+	}
+	if d.Enrich == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "metadata enrichment unavailable"}, 0)
+		return
+	}
+	result, err := d.Enrich.Run(r.Context(), limit)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "metadata lookup failed"}, 0)
 		return
 	}
 	writeJSON(w, http.StatusOK, result, 0)

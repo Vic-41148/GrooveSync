@@ -18,6 +18,10 @@ const (
 	DefaultDBPath   = "syncd.db"
 	DefaultLogLevel = "info"
 	DefaultProto    = 1
+	// MusicBrainz asks for a meaningful User-Agent and about one request per
+	// second. The agent links back to the project so they can reach us.
+	DefaultMusicBrainzURL   = "https://musicbrainz.org/ws/2"
+	DefaultMusicBrainzAgent = "GrooveSync/1.0 (https://github.com/Vic-41148/groovesync)"
 )
 
 // Config is the single resolved configuration for a syncd process.
@@ -30,6 +34,8 @@ type Config struct {
 	// in the process list.
 	NavidromeUser     string
 	NavidromePassword string
+	MusicBrainzURL    string
+	MusicBrainzAgent  string
 	ReleasesURL       string
 	Proto             int
 	ShutdownWait      time.Duration
@@ -49,6 +55,8 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		NavidromeURL:      envOr(getenv, "SYNCD_NAVIDROME_URL", ""),
 		NavidromeUser:     envOr(getenv, "SYNCD_NAVIDROME_USER", ""),
 		NavidromePassword: envOr(getenv, "SYNCD_NAVIDROME_PASSWORD", ""),
+		MusicBrainzURL:    envOr(getenv, "SYNCD_MUSICBRAINZ_URL", DefaultMusicBrainzURL),
+		MusicBrainzAgent:  envOr(getenv, "SYNCD_MUSICBRAINZ_AGENT", DefaultMusicBrainzAgent),
 		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
 		Proto:             DefaultProto,
 		ShutdownWait:      10 * time.Second,
@@ -62,6 +70,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.StringVar(&cfg.DBPath, "db", cfg.DBPath, "path to the SQLite database file")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "debug, info, warn or error")
 	fs.StringVar(&cfg.NavidromeURL, "navidrome-url", cfg.NavidromeURL, "base URL of the Navidrome instance")
+	fs.StringVar(&cfg.MusicBrainzURL, "musicbrainz-url", cfg.MusicBrainzURL, "base URL of the MusicBrainz web service")
 	fs.StringVar(&cfg.ReleasesURL, "releases-url", cfg.ReleasesURL, "where clients download builds from")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
