@@ -166,6 +166,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Proto:              cfg.Proto,
 		Schema:             store.SchemaVersion,
 		ReleasesURL:        cfg.ReleasesURL,
+		SourceURL:          cfg.SourceURL,
 		MinBuild:           cfg.MinBuild,
 		RecommendedBuild:   cfg.RecommendedBuild,
 		Features:           features,

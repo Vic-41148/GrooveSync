@@ -22,6 +22,22 @@ go test ./...
 The service currently exposes:
 - `GET /healthz`
 - `GET /sync/v1/meta`
+- `GET /sync/v1/about` - returns the published source URL and running version
+
+## Device sync modes
+
+- `app`: the GrooveSync app owns the device folder and syncs over the LAN (default for new devices)
+- `external`: an external tool owns the folder, for example Syncthing
+
+New devices default to `app`. To opt in to `external`, send
+`"sync_mode":"external"` in the registration payload. Omitting `sync_mode`
+during registration keeps the mode already stored for an existing device; send
+an explicit mode to change it.
+
+In `app` mode a device advertises LAN URLs that other devices connect to. The
+service has no authentication layer yet, so anyone who can reach those URLs can
+reach the sync endpoints. Keep it on a trusted network or behind a VPN such as
+Tailscale, and do not expose it to the internet.
 
 ## License
 

@@ -37,6 +37,7 @@ type Deps struct {
 	Proto       int
 	Schema      int64
 	ReleasesURL string
+	SourceURL   string
 	// MinBuild and RecommendedBuild are keyed by platform ("android", "desktop").
 	MinBuild         map[string]int
 	RecommendedBuild map[string]int
@@ -252,6 +253,7 @@ func New(d Deps) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /sync/v1/meta", d.handleMeta)
+	mux.HandleFunc("GET /sync/v1/about", d.handleAbout)
 	mux.HandleFunc("GET /healthz", d.handleHealth)
 	mux.HandleFunc("GET /sync/v1/health", d.handleHealthReport)
 	mux.HandleFunc("GET /sync/v1/review", d.handleReviewQueue)
@@ -327,6 +329,24 @@ func (d Deps) handleHealth(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		payload["db"] = "ok"
+	}
+	writeJSON(w, http.StatusOK, payload, 0)
+}
+
+func (d Deps) handleAbout(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	// SourceURL is the canonical repository for the running binary. If not
+	// provided, fall back to the releases URL if present, or the canonical
+	// project URL.
+	repo := "https://github.com/Vic-41148/groovesync"
+	if d.SourceURL != "" {
+		repo = d.SourceURL
+	} else if d.ReleasesURL != "" {
+		repo = d.ReleasesURL
+	}
+	payload := map[string]any{
+		"repo":    repo,
+		"version": d.Version,
 	}
 	writeJSON(w, http.StatusOK, payload, 0)
 }

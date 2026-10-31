@@ -53,6 +53,7 @@ type Config struct {
 	FPCalcPath  string
 	YTMusicURL  string
 	ReleasesURL string
+	SourceURL   string
 	// LibrarySyncInterval is zero when the mirror only runs on request.
 	LibrarySyncInterval time.Duration
 	// MusicRoot resolves relative paths reported by Navidrome.
@@ -96,6 +97,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		UploadDir:         envOr(getenv, "SYNCD_UPLOAD_DIR", ""),
 		YTMusicURL:        envOr(getenv, "SYNCD_YTMUSIC_URL", ""),
 		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
+		SourceURL:         envOr(getenv, "SYNCD_SOURCE_URL", "https://github.com/Vic-41148/groovesync"),
 		Proto:             DefaultProto,
 		ShutdownWait:      10 * time.Second,
 		MinBuild:          map[string]int{},
@@ -159,6 +161,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.StringVar(&cfg.FPCalcPath, "fpcalc", cfg.FPCalcPath, "path to the Chromaprint fpcalc executable")
 	fs.StringVar(&cfg.YTMusicURL, "ytmusic-url", cfg.YTMusicURL, "base URL of the YouTube Music sidecar")
 	fs.StringVar(&cfg.ReleasesURL, "releases-url", cfg.ReleasesURL, "where clients download builds from")
+	fs.StringVar(&cfg.SourceURL, "source-url", cfg.SourceURL, "where the source for this build is published")
 	fs.DurationVar(&cfg.LibrarySyncInterval, "library-sync-interval", cfg.LibrarySyncInterval, "how often to refresh the library mirror, zero to disable")
 	fs.DurationVar(&cfg.EnrichInterval, "enrich-interval", cfg.EnrichInterval, "how often to backfill metadata, zero to disable")
 	fs.IntVar(&cfg.EnrichLimit, "enrich-limit", cfg.EnrichLimit, "tracks to backfill per pass")
