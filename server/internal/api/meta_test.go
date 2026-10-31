@@ -1089,6 +1089,71 @@ func TestLibraryList(t *testing.T) {
 	}
 }
 
+func TestLibraryListExposesContributions(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	// Seed a track and a rendition
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-x', 'X', 'Artist', 100000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO rendition (canonical_id, kind, path_or_uri, codec, sha256) VALUES ('track-x', 'file', '/music/x.flac', 'flac', 'aa')`); err != nil {
+		t.Fatalf("insert rendition: %v", err)
+	}
+	// Find the rendition id and insert two content_path rows
+	var rid int64
+	if err := db.QueryRowContext(ctx, `SELECT id FROM rendition WHERE canonical_id = 'track-x' AND path_or_uri = '/music/x.flac'`).Scan(&rid); err != nil {
+		t.Fatalf("select rendition id: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO content_path (rendition_id, path_or_uri, source) VALUES (?, ?, 'sync')`, rid, "/music/x.flac"); err != nil {
+		t.Fatalf("insert content_path sync: %v", err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO content_path (rendition_id, path_or_uri, source) VALUES (?, ?, 'upload')`, rid, "/uploads/x.flac"); err != nil {
+		t.Fatalf("insert content_path upload: %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, Library: library.Repo{DB: db}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got struct {
+		Total  int             `json:"total"`
+		Limit  int             `json:"limit"`
+		Offset int             `json:"offset"`
+		Tracks []library.Track `json:"tracks"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.Total != 1 || len(got.Tracks) != 1 {
+		t.Fatalf("unexpected payload: %#v", got)
+	}
+	if len(got.Tracks[0].Renditions) != 1 {
+		t.Fatalf("renditions missing: %#v", got.Tracks[0])
+	}
+	r := got.Tracks[0].Renditions[0]
+	if len(r.Contributions) != 2 {
+		t.Fatalf("contributions = %#v, want 2 entries", r.Contributions)
+	}
+	var sawSync, sawUpload bool
+	for _, c := range r.Contributions {
+		if c.Source == "sync" && c.Path == "/music/x.flac" {
+			sawSync = true
+		}
+		if c.Source == "upload" && c.Path == "/uploads/x.flac" {
+			sawUpload = true
+		}
+	}
+	if !sawSync || !sawUpload {
+		t.Fatalf("contributions missing expected rows: sync=%v upload=%v", sawSync, sawUpload)
+	}
+}
+
 func TestLibraryListWithoutSource(t *testing.T) {
 	t.Parallel()
 
