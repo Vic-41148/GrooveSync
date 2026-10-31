@@ -85,6 +85,12 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		features = append(features, "library_sync")
 	}
 
+	var libraryHashes api.LibraryHasher
+	if cfg.MusicRoot != "" || cfg.HashInterval > 0 {
+		libraryHashes = library.HashBackfill{DB: db, Root: cfg.MusicRoot}
+		features = append(features, "library_hash")
+	}
+
 	var enricher api.MetadataEnricher
 	if cfg.MusicBrainzURL != "" {
 		client, err := metadata.NewMusicBrainz(cfg.MusicBrainzURL, cfg.MusicBrainzAgent)
@@ -156,6 +162,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		AcquisitionSwitch:  acquisitionRepo,
 		LibrarySync:        libraryMirror,
 		Library:            libraryRepo,
+		LibraryHashes:      libraryHashes,
 		Enrich:             enricher,
 		SpotifyImport: connectors.SpotifyImporter{
 			DB:     db,
@@ -192,6 +199,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	defer stop()
 	go runQueueLoop(ctx, logger, processor)
 	go runLibraryLoop(ctx, logger, libraryMirror, cfg.LibrarySyncInterval)
+	go runHashLoop(ctx, logger, libraryHashes, cfg.HashInterval, cfg.HashLimit)
 	go runEnrichLoop(ctx, logger, enricher, cfg.EnrichInterval, cfg.EnrichLimit)
 
 	select {
@@ -251,6 +259,29 @@ func runLibraryLoop(ctx context.Context, logger interface{ Warn(string, ...any) 
 func syncLibrary(ctx context.Context, logger interface{ Warn(string, ...any) }, mirror api.LibraryMirror) {
 	if _, err := mirror.Sync(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Warn("library sync failed", "error", err)
+	}
+}
+
+func runHashLoop(ctx context.Context, logger interface{ Warn(string, ...any) }, hashes api.LibraryHasher, interval time.Duration, limit int) {
+	if hashes == nil || interval <= 0 {
+		return
+	}
+	hashFiles(ctx, logger, hashes, limit)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			hashFiles(ctx, logger, hashes, limit)
+		}
+	}
+}
+
+func hashFiles(ctx context.Context, logger interface{ Warn(string, ...any) }, hashes api.LibraryHasher, limit int) {
+	if _, err := hashes.Run(ctx, limit); err != nil && !errors.Is(err, context.Canceled) {
+		logger.Warn("library hashing failed", "error", err)
 	}
 }
 

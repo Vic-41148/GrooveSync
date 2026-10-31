@@ -1084,6 +1084,53 @@ func TestLibraryListWithoutSource(t *testing.T) {
 	}
 }
 
+func TestLibraryHash(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:       "1.2.3",
+		Proto:         3,
+		Schema:        15,
+		Now:           time.Now,
+		LibraryHashes: hashStub{result: library.HashResult{Checked: 4, Updated: 3, Missing: 1}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/hash?limit=4", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got library.HashResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got != (library.HashResult{Checked: 4, Updated: 3, Missing: 1}) {
+		t.Fatalf("result = %#v, want the hash counts", got)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/hash?limit=0", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad limit status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 15, Now: time.Now}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/library/hash", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("unavailable status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
+type hashStub struct {
+	result library.HashResult
+	err    error
+}
+
+func (s hashStub) Run(context.Context, int) (library.HashResult, error) {
+	return s.result, s.err
+}
+
 func TestLibraryEnrich(t *testing.T) {
 	t.Parallel()
 

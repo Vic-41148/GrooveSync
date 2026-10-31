@@ -53,6 +53,7 @@ type Deps struct {
 	AcquisitionSwitch  AcquisitionSwitch
 	LibrarySync        LibraryMirror
 	Library            LibraryLister
+	LibraryHashes      LibraryHasher
 	Enrich             MetadataEnricher
 	SpotifyImport      SpotifyLikeImport
 	SpotifyPlaylists   SpotifyPlaylistImport
@@ -156,6 +157,11 @@ type LibraryMirror interface {
 type LibraryLister interface {
 	List(context.Context, int, int) ([]library.Track, error)
 	Count(context.Context) (int, error)
+}
+
+// LibraryHasher stores content digests for mirrored files.
+type LibraryHasher interface {
+	Run(context.Context, int) (library.HashResult, error)
 }
 
 // MetadataEnricher fills missing identifiers from an upstream database.
@@ -262,6 +268,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/settings", d.handleSettings)
 	mux.HandleFunc("PATCH /sync/v1/settings", d.handleSettingsUpdate)
 	mux.HandleFunc("POST /sync/v1/library/sync", d.handleLibrarySync)
+	mux.HandleFunc("POST /sync/v1/library/hash", d.handleLibraryHash)
 	mux.HandleFunc("POST /sync/v1/library/enrich", d.handleLibraryEnrich)
 	mux.HandleFunc("GET /sync/v1/library", d.handleLibrary)
 
@@ -1667,6 +1674,28 @@ func (d Deps) handleLibrarySync(w http.ResponseWriter, r *http.Request) {
 	result, err := d.LibrarySync.Sync(r.Context())
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "library sync failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, result, 0)
+}
+
+func (d Deps) handleLibraryHash(w http.ResponseWriter, r *http.Request) {
+	limit := 25
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 500 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"}, 0)
+			return
+		}
+		limit = parsed
+	}
+	if d.LibraryHashes == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "content hashing unavailable"}, 0)
+		return
+	}
+	result, err := d.LibraryHashes.Run(r.Context(), limit)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "content hashing failed"}, 0)
 		return
 	}
 	writeJSON(w, http.StatusOK, result, 0)

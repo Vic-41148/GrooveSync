@@ -276,6 +276,37 @@ func TestLoadParsesAcoustIDSettings(t *testing.T) {
 	}
 }
 
+func TestLoadParsesHashSettings(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(func(key string) string {
+		switch key {
+		case "SYNCD_MUSIC_ROOT":
+			return "/srv/music"
+		case "SYNCD_HASH_INTERVAL":
+			return "15m"
+		case "SYNCD_HASH_LIMIT":
+			return "40"
+		default:
+			return ""
+		}
+	}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.MusicRoot != "/srv/music" || cfg.HashInterval != 15*time.Minute || cfg.HashLimit != 40 {
+		t.Fatalf("hash config = %q %v %d, want the environment values", cfg.MusicRoot, cfg.HashInterval, cfg.HashLimit)
+	}
+
+	cfg, err = Load(func(string) string { return "" }, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() defaults error = %v", err)
+	}
+	if cfg.MusicRoot != "" || cfg.HashInterval != 0 || cfg.HashLimit != 25 {
+		t.Fatalf("hash defaults = %q %v %d, want no root, no interval and 25 files", cfg.MusicRoot, cfg.HashInterval, cfg.HashLimit)
+	}
+}
+
 func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 	t.Parallel()
 

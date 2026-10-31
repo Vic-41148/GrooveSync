@@ -51,6 +51,11 @@ type Config struct {
 	ReleasesURL string
 	// LibrarySyncInterval is zero when the mirror only runs on request.
 	LibrarySyncInterval time.Duration
+	// MusicRoot resolves relative paths reported by Navidrome.
+	MusicRoot string
+	// HashInterval is zero when content hashing only runs on request.
+	HashInterval time.Duration
+	HashLimit    int
 	// EnrichInterval is zero when MusicBrainz backfill only runs on request.
 	EnrichInterval time.Duration
 	EnrichLimit    int
@@ -79,6 +84,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		AcoustIDURL:       envOr(getenv, "SYNCD_ACOUSTID_URL", DefaultAcoustIDURL),
 		AcoustIDKey:       envOr(getenv, "SYNCD_ACOUSTID_KEY", ""),
 		FPCalcPath:        envOr(getenv, "SYNCD_FPCALC", DefaultFPCalcPath),
+		MusicRoot:         envOr(getenv, "SYNCD_MUSIC_ROOT", ""),
 		YTMusicURL:        envOr(getenv, "SYNCD_YTMUSIC_URL", ""),
 		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
 		Proto:             DefaultProto,
@@ -107,6 +113,20 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	}
 	cfg.EnrichLimit = enrichLimit
 
+	hashInterval, err := envDuration(getenv, "SYNCD_HASH_INTERVAL")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.HashInterval = hashInterval
+	hashLimit, err := envInt(getenv, "SYNCD_HASH_LIMIT")
+	if err != nil {
+		return Config{}, err
+	}
+	if hashLimit == 0 {
+		hashLimit = 25
+	}
+	cfg.HashLimit = hashLimit
+
 	fs := flag.NewFlagSet("syncd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.Addr, "addr", cfg.Addr, "listen address (loopback by default)")
@@ -122,6 +142,9 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.DurationVar(&cfg.LibrarySyncInterval, "library-sync-interval", cfg.LibrarySyncInterval, "how often to refresh the library mirror, zero to disable")
 	fs.DurationVar(&cfg.EnrichInterval, "enrich-interval", cfg.EnrichInterval, "how often to backfill metadata, zero to disable")
 	fs.IntVar(&cfg.EnrichLimit, "enrich-limit", cfg.EnrichLimit, "tracks to backfill per pass")
+	fs.StringVar(&cfg.MusicRoot, "music-root", cfg.MusicRoot, "root folder that resolves relative library paths")
+	fs.DurationVar(&cfg.HashInterval, "hash-interval", cfg.HashInterval, "how often to hash library files, zero to disable")
+	fs.IntVar(&cfg.HashLimit, "hash-limit", cfg.HashLimit, "files to hash per pass")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
