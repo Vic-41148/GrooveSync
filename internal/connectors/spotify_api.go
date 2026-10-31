@@ -52,10 +52,13 @@ func (f SpotifyTokenSourceFunc) SpotifyAccessToken(ctx context.Context, accountI
 
 // SpotifyTrack is the subset of a liked track the server needs.
 type SpotifyTrack struct {
-	URI     string
-	Name    string
-	Artists []string
-	AddedAt time.Time
+	URI        string
+	Name       string
+	Artists    []string
+	Album      string
+	DurationMS int
+	ISRC       string
+	AddedAt    time.Time
 }
 
 // SpotifyClient talks to the Spotify Web API. HTTP and BaseURL are injected so
@@ -86,11 +89,18 @@ func (c SpotifyClient) LikedTracks(ctx context.Context, accountID string, tokens
 			Items []struct {
 				AddedAt string `json:"added_at"`
 				Track   struct {
-					URI     string `json:"uri"`
-					Name    string `json:"name"`
-					Artists []struct {
+					URI        string `json:"uri"`
+					Name       string `json:"name"`
+					DurationMS int    `json:"duration_ms"`
+					Artists    []struct {
 						Name string `json:"name"`
 					} `json:"artists"`
+					Album struct {
+						Name string `json:"name"`
+					} `json:"album"`
+					ExternalIDs struct {
+						ISRC string `json:"isrc"`
+					} `json:"external_ids"`
 				} `json:"track"`
 			} `json:"items"`
 			Next string `json:"next"`
@@ -110,7 +120,13 @@ func (c SpotifyClient) LikedTracks(ctx context.Context, accountID string, tokens
 				reachedKnown = true
 				break
 			}
-			track := SpotifyTrack{URI: item.Track.URI, Name: item.Track.Name}
+			track := SpotifyTrack{
+				URI:        item.Track.URI,
+				Name:       item.Track.Name,
+				Album:      item.Track.Album.Name,
+				DurationMS: item.Track.DurationMS,
+				ISRC:       strings.TrimSpace(item.Track.ExternalIDs.ISRC),
+			}
 			for _, artist := range item.Track.Artists {
 				track.Artists = append(track.Artists, artist.Name)
 			}

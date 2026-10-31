@@ -65,6 +65,9 @@ func TestSpotifyClientLikedTracksStopsAtKnown(t *testing.T) {
 	if len(tracks[0].Artists) != 1 || tracks[0].Artists[0] != "Artist" {
 		t.Fatalf("artists = %#v, want [Artist]", tracks[0].Artists)
 	}
+	if tracks[0].Album != "Album" || tracks[0].DurationMS != 180000 || tracks[0].ISRC != "ISRC-1" {
+		t.Fatalf("track metadata = %#v, want album, duration and isrc", tracks[0])
+	}
 	if !tracks[0].AddedAt.Equal(time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)) {
 		t.Fatalf("AddedAt = %v, want fixture time", tracks[0].AddedAt)
 	}
@@ -227,9 +230,12 @@ func spotifyItem(uri, name string) map[string]any {
 	return map[string]any{
 		"added_at": "2026-10-30T12:00:00Z",
 		"track": map[string]any{
-			"uri":     uri,
-			"name":    name,
-			"artists": []map[string]string{{"name": "Artist"}},
+			"uri":          uri,
+			"name":         name,
+			"duration_ms":  180000,
+			"artists":      []map[string]string{{"name": "Artist"}},
+			"album":        map[string]string{"name": "Album"},
+			"external_ids": map[string]string{"isrc": "ISRC-1"},
 		},
 	}
 }
