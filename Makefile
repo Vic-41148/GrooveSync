@@ -1,6 +1,6 @@
 GO ?= ~/.local/go/bin/go
 
-.PHONY: build vet test tidy
+.PHONY: build vet test tidy check-licenses
 
 build:
 	$(GO) build ./...
@@ -13,3 +13,6 @@ test:
 
 tidy:
 	$(GO) mod tidy
+
+check-licenses:
+	@bash ./scripts/check-licenses.sh
