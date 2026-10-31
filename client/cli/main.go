@@ -27,6 +27,7 @@ func main() {
 	open := flag.Bool("open", false, "try to open the auth URL in a browser")
 	mode := flag.String("mode", "auth", "operation mode: auth or upload")
 	file := flag.String("file", "", "file to upload when mode=upload")
+	track := flag.String("track", "", "canonical track id the upload belongs to")
 	chunkSize := flag.Int64("chunk-size", 4*1024*1024, "upload chunk size in bytes")
 	token := flag.String("token", os.Getenv("SYNCD_ADMIN_TOKEN"), "bearer token sent with every request")
 	flag.Parse()
@@ -109,7 +110,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "-file is required in upload mode")
 			os.Exit(2)
 		}
-		if err := uploadFile(*server, *token, *file, *chunkSize); err != nil {
+		if err := uploadFile(*server, *token, *file, *track, *chunkSize); err != nil {
 			fmt.Fprintf(os.Stderr, "upload failed: %v\n", err)
 			os.Exit(2)
 		}
@@ -139,7 +140,7 @@ func get(url, token string) (*http.Response, error) {
 }
 
 // uploadFile uploads a file in chunks and then downloads it back.
-func uploadFile(server, token, filename string, chunkSize int64) error {
+func uploadFile(server, token, filename, track string, chunkSize int64) error {
 	f, err := os.Open(filename)
 	if err != nil {
 		return err
@@ -174,7 +175,11 @@ func uploadFile(server, token, filename string, chunkSize int64) error {
 			return err
 		}
 		part := io.LimitReader(f, end-start+1)
-		putURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s?name=%s", strings.TrimRight(server, "/"), sum, url.QueryEscape(filepath.Base(filename)))
+		params := url.Values{"name": {filepath.Base(filename)}}
+		if track != "" {
+			params.Set("track", track)
+		}
+		putURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s?%s", strings.TrimRight(server, "/"), sum, params.Encode())
 		req, err := http.NewRequest(http.MethodPut, putURL, part)
 		if err != nil {
 			return err
