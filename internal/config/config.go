@@ -37,8 +37,10 @@ type Config struct {
 	MusicBrainzURL    string
 	MusicBrainzAgent  string
 	ReleasesURL       string
-	Proto             int
-	ShutdownWait      time.Duration
+	// LibrarySyncInterval is zero when the mirror only runs on request.
+	LibrarySyncInterval time.Duration
+	Proto               int
+	ShutdownWait        time.Duration
 	// Build floors per platform, 0 meaning "any build". Kept in config so a
 	// release can raise a floor without a rebuild.
 	MinBuild         map[string]int
@@ -64,6 +66,12 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		RecommendedBuild:  map[string]int{},
 	}
 
+	interval, err := envDuration(getenv, "SYNCD_LIBRARY_SYNC_INTERVAL")
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.LibrarySyncInterval = interval
+
 	fs := flag.NewFlagSet("syncd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&cfg.Addr, "addr", cfg.Addr, "listen address (loopback by default)")
@@ -72,6 +80,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.StringVar(&cfg.NavidromeURL, "navidrome-url", cfg.NavidromeURL, "base URL of the Navidrome instance")
 	fs.StringVar(&cfg.MusicBrainzURL, "musicbrainz-url", cfg.MusicBrainzURL, "base URL of the MusicBrainz web service")
 	fs.StringVar(&cfg.ReleasesURL, "releases-url", cfg.ReleasesURL, "where clients download builds from")
+	fs.DurationVar(&cfg.LibrarySyncInterval, "library-sync-interval", cfg.LibrarySyncInterval, "how often to refresh the library mirror, zero to disable")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -114,6 +123,21 @@ func envInt(getenv func(string) string, key string) (int, error) {
 		return 0, fmt.Errorf("config: %s must not be negative", key)
 	}
 	return n, nil
+}
+
+func envDuration(getenv func(string) string, key string) (time.Duration, error) {
+	raw := strings.TrimSpace(getenv(key))
+	if raw == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("config: %s: %w", key, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("config: %s must not be negative", key)
+	}
+	return d, nil
 }
 
 func envOr(getenv func(string) string, key, fallback string) string {

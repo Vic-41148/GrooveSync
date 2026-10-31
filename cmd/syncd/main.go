@@ -137,6 +137,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go runQueueLoop(ctx, logger, processor)
+	go runLibraryLoop(ctx, logger, libraryMirror, cfg.LibrarySyncInterval)
 
 	select {
 	case <-ctx.Done():
@@ -172,6 +173,29 @@ func runQueueLoop(ctx context.Context, logger interface{ Warn(string, ...any) },
 			return
 		case <-ticker.C:
 		}
+	}
+}
+
+func runLibraryLoop(ctx context.Context, logger interface{ Warn(string, ...any) }, mirror api.LibraryMirror, interval time.Duration) {
+	if mirror == nil || interval <= 0 {
+		return
+	}
+	syncLibrary(ctx, logger, mirror)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			syncLibrary(ctx, logger, mirror)
+		}
+	}
+}
+
+func syncLibrary(ctx context.Context, logger interface{ Warn(string, ...any) }, mirror api.LibraryMirror) {
+	if _, err := mirror.Sync(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		logger.Warn("library sync failed", "error", err)
 	}
 }
 
