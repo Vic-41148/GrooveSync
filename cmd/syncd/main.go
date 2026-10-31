@@ -81,7 +81,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		if err != nil {
 			return err
 		}
-		libraryMirror = navidrome.Mirror{DB: db, Client: client}
+		libraryMirror = navidrome.Mirror{DB: db, Client: client, Ignore: cfg.IgnoreGlobs}
 		features = append(features, "library_sync")
 	}
 

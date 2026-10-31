@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -19,6 +20,13 @@ type Library interface {
 	Songs(context.Context, string) ([]Song, error)
 }
 
+// DefaultIgnorePatterns are Syncthing and editor housekeeping paths that must
+// never become tracks.
+var DefaultIgnorePatterns = []string{".stfolder", ".stversions", ".syncthing.*.tmp", "*.tmp", "*.part"}
+
+// conflictMarker identifies a Syncthing conflict copy.
+const conflictMarker = ".sync-conflict-"
+
 // Mirror copies Navidrome metadata into syncd's own track, alias and rendition
 // tables. Canonical ids belong to syncd, so a Navidrome id rewrite only costs
 // one path lookup.
@@ -26,6 +34,8 @@ type Mirror struct {
 	DB     *sql.DB
 	Client Library
 	NewID  func() (string, error)
+	// Ignore adds glob patterns to DefaultIgnorePatterns.
+	Ignore []string
 }
 
 // SyncResult counts what one mirror pass did.
@@ -35,6 +45,7 @@ type SyncResult struct {
 	Created int `json:"created"`
 	Updated int `json:"updated"`
 	Skipped int `json:"skipped"`
+	Review  int `json:"review"`
 }
 
 // Sync walks every album and stores its songs. A song that cannot be stored
@@ -63,6 +74,18 @@ func (m Mirror) Sync(ctx context.Context) (SyncResult, error) {
 				result.Skipped++
 				continue
 			}
+			conflict, ignored := m.classify(song.Path)
+			if ignored {
+				result.Skipped++
+				continue
+			}
+			if conflict {
+				if err := m.queueConflict(ctx, song); err != nil {
+					return result, err
+				}
+				result.Review++
+				continue
+			}
 			created, err := m.upsertSong(ctx, song)
 			if err != nil {
 				return result, err
@@ -76,6 +99,60 @@ func (m Mirror) Sync(ctx context.Context) (SyncResult, error) {
 		}
 	}
 	return result, nil
+}
+
+// classify reports whether a path is a Syncthing conflict copy, which belongs
+// in the review queue, or housekeeping that must be ignored outright.
+func (m Mirror) classify(path string) (conflict, ignored bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false, false
+	}
+	base := path
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "" {
+			continue
+		}
+		base = segment
+		if segment == ".stfolder" || segment == ".stversions" {
+			return false, true
+		}
+	}
+	if strings.Contains(base, conflictMarker) {
+		return true, false
+	}
+	patterns := append([]string(nil), DefaultIgnorePatterns...)
+	patterns = append(patterns, m.Ignore...)
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern == "" {
+			continue
+		}
+		if matched, err := filepath.Match(pattern, base); err == nil && matched {
+			return false, true
+		}
+	}
+	return false, false
+}
+
+func (m Mirror) queueConflict(ctx context.Context, song Song) error {
+	var exists int
+	err := m.DB.QueryRowContext(ctx, `
+SELECT 1 FROM review_queue WHERE service = ? AND service_id = ?
+`, provider, song.ID).Scan(&exists)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("navidrome: check conflict %s: %w", song.ID, err)
+	}
+	if _, err := m.DB.ExecContext(ctx, `
+INSERT INTO review_queue (canonical_id, service, service_id, reason)
+VALUES (NULL, ?, ?, ?)
+`, provider, song.ID, "sync conflict copy"); err != nil {
+		return fmt.Errorf("navidrome: queue conflict %s: %w", song.ID, err)
+	}
+	return nil
 }
 
 func (m Mirror) upsertSong(ctx context.Context, song Song) (bool, error) {

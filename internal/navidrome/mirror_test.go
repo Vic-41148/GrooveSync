@@ -191,6 +191,54 @@ func TestMirrorSkipsIncompleteSongs(t *testing.T) {
 	}
 }
 
+func TestMirrorQueuesConflictsAndIgnoresHousekeeping(t *testing.T) {
+	t.Parallel()
+
+	db := openMirrorDB(t)
+	mirror := Mirror{
+		DB:     db,
+		Ignore: []string{"*.bak"},
+		Client: stubLibrary{albums: []Album{{ID: "album-1"}}, songs: map[string][]Song{
+			"album-1": {
+				{ID: "conflict", Title: "Song", Artist: "Artist", Path: "Artist/Album/01 Song.sync-conflict-20260101-120000-ABC.flac"},
+				{ID: "stfolder", Title: "Song", Artist: "Artist", Path: ".stfolder/01 Song.flac"},
+				{ID: "stversions", Title: "Song", Artist: "Artist", Path: "Artist/.stversions/01 Song.flac"},
+				{ID: "tmp", Title: "Song", Artist: "Artist", Path: "Artist/Album/01 Song.tmp"},
+				{ID: "bak", Title: "Song", Artist: "Artist", Path: "Artist/Album/01 Song.bak"},
+				{ID: "clean", Title: "Song", Artist: "Artist", Path: "Artist/Album/01 Song.flac"},
+			},
+		}},
+		NewID: func() (string, error) { return "canon-1", nil },
+	}
+
+	result, err := mirror.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	if result != (SyncResult{Albums: 1, Songs: 1, Created: 1, Skipped: 4, Review: 1}) {
+		t.Fatalf("result = %#v, want one song, one conflict and four skipped", result)
+	}
+
+	var reason string
+	if err := db.QueryRow(`SELECT reason FROM review_queue WHERE service = 'navidrome' AND service_id = 'conflict'`).Scan(&reason); err != nil {
+		t.Fatalf("load review entry: %v", err)
+	}
+	if reason != "sync conflict copy" {
+		t.Fatalf("reason = %q, want the conflict reason", reason)
+	}
+
+	if _, err := mirror.Sync(context.Background()); err != nil {
+		t.Fatalf("second Sync() error = %v", err)
+	}
+	var queued int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM review_queue WHERE service = 'navidrome' AND service_id = 'conflict'`).Scan(&queued); err != nil {
+		t.Fatalf("count review entries: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("review entries = %d, want the conflict queued once", queued)
+	}
+}
+
 func TestMirrorPropagatesLibraryError(t *testing.T) {
 	t.Parallel()
 

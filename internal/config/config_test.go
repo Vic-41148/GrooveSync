@@ -276,6 +276,31 @@ func TestLoadParsesAcoustIDSettings(t *testing.T) {
 	}
 }
 
+func TestLoadParsesIgnoreGlobs(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(func(key string) string {
+		if key == "SYNCD_IGNORE_GLOBS" {
+			return " *.bak, .DS_Store ,,"
+		}
+		return ""
+	}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.IgnoreGlobs) != 2 || cfg.IgnoreGlobs[0] != "*.bak" || cfg.IgnoreGlobs[1] != ".DS_Store" {
+		t.Fatalf("IgnoreGlobs = %#v, want two trimmed patterns", cfg.IgnoreGlobs)
+	}
+
+	cfg, err = Load(func(string) string { return "" }, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() defaults error = %v", err)
+	}
+	if len(cfg.IgnoreGlobs) != 0 {
+		t.Fatalf("IgnoreGlobs = %#v, want none by default", cfg.IgnoreGlobs)
+	}
+}
+
 func TestLoadParsesHashSettings(t *testing.T) {
 	t.Parallel()
 

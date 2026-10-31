@@ -53,6 +53,8 @@ type Config struct {
 	LibrarySyncInterval time.Duration
 	// MusicRoot resolves relative paths reported by Navidrome.
 	MusicRoot string
+	// IgnoreGlobs adds library paths the mirror must never index.
+	IgnoreGlobs []string
 	// HashInterval is zero when content hashing only runs on request.
 	HashInterval time.Duration
 	HashLimit    int
@@ -126,6 +128,14 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		hashLimit = 25
 	}
 	cfg.HashLimit = hashLimit
+
+	if raw := strings.TrimSpace(getenv("SYNCD_IGNORE_GLOBS")); raw != "" {
+		for _, part := range strings.Split(raw, ",") {
+			if pattern := strings.TrimSpace(part); pattern != "" {
+				cfg.IgnoreGlobs = append(cfg.IgnoreGlobs, pattern)
+			}
+		}
+	}
 
 	fs := flag.NewFlagSet("syncd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
