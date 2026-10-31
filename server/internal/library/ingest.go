@@ -28,7 +28,16 @@ type Ingestor struct {
 // Ingest attaches path to canonicalID with the given digest. An empty id uses
 // a provisional track keyed by the digest, which the resolver can merge later.
 // Content is stored once: a digest already held keeps its existing track.
+// Ingest stores a contribution whose source is an upload. For callers that
+// need to record a different source (for example the Rebuilder marking
+// filesystem contributions as 'sync'), use IngestWithSource.
 func (i Ingestor) Ingest(ctx context.Context, canonicalID, path, hash, name string) (string, error) {
+	return i.IngestWithSource(ctx, canonicalID, path, hash, name, "upload")
+}
+
+// IngestWithSource is like Ingest but allows specifying the content_path
+// source column (e.g. 'upload' or 'sync').
+func (i Ingestor) IngestWithSource(ctx context.Context, canonicalID, path, hash, name, source string) (string, error) {
 	if i.DB == nil {
 		return "", errors.New("library: database is required")
 	}
@@ -97,9 +106,9 @@ WHERE NOT EXISTS (
 	}
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO content_path (rendition_id, path_or_uri, source)
-VALUES (?, ?, 'upload')
+VALUES (?, ?, ?)
 ON CONFLICT(rendition_id, path_or_uri) DO NOTHING
-`, renditionID, path); err != nil {
+`, renditionID, path, source); err != nil {
 		return "", fmt.Errorf("library: insert content_path %s: %w", path, err)
 	}
 	if err := tx.Commit(); err != nil {
