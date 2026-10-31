@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +54,8 @@ type Config struct {
 	LibrarySyncInterval time.Duration
 	// MusicRoot resolves relative paths reported by Navidrome.
 	MusicRoot string
+	// UploadDir receives files contributed by devices. Empty disables uploads.
+	UploadDir string
 	// IgnoreGlobs adds library paths the mirror must never index.
 	IgnoreGlobs []string
 	// HashInterval is zero when content hashing only runs on request.
@@ -87,6 +90,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		AcoustIDKey:       envOr(getenv, "SYNCD_ACOUSTID_KEY", ""),
 		FPCalcPath:        envOr(getenv, "SYNCD_FPCALC", DefaultFPCalcPath),
 		MusicRoot:         envOr(getenv, "SYNCD_MUSIC_ROOT", ""),
+		UploadDir:         envOr(getenv, "SYNCD_UPLOAD_DIR", ""),
 		YTMusicURL:        envOr(getenv, "SYNCD_YTMUSIC_URL", ""),
 		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
 		Proto:             DefaultProto,
@@ -128,6 +132,9 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		hashLimit = 25
 	}
 	cfg.HashLimit = hashLimit
+	if cfg.UploadDir == "" && cfg.MusicRoot != "" {
+		cfg.UploadDir = filepath.Join(cfg.MusicRoot, "Incoming")
+	}
 
 	if raw := strings.TrimSpace(getenv("SYNCD_IGNORE_GLOBS")); raw != "" {
 		for _, part := range strings.Split(raw, ",") {
@@ -153,6 +160,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.DurationVar(&cfg.EnrichInterval, "enrich-interval", cfg.EnrichInterval, "how often to backfill metadata, zero to disable")
 	fs.IntVar(&cfg.EnrichLimit, "enrich-limit", cfg.EnrichLimit, "tracks to backfill per pass")
 	fs.StringVar(&cfg.MusicRoot, "music-root", cfg.MusicRoot, "root folder that resolves relative library paths")
+	fs.StringVar(&cfg.UploadDir, "upload-dir", cfg.UploadDir, "folder that receives uploaded files, empty to disable")
 	fs.DurationVar(&cfg.HashInterval, "hash-interval", cfg.HashInterval, "how often to hash library files, zero to disable")
 	fs.IntVar(&cfg.HashLimit, "hash-limit", cfg.HashLimit, "files to hash per pass")
 	if err := fs.Parse(args); err != nil {

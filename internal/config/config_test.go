@@ -2,6 +2,7 @@ package config
 
 import (
 	"bytes"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -273,6 +274,47 @@ func TestLoadParsesAcoustIDSettings(t *testing.T) {
 	}
 	if cfg.AcoustIDURL != DefaultAcoustIDURL || cfg.FPCalcPath != DefaultFPCalcPath || cfg.AcoustIDKey != "" {
 		t.Fatalf("acoustid defaults = %q %q %q, want the package defaults", cfg.AcoustIDURL, cfg.FPCalcPath, cfg.AcoustIDKey)
+	}
+}
+
+func TestLoadParsesUploadDir(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(func(key string) string {
+		if key == "SYNCD_MUSIC_ROOT" {
+			return "/srv/music"
+		}
+		return ""
+	}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.UploadDir != filepath.Join("/srv/music", "Incoming") {
+		t.Fatalf("UploadDir = %q, want the music root's Incoming folder", cfg.UploadDir)
+	}
+
+	cfg, err = Load(func(key string) string {
+		switch key {
+		case "SYNCD_MUSIC_ROOT":
+			return "/srv/music"
+		case "SYNCD_UPLOAD_DIR":
+			return "/var/lib/syncd/incoming"
+		}
+		return ""
+	}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() explicit error = %v", err)
+	}
+	if cfg.UploadDir != "/var/lib/syncd/incoming" {
+		t.Fatalf("UploadDir = %q, want the environment override", cfg.UploadDir)
+	}
+
+	cfg, err = Load(func(string) string { return "" }, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() defaults error = %v", err)
+	}
+	if cfg.UploadDir != "" {
+		t.Fatalf("UploadDir = %q, want uploads disabled by default", cfg.UploadDir)
 	}
 }
 

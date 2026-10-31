@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -56,6 +57,7 @@ type Deps struct {
 	Library            LibraryLister
 	LibraryHashes      LibraryHasher
 	LibraryFiles       LibraryFiles
+	LibraryUploads     LibraryUploads
 	Enrich             MetadataEnricher
 	EnrichStats        MetadataStats
 	SpotifyImport      SpotifyLikeImport
@@ -174,6 +176,12 @@ type LibraryFiles interface {
 	Open(context.Context, string) (library.Content, error)
 }
 
+// LibraryUploads stages files contributed by devices.
+type LibraryUploads interface {
+	Put(string, string, io.Reader, int64, int64, int64) (library.UploadStatus, error)
+	Status(string) library.UploadStatus
+}
+
 // MetadataEnricher fills missing identifiers from an upstream database.
 type MetadataEnricher interface {
 	Run(context.Context, int) (metadata.BackfillResult, error)
@@ -289,6 +297,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/library/enrich", d.handleLibraryEnrich)
 	mux.HandleFunc("GET /sync/v1/library", d.handleLibrary)
 	mux.HandleFunc("GET /sync/v1/library/files/{hash}", d.handleLibraryFile)
+	mux.HandleFunc("PUT /sync/v1/library/uploads/{hash}", d.handleLibraryUpload)
+	mux.HandleFunc("GET /sync/v1/library/uploads/{hash}", d.handleLibraryUploadStatus)
 
 	var h http.Handler = mux
 	h = withLogging(d.Logger, h)
@@ -1901,6 +1911,87 @@ func (d Deps) handleLibraryFile(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("ETag", `"`+hash+`"`)
 	http.ServeContent(w, r, content.Name, content.ModTime, content.Reader)
+}
+
+func (d Deps) handleLibraryUpload(w http.ResponseWriter, r *http.Request) {
+	if d.LibraryUploads == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "uploads unavailable"}, 0)
+		return
+	}
+	start, end, total, err := parseContentRange(r.Header.Get("Content-Range"))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid content range"}, 0)
+		return
+	}
+	status, err := d.LibraryUploads.Put(r.PathValue("hash"), r.URL.Query().Get("name"), r.Body, start, end, total)
+	switch {
+	case err == nil:
+	case errors.Is(err, library.ErrInvalidUpload):
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+		return
+	case errors.Is(err, library.ErrUploadOffset):
+		writeJSON(w, http.StatusConflict, map[string]any{"error": err.Error(), "received": status.Received}, 0)
+		return
+	case errors.Is(err, library.ErrUploadHash):
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"error": err.Error()}, 0)
+		return
+	case errors.Is(err, library.ErrUploadIncomplete):
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error(), "received": status.Received}, 0)
+		return
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "upload failed"}, 0)
+		return
+	}
+	code := http.StatusAccepted
+	if status.Complete {
+		code = http.StatusCreated
+	}
+	writeJSON(w, code, status, 0)
+}
+
+func (d Deps) handleLibraryUploadStatus(w http.ResponseWriter, r *http.Request) {
+	if d.LibraryUploads == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "uploads unavailable"}, 0)
+		return
+	}
+	status := d.LibraryUploads.Status(r.PathValue("hash"))
+	if status.Hash == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid hash"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, status, 0)
+}
+
+func parseContentRange(header string) (int64, int64, int64, error) {
+	header = strings.TrimSpace(header)
+	if !strings.HasPrefix(header, "bytes ") {
+		return 0, 0, 0, errors.New("missing byte range")
+	}
+	spec := strings.TrimSpace(strings.TrimPrefix(header, "bytes "))
+	parts := strings.Split(spec, "/")
+	if len(parts) != 2 || parts[1] == "*" {
+		return 0, 0, 0, errors.New("invalid byte range")
+	}
+	bounds := strings.Split(parts[0], "-")
+	if len(bounds) != 2 {
+		return 0, 0, 0, errors.New("invalid byte range")
+	}
+	start, err := strconv.ParseInt(strings.TrimSpace(bounds[0]), 10, 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	end, err := strconv.ParseInt(strings.TrimSpace(bounds[1]), 10, 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	total, err := strconv.ParseInt(strings.TrimSpace(parts[1]), 10, 64)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if start < 0 || end < start || total <= 0 || end >= total {
+		return 0, 0, 0, errors.New("invalid byte range")
+	}
+	return start, end, total, nil
 }
 
 func (d Deps) handleLibrary(w http.ResponseWriter, r *http.Request) {

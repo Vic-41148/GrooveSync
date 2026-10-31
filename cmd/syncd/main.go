@@ -99,6 +99,12 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		features = append(features, "library_files")
 	}
 
+	var libraryUploads api.LibraryUploads
+	if cfg.UploadDir != "" {
+		libraryUploads = library.NewUploadStore(cfg.UploadDir)
+		features = append(features, "library_upload")
+	}
+
 	var enricher api.MetadataEnricher
 	var enrichStats api.MetadataStats
 	if cfg.MusicBrainzURL != "" {
@@ -176,6 +182,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Library:            libraryRepo,
 		LibraryHashes:      libraryHashes,
 		LibraryFiles:       libraryFiles,
+		LibraryUploads:     libraryUploads,
 		Enrich:             enricher,
 		EnrichStats:        enrichStats,
 		SpotifyImport: connectors.SpotifyImporter{
