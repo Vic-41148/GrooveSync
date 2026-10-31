@@ -25,6 +25,7 @@ import (
 	"github.com/Vic-41148/groovesync/internal/taste"
 	"github.com/Vic-41148/groovesync/internal/transfer"
 	"github.com/Vic-41148/groovesync/internal/writeback"
+	"github.com/Vic-41148/groovesync/internal/ytmusic"
 )
 
 func main() {
@@ -93,6 +94,17 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		features = append(features, "metadata_enrich")
 	}
 
+	var youtubeImport api.YouTubeLikeImport
+	if cfg.YTMusicURL != "" {
+		client, err := ytmusic.NewClient(cfg.YTMusicURL)
+		if err != nil {
+			return err
+		}
+		youtubeImport = connectors.YouTubeImporter{DB: db, Client: client}
+		processor.Executors[connectors.ProviderYouTube] = connectors.YouTubeRemoteWriteExecutor(db, client)
+		features = append(features, "youtube")
+	}
+
 	h := api.New(api.Deps{
 		Logger:             logger,
 		Version:            version(),
@@ -126,9 +138,10 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 			Client: connectors.SpotifyClient{},
 			Tokens: connectors.SpotifyRepoTokenSource{Repo: connectorRepo},
 		},
-		Playlists: libraryRepo,
-		Transfer:  transfer.Planner{DB: db, Devices: deviceRepo},
-		Rollout:   queueRepo,
+		Playlists:     libraryRepo,
+		YouTubeImport: youtubeImport,
+		Transfer:      transfer.Planner{DB: db, Devices: deviceRepo},
+		Rollout:       queueRepo,
 	})
 
 	srv := &http.Server{

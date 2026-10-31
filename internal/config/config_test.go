@@ -193,6 +193,23 @@ func TestLoadMusicBrainzDefaults(t *testing.T) {
 	}
 }
 
+func TestLoadParsesYouTubeSettings(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(func(key string) string {
+		if key == "SYNCD_YTMUSIC_URL" {
+			return "http://127.0.0.1:8099"
+		}
+		return ""
+	}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.YTMusicURL != "http://127.0.0.1:8099" {
+		t.Fatalf("ytmusic url = %q, want the environment value", cfg.YTMusicURL)
+	}
+}
+
 func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 	t.Parallel()
 

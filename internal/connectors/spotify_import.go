@@ -138,9 +138,9 @@ SELECT canonical_id FROM alias WHERE service = ? AND service_id = ?
 	outcome := importMatched
 	confidence := 0.0
 	method := identity.MethodNone
-	candidates := candidatesFor(track, pool)
+	candidates := candidatesFor(track.ISRC, track.Name, pool)
 	if len(candidates) > 0 {
-		best, match := bestCandidate(track, candidates)
+		best, match := bestCandidate(remoteTrack(track), candidates)
 		if match.Confidence >= threshold {
 			canonicalID = best
 			confidence = match.Confidence
@@ -405,8 +405,8 @@ ORDER BY canonical_id
 	return out, nil
 }
 
-func candidatesFor(track SpotifyTrack, pool []localCandidate) []localCandidate {
-	isrc := strings.TrimSpace(track.ISRC)
+func candidatesFor(isrc, title string, pool []localCandidate) []localCandidate {
+	isrc = strings.TrimSpace(isrc)
 	if isrc != "" {
 		var byISRC []localCandidate
 		for _, candidate := range pool {
@@ -419,7 +419,7 @@ func candidatesFor(track SpotifyTrack, pool []localCandidate) []localCandidate {
 		}
 	}
 
-	title := identity.NormalizeTitle(track.Name)
+	title = identity.NormalizeTitle(title)
 	if title == "" {
 		return nil
 	}
@@ -432,13 +432,7 @@ func candidatesFor(track SpotifyTrack, pool []localCandidate) []localCandidate {
 	return byTitle
 }
 
-func bestCandidate(track SpotifyTrack, candidates []localCandidate) (string, identity.Match) {
-	remote := identity.Track{
-		ISRC:       track.ISRC,
-		Title:      track.Name,
-		Artist:     strings.Join(track.Artists, ", "),
-		DurationMS: track.DurationMS,
-	}
+func bestCandidate(remote identity.Track, candidates []localCandidate) (string, identity.Match) {
 	bestID := candidates[0].CanonicalID
 	best := identity.Score(candidates[0].Track, remote)
 	for _, candidate := range candidates[1:] {
@@ -451,8 +445,16 @@ func bestCandidate(track SpotifyTrack, candidates []localCandidate) (string, ide
 	return bestID, best
 }
 
-func touchServiceState(ctx context.Context, tx *sql.Tx, canonicalID string, track SpotifyTrack, now time.Time) error {
-	seen := track.AddedAt
+func remoteTrack(track SpotifyTrack) identity.Track {
+	return identity.Track{
+		ISRC:       track.ISRC,
+		Title:      track.Name,
+		Artist:     strings.Join(track.Artists, ", "),
+		DurationMS: track.DurationMS,
+	}
+}
+
+func touchLikeState(ctx context.Context, tx *sql.Tx, provider, canonicalID string, seen, now time.Time) error {
 	if seen.IsZero() {
 		seen = now
 	}
@@ -463,10 +465,14 @@ ON CONFLICT(canonical_id, service) DO UPDATE SET
     base_state = excluded.base_state,
     last_seen = excluded.last_seen,
     last_synced = excluded.last_synced
-`, canonicalID, ProviderSpotify, "liked", seen.UTC().Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano)); err != nil {
-		return fmt.Errorf("connectors: store spotify like %s: %w", canonicalID, err)
+`, canonicalID, provider, "liked", seen.UTC().Format(time.RFC3339Nano), now.UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("connectors: store %s like %s: %w", provider, canonicalID, err)
 	}
 	return nil
+}
+
+func touchServiceState(ctx context.Context, tx *sql.Tx, canonicalID string, track SpotifyTrack, now time.Time) error {
+	return touchLikeState(ctx, tx, ProviderSpotify, canonicalID, track.AddedAt, now)
 }
 
 func (i SpotifyImporter) newID(opts ImportOptions) (string, error) {

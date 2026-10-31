@@ -1290,6 +1290,60 @@ func (s playlistListerStub) ListPlaylists(context.Context) ([]library.Playlist, 
 	return s.playlists, s.err
 }
 
+func TestYouTubeImport(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:       "1.2.3",
+		Proto:         3,
+		Schema:        13,
+		Now:           time.Now,
+		YouTubeImport: youtubeImportStub{result: connectors.ImportResult{Seen: 4, Matched: 3, Created: 1}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/youtube/import?threshold=0.9", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got connectors.ImportResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got != (connectors.ImportResult{Seen: 4, Matched: 3, Created: 1}) {
+		t.Fatalf("result = %#v, want the youtube import counts", got)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/youtube/import?threshold=2", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad threshold status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/youtube/import", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("unavailable status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now, YouTubeImport: youtubeImportStub{err: errors.New("sidecar down")}}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/youtube/import", nil))
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("sidecar failure status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+}
+
+type youtubeImportStub struct {
+	result connectors.ImportResult
+	err    error
+}
+
+func (s youtubeImportStub) ImportLikes(context.Context, connectors.ImportOptions) (connectors.ImportResult, error) {
+	return s.result, s.err
+}
+
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 

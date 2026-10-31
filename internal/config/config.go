@@ -36,6 +36,7 @@ type Config struct {
 	NavidromePassword string
 	MusicBrainzURL    string
 	MusicBrainzAgent  string
+	YTMusicURL        string
 	ReleasesURL       string
 	// LibrarySyncInterval is zero when the mirror only runs on request.
 	LibrarySyncInterval time.Duration
@@ -62,6 +63,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		NavidromePassword: envOr(getenv, "SYNCD_NAVIDROME_PASSWORD", ""),
 		MusicBrainzURL:    envOr(getenv, "SYNCD_MUSICBRAINZ_URL", DefaultMusicBrainzURL),
 		MusicBrainzAgent:  envOr(getenv, "SYNCD_MUSICBRAINZ_AGENT", DefaultMusicBrainzAgent),
+		YTMusicURL:        envOr(getenv, "SYNCD_YTMUSIC_URL", ""),
 		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
 		Proto:             DefaultProto,
 		ShutdownWait:      10 * time.Second,
@@ -96,6 +98,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "debug, info, warn or error")
 	fs.StringVar(&cfg.NavidromeURL, "navidrome-url", cfg.NavidromeURL, "base URL of the Navidrome instance")
 	fs.StringVar(&cfg.MusicBrainzURL, "musicbrainz-url", cfg.MusicBrainzURL, "base URL of the MusicBrainz web service")
+	fs.StringVar(&cfg.YTMusicURL, "ytmusic-url", cfg.YTMusicURL, "base URL of the YouTube Music sidecar")
 	fs.StringVar(&cfg.ReleasesURL, "releases-url", cfg.ReleasesURL, "where clients download builds from")
 	fs.DurationVar(&cfg.LibrarySyncInterval, "library-sync-interval", cfg.LibrarySyncInterval, "how often to refresh the library mirror, zero to disable")
 	fs.DurationVar(&cfg.EnrichInterval, "enrich-interval", cfg.EnrichInterval, "how often to backfill metadata, zero to disable")
