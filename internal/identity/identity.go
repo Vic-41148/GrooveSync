@@ -9,10 +9,11 @@ import (
 type Method string
 
 const (
-	MethodISRC  Method = "isrc"
-	MethodMBID  Method = "mbid"
-	MethodFuzzy Method = "fuzzy"
-	MethodNone  Method = "none"
+	MethodISRC   Method = "isrc"
+	MethodMBID   Method = "mbid"
+	MethodAcoust Method = "acoustid"
+	MethodFuzzy  Method = "fuzzy"
+	MethodNone   Method = "none"
 )
 
 // Track is the metadata used for matching.
