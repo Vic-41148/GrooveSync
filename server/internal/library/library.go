@@ -18,6 +18,11 @@ type Rendition struct {
 	Path   string `json:"path"`
 	Codec  string `json:"codec,omitempty"`
 	Health string `json:"health"`
+	// Contributions lists every observed contribution path for this stored
+	// rendition. It is populated from the content_path table and helps the
+	// API expose multiple sources (uploads, sync folders) that reference the
+	// same stored content.
+	Contributions []Contribution `json:"contributions,omitempty"`
 }
 
 // Track is one canonical track with its renditions.
@@ -30,6 +35,13 @@ type Track struct {
 	MBID        string      `json:"mbid,omitempty"`
 	ISRC        string      `json:"isrc,omitempty"`
 	Renditions  []Rendition `json:"renditions"`
+}
+
+// Contribution is a single observed path that contributed the content behind
+// a rendition. Source describes how it arrived, e.g. "upload" or "sync".
+type Contribution struct {
+	Path   string `json:"path"`
+	Source string `json:"source"`
 }
 
 // Repo reads the mirrored library.
@@ -184,7 +196,7 @@ func (r Repo) renditions(ctx context.Context, ids []string) (map[string][]Rendit
 		args = append(args, id)
 	}
 	rows, err := r.DB.QueryContext(ctx, `
-SELECT canonical_id, kind, path_or_uri, COALESCE(codec, ''), health
+SELECT id, canonical_id, kind, path_or_uri, COALESCE(codec, ''), health
 FROM rendition
 WHERE canonical_id IN (`+placeholders+`)
 ORDER BY id ASC
@@ -195,13 +207,57 @@ ORDER BY id ASC
 	defer rows.Close()
 
 	out := make(map[string][]Rendition, len(ids))
+	// Keep track of rendition rows to populate contributions afterwards.
+	type rRow struct {
+		id          int64
+		canonicalID string
+		rendition   Rendition
+	}
+	rowsList := make([]rRow, 0)
 	for rows.Next() {
-		var canonicalID string
-		var rendition Rendition
-		if err := rows.Scan(&canonicalID, &rendition.Kind, &rendition.Path, &rendition.Codec, &rendition.Health); err != nil {
+		var rr rRow
+		if err := rows.Scan(&rr.id, &rr.canonicalID, &rr.rendition.Kind, &rr.rendition.Path, &rr.rendition.Codec, &rr.rendition.Health); err != nil {
 			return nil, fmt.Errorf("library: scan rendition: %w", err)
 		}
-		out[canonicalID] = append(out[canonicalID], rendition)
+		rowsList = append(rowsList, rr)
+	}
+	// If there are no renditions, return early.
+	if len(rowsList) == 0 {
+		return out, nil
+	}
+
+	// Fetch contribution paths for all renditions in one query.
+	idsPlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(rowsList)), ",")
+	contribArgs := make([]any, 0, len(rowsList))
+	for _, rr := range rowsList {
+		contribArgs = append(contribArgs, rr.id)
+	}
+	contribRows, err := r.DB.QueryContext(ctx, `
+SELECT rendition_id, path_or_uri, source
+FROM content_path
+WHERE rendition_id IN (`+idsPlaceholders+`)
+ORDER BY created_at ASC
+`, contribArgs...)
+	if err != nil {
+		return nil, fmt.Errorf("library: list content paths: %w", err)
+	}
+	defer contribRows.Close()
+	contribMap := make(map[int64][]Contribution)
+	for contribRows.Next() {
+		var rid int64
+		var c Contribution
+		if err := contribRows.Scan(&rid, &c.Path, &c.Source); err != nil {
+			return nil, fmt.Errorf("library: scan content_path: %w", err)
+		}
+		contribMap[rid] = append(contribMap[rid], c)
+	}
+
+	// Assemble final output, attaching contributions where present.
+	for _, rr := range rowsList {
+		if cs, ok := contribMap[rr.id]; ok {
+			rr.rendition.Contributions = cs
+		}
+		out[rr.canonicalID] = append(out[rr.canonicalID], rr.rendition)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("library: iterate renditions: %w", err)
