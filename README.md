@@ -38,14 +38,13 @@ New devices default to `app`. To opt in to `external`, send
 during registration keeps the mode already stored for an existing device; send
 an explicit mode to change it.
 
-In `app` mode a device advertises LAN URLs that other devices connect to. By
-default the server listens on the loopback address inside the container and the
-HTTP API is guarded by an optional administrator bearer token. Set
-`SYNCD_ADMIN_TOKEN` to enable admin-only access for administrative operations
-(device registration via POST /sync/v1/devices intentionally remains
-unauthenticated so new devices can register). If you publish the service on a
-LAN address or the internet, set `SYNCD_ADMIN_TOKEN` and keep the instance
-behind a VPN such as Tailscale.
+In `app` mode a device advertises LAN URLs that other devices connect to. The
+server listens on the loopback address by default and requires a bearer token
+on every `/sync/v1` route, including device registration. Set
+`SYNCD_ADMIN_TOKEN` to the owner's token; devices then register with that token
+and receive their own per-device token. The server refuses to start on a
+non-loopback address when `SYNCD_ADMIN_TOKEN` is empty, so an exposed instance
+is always authenticated. Keep the instance behind a VPN such as Tailscale.
 
 ## Docker
 
@@ -54,13 +53,16 @@ with no shell or package manager. The service writes its SQLite database to
 `/data/syncd.db` and runs as the nonroot user (UID 65532).
 
 ```sh
+export SYNCD_ADMIN_TOKEN="$(openssl rand -hex 32)"
 docker build -t groovesync:dev .
 docker volume create groovesync-data
 docker run --rm -d --name groovesync \
   -p 127.0.0.1:8080:8080 \
+  -e SYNCD_ADMIN_TOKEN \
   -v groovesync-data:/data \
   groovesync:dev
-curl -sS http://127.0.0.1:8080/sync/v1/about
+curl -sS -H "Authorization: Bearer $SYNCD_ADMIN_TOKEN" \
+  http://127.0.0.1:8080/sync/v1/about
 docker stop groovesync
 ```
 
@@ -69,9 +71,10 @@ user can write without extra steps. A bind mount does not: prepare it with
 `mkdir -p data && chown -R 65532:65532 data` first.
 
 The container listens on all interfaces (`SYNCD_ADDR=0.0.0.0:8080`) because the
-loopback default is unreachable from outside the container. The example
-publishes only to the host loopback; the API has no authentication, so do not
-publish it on a LAN address or the internet.
+loopback default is unreachable from outside the container, and it refuses to
+start without `SYNCD_ADMIN_TOKEN`. The example publishes only to the host
+loopback. Publishing a LAN address is safe only with the token set and the
+instance behind a VPN.
 
 ## License
 

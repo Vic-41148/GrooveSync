@@ -13,7 +13,7 @@ LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
 COPY --from=build /out/syncd /usr/local/bin/syncd
 COPY --from=build /src/third_party_licenses /usr/share/licenses/groovesync/
 COPY --from=build --chown=65532:65532 /out/data /data
-ENV SYNCD_ADDR=127.0.0.1:8080 \
+ENV SYNCD_ADDR=0.0.0.0:8080 \
     SYNCD_DB=/data/syncd.db
 WORKDIR /data
 EXPOSE 8080
