@@ -118,14 +118,18 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	}
 
 	var libraryFiles api.LibraryFiles
-	if cfg.MusicRoot != "" {
+	// An upload carries an absolute path, so downloads work without a music
+	// root; relative library paths still resolve against it.
+	if cfg.MusicRoot != "" || cfg.UploadDir != "" {
 		libraryFiles = library.FileStore{DB: db, Root: cfg.MusicRoot}
 		features = append(features, "library_files")
 	}
 
 	var libraryUploads api.LibraryUploads
+	var libraryIngest api.LibraryIngestor
 	if cfg.UploadDir != "" {
 		libraryUploads = library.NewUploadStore(cfg.UploadDir)
+		libraryIngest = library.Ingestor{DB: db}
 		features = append(features, "library_upload")
 	}
 
@@ -208,6 +212,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		LibraryHashes:      libraryHashes,
 		LibraryFiles:       libraryFiles,
 		LibraryUploads:     libraryUploads,
+		LibraryIngest:      libraryIngest,
 		Enrich:             enricher,
 		EnrichStats:        enrichStats,
 		SpotifyImport: connectors.SpotifyImporter{

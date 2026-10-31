@@ -70,6 +70,7 @@ type Deps struct {
 	LibraryHashes      LibraryHasher
 	LibraryFiles       LibraryFiles
 	LibraryUploads     LibraryUploads
+	LibraryIngest      LibraryIngestor
 	Enrich             MetadataEnricher
 	EnrichStats        MetadataStats
 	SpotifyImport      SpotifyLikeImport
@@ -211,6 +212,11 @@ type LibraryFiles interface {
 type LibraryUploads interface {
 	Put(string, string, io.Reader, int64, int64, int64) (library.UploadStatus, error)
 	Status(string) library.UploadStatus
+}
+
+// LibraryIngestor records a completed upload as a library rendition.
+type LibraryIngestor interface {
+	Ingest(context.Context, string, string, string, string) (string, error)
 }
 
 // MetadataEnricher fills missing identifiers from an upstream database.
@@ -2258,7 +2264,9 @@ func (d Deps) handleLibraryFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (d Deps) handleLibraryUpload(w http.ResponseWriter, r *http.Request) {
-	if d.LibraryUploads == nil {
+	// Staging without indexing leaves a file that no manifest can list, so the
+	// two are enabled together.
+	if d.LibraryUploads == nil || d.LibraryIngest == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "uploads unavailable"}, 0)
 		return
 	}
@@ -2285,6 +2293,12 @@ func (d Deps) handleLibraryUpload(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "upload failed"}, 0)
 		return
+	}
+	if status.Complete {
+		if _, err := d.LibraryIngest.Ingest(r.Context(), r.URL.Query().Get("track"), status.Path, status.Hash, r.URL.Query().Get("name")); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "upload indexing failed"}, 0)
+			return
+		}
 	}
 	code := http.StatusAccepted
 	if status.Complete {

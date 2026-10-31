@@ -4,9 +4,11 @@
 package api
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -25,7 +27,13 @@ func TestLibraryUploadChunks(t *testing.T) {
 	content := []byte("audio bytes")
 	sum := sha256.Sum256(content)
 	hash := hex.EncodeToString(sum[:])
-	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now, LibraryUploads: library.NewUploadStore(dir)})
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	h := New(Deps{
+		Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now,
+		LibraryUploads: library.NewUploadStore(dir),
+		LibraryIngest:  library.Ingestor{DB: db},
+	})
 
 	req := httptest.NewRequest(http.MethodPut, "/sync/v1/library/uploads/"+hash+"?name=song.flac", strings.NewReader(string(content[:4])))
 	req.Header.Set("Content-Range", "bytes 0-3/11")
@@ -140,5 +148,56 @@ func TestLibraryFileDownload(t *testing.T) {
 		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library/files/"+hash, nil))
 	if rec.Code != http.StatusNotImplemented {
 		t.Fatalf("unavailable status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
+func TestLibraryUploadRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	dir := t.TempDir()
+	content := bytes.Repeat([]byte("gs"), 5000)
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	h := New(Deps{
+		Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now,
+		LibraryUploads: library.NewUploadStore(dir),
+		LibraryIngest:  library.Ingestor{DB: db},
+		LibraryFiles:   library.FileStore{DB: db, Root: dir},
+	})
+
+	chunks := []struct {
+		start, end int
+		want       int
+	}{
+		{start: 0, end: 4999, want: http.StatusAccepted},
+		{start: 5000, end: 9999, want: http.StatusCreated},
+	}
+	for _, chunk := range chunks {
+		req := httptest.NewRequest(http.MethodPut, "/sync/v1/library/uploads/"+hash+"?name=round-trip.flac", bytes.NewReader(content[chunk.start:chunk.end+1]))
+		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", chunk.start, chunk.end, len(content)))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != chunk.want {
+			t.Fatalf("chunk %d-%d status = %d, want %d: %s", chunk.start, chunk.end, rec.Code, chunk.want, rec.Body.String())
+		}
+	}
+
+	var canonicalID string
+	if err := db.QueryRow(`SELECT canonical_id FROM rendition WHERE kind = 'file' AND lower(sha256) = ?`, hash).Scan(&canonicalID); err != nil {
+		t.Fatalf("load rendition: %v", err)
+	}
+	if canonicalID != "upload-"+hash[:16] {
+		t.Fatalf("canonical id = %q, want the provisional upload track", canonicalID)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library/files/"+hash, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), content) {
+		t.Fatalf("download body differs from the uploaded content")
 	}
 }
