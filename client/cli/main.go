@@ -200,6 +200,21 @@ func uploadFile(server, filename string, chunkSize int64) error {
 			}
 			o.Close()
 			fmt.Printf("downloaded to %s\n", out)
+			// verify downloaded file matches original hash
+			df, err := os.Open(out)
+			if err != nil {
+				return err
+			}
+			defer df.Close()
+			dh := sha256.New()
+			if _, err := io.Copy(dh, df); err != nil {
+				return err
+			}
+			dsum := hex.EncodeToString(dh.Sum(nil))
+			if dsum != sum {
+				return fmt.Errorf("hash mismatch: want %s got %s", sum, dsum)
+			}
+			fmt.Printf("verified: hash %s\n", sum)
 			return nil
 		}
 		// simple sleep
