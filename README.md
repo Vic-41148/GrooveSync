@@ -24,6 +24,10 @@ The service currently exposes:
 - `GET /sync/v1/meta`
 - `GET /sync/v1/about` - returns the published source URL and running version
 
+`SYNCD_SOURCE_URL` sets the source URL reported by `/sync/v1/about`. It defaults
+to the canonical repository and exists so operators of a fork or a modified
+build can point users at the corresponding source, as AGPL section 13 requires.
+
 ## Device sync modes
 
 - `app`: the GrooveSync app owns the device folder and syncs over the LAN (default for new devices)
@@ -71,4 +75,4 @@ This project is licensed under the GNU Affero General Public License v3 or later
 
 Third-party licenses and attribution
 
-This repository includes third-party dependencies licensed under permissive licenses (MIT, BSD-2/3-Clause, Apache-2.0, etc.). A bundled copy of dependency license texts and notices is included at /usr/share/licenses/measure/ inside the project (and the Docker image). See third_party_licenses/ for details.
+This repository includes third-party dependencies licensed under permissive licenses (MIT, BSD-2/3-Clause, Apache-2.0, etc.). A bundled copy of dependency license texts and notices is included at /usr/share/licenses/groovesync/ inside the project (and the Docker image). See third_party_licenses/ for details.

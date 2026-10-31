@@ -11,7 +11,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/syncd ./cmd/syncd 
 FROM gcr.io/distroless/static:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99
 LABEL org.opencontainers.image.licenses="AGPL-3.0-or-later"
 COPY --from=build /out/syncd /usr/local/bin/syncd
-COPY --from=build /src/third_party_licenses /usr/share/licenses/measure/
+COPY --from=build /src/third_party_licenses /usr/share/licenses/groovesync/
 COPY --from=build --chown=65532:65532 /out/data /data
 ENV SYNCD_ADDR=0.0.0.0:8080 \
     SYNCD_DB=/data/syncd.db
