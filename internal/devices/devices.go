@@ -24,6 +24,45 @@ const (
 	ModeOff      SyncMode = "off"
 )
 
+// Scope is what a device receives.
+type Scope string
+
+const (
+	ScopeEverything Scope = "everything"
+	ScopeLiked      Scope = "liked"
+	ScopeAffinity   Scope = "affinity"
+	ScopePlaylists  Scope = "playlists"
+	ScopeOff        Scope = "off"
+)
+
+// NetworkRule limits transfers to a kind of connection.
+type NetworkRule string
+
+const (
+	NetworkAny  NetworkRule = "any"
+	NetworkWiFi NetworkRule = "wifi"
+)
+
+// Quality is the preferred encoding for transfers.
+type Quality string
+
+const (
+	QualityOriginal  Quality = "original"
+	QualityHigh      Quality = "high"
+	QualityDataSaver Quality = "data_saver"
+)
+
+// Policy is how one device receives files. A zero value means the defaults:
+// everything, any network, original quality, no cap and no deletions.
+type Policy struct {
+	Scope             Scope
+	AffinityThreshold float64
+	StorageCapBytes   int64
+	NetworkRule       NetworkRule
+	MirrorDeletions   bool
+	Quality           Quality
+}
+
 // Device is one registered client.
 type Device struct {
 	ID        string
@@ -31,6 +70,7 @@ type Device struct {
 	Platform  string
 	Build     int
 	SyncMode  SyncMode
+	Policy    Policy
 	CreatedAt time.Time
 	LastSeen  time.Time
 }
@@ -90,6 +130,11 @@ func (r Repo) Register(ctx context.Context, device Device) (Registration, error)
 	if !validMode(device.SyncMode) {
 		return Registration{}, fmt.Errorf("%w: unsupported sync mode %q", ErrInvalidDevice, device.SyncMode)
 	}
+	policy, err := normalizePolicy(device.Policy, device.SyncMode)
+	if err != nil {
+		return Registration{}, err
+	}
+	device.Policy = policy
 
 	token, err := r.token()
 	if err != nil {
@@ -97,16 +142,25 @@ func (r Repo) Register(ctx context.Context, device Device) (Registration, error)
 	}
 	now := r.now()
 	if _, err := r.DB.ExecContext(ctx, `
-INSERT INTO device (id, name, platform, build, last_seen, token_hash, sync_mode)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+INSERT INTO device (
+    id, name, platform, build, last_seen, token_hash, sync_mode,
+    scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     platform = excluded.platform,
     build = excluded.build,
     last_seen = excluded.last_seen,
     token_hash = excluded.token_hash,
-    sync_mode = excluded.sync_mode
-`, device.ID, device.Name, device.Platform, device.Build, now.Format(time.RFC3339Nano), hashToken(token), string(device.SyncMode)); err != nil {
+    sync_mode = excluded.sync_mode,
+    scope = excluded.scope,
+    affinity_threshold = excluded.affinity_threshold,
+    storage_cap_bytes = excluded.storage_cap_bytes,
+    network_rule = excluded.network_rule,
+    mirror_deletions = excluded.mirror_deletions,
+    quality = excluded.quality
+`, device.ID, device.Name, device.Platform, device.Build, now.Format(time.RFC3339Nano), hashToken(token), string(device.SyncMode),
+		string(policy.Scope), policy.AffinityThreshold, policy.StorageCapBytes, string(policy.NetworkRule), boolInt(policy.MirrorDeletions), string(policy.Quality)); err != nil {
 		return Registration{}, fmt.Errorf("devices: register %s: %w", device.ID, err)
 	}
 
@@ -123,7 +177,7 @@ func (r Repo) List(ctx context.Context) ([]Device, error) {
 		return nil, errors.New("devices: database is required")
 	}
 	rows, err := r.DB.QueryContext(ctx, `
-SELECT id, name, platform, build, sync_mode, created_at, last_seen
+SELECT id, name, platform, build, sync_mode, scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality, created_at, last_seen
 FROM device
 ORDER BY id ASC
 `)
@@ -135,12 +189,25 @@ ORDER BY id ASC
 	var out []Device
 	for rows.Next() {
 		var device Device
-		var mode string
+		var mode, scope, network, quality string
+		var mirrorDeletions int
 		var createdAt, lastSeen sql.NullString
-		if err := rows.Scan(&device.ID, &device.Name, &device.Platform, &device.Build, &mode, &createdAt, &lastSeen); err != nil {
+		if err := rows.Scan(
+			&device.ID, &device.Name, &device.Platform, &device.Build, &mode,
+			&scope, &device.Policy.AffinityThreshold, &device.Policy.StorageCapBytes,
+			&network, &mirrorDeletions, &quality, &createdAt, &lastSeen,
+		); err != nil {
 			return nil, fmt.Errorf("devices: scan: %w", err)
 		}
 		device.SyncMode = SyncMode(mode)
+		device.Policy = Policy{
+			Scope:             Scope(scope),
+			AffinityThreshold: device.Policy.AffinityThreshold,
+			StorageCapBytes:   device.Policy.StorageCapBytes,
+			NetworkRule:       NetworkRule(network),
+			MirrorDeletions:   mirrorDeletions != 0,
+			Quality:           Quality(quality),
+		}
 		device.CreatedAt = parseTime(createdAt)
 		device.LastSeen = parseTime(lastSeen)
 		out = append(out, device)
@@ -169,6 +236,42 @@ func (r Repo) SetSyncMode(ctx context.Context, id string, mode SyncMode) error {
 	}
 	if affected == 0 {
 		return ErrDeviceNotFound
+	}
+	return nil
+}
+
+// SetPolicy replaces one device's transfer policy.
+func (r Repo) SetPolicy(ctx context.Context, id string, policy Policy) error {
+	if r.DB == nil {
+		return errors.New("devices: database is required")
+	}
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("devices: begin policy tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	var mode string
+	err = tx.QueryRowContext(ctx, `SELECT sync_mode FROM device WHERE id = ?`, id).Scan(&mode)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrDeviceNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("devices: load mode for %s: %w", id, err)
+	}
+	normalized, err := normalizePolicy(policy, SyncMode(mode))
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE device
+SET scope = ?, affinity_threshold = ?, storage_cap_bytes = ?, network_rule = ?, mirror_deletions = ?, quality = ?
+WHERE id = ?
+`, string(normalized.Scope), normalized.AffinityThreshold, normalized.StorageCapBytes, string(normalized.NetworkRule), boolInt(normalized.MirrorDeletions), string(normalized.Quality), id); err != nil {
+		return fmt.Errorf("devices: set policy for %s: %w", id, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("devices: commit policy tx: %w", err)
 	}
 	return nil
 }
@@ -386,6 +489,55 @@ func validMode(mode SyncMode) bool {
 	default:
 		return false
 	}
+}
+
+func normalizePolicy(policy Policy, mode SyncMode) (Policy, error) {
+	if policy.Scope == "" {
+		policy.Scope = ScopeEverything
+	}
+	switch policy.Scope {
+	case ScopeEverything, ScopeLiked, ScopeAffinity, ScopePlaylists, ScopeOff:
+	default:
+		return Policy{}, fmt.Errorf("%w: unsupported scope %q", ErrInvalidDevice, policy.Scope)
+	}
+	if policy.AffinityThreshold < 0 || policy.AffinityThreshold > 1 {
+		return Policy{}, fmt.Errorf("%w: affinity threshold must be between 0 and 1", ErrInvalidDevice)
+	}
+	if policy.Scope == ScopeAffinity && policy.AffinityThreshold <= 0 {
+		return Policy{}, fmt.Errorf("%w: affinity scope needs a threshold", ErrInvalidDevice)
+	}
+	if policy.StorageCapBytes < 0 {
+		return Policy{}, fmt.Errorf("%w: storage cap must not be negative", ErrInvalidDevice)
+	}
+	if policy.NetworkRule == "" {
+		policy.NetworkRule = NetworkAny
+	}
+	switch policy.NetworkRule {
+	case NetworkAny, NetworkWiFi:
+	default:
+		return Policy{}, fmt.Errorf("%w: unsupported network rule %q", ErrInvalidDevice, policy.NetworkRule)
+	}
+	if policy.Quality == "" {
+		policy.Quality = QualityOriginal
+	}
+	switch policy.Quality {
+	case QualityOriginal, QualityHigh, QualityDataSaver:
+	default:
+		return Policy{}, fmt.Errorf("%w: unsupported quality %q", ErrInvalidDevice, policy.Quality)
+	}
+	// An external tool owns the folder, so syncd never asks for deletions
+	// there; a Syncthing eviction would otherwise propagate to every peer.
+	if mode == ModeExternal && policy.MirrorDeletions {
+		return Policy{}, fmt.Errorf("%w: external devices never mirror deletions", ErrInvalidDevice)
+	}
+	return policy, nil
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // ValidSyncMode reports whether mode is one of the supported sync modes.

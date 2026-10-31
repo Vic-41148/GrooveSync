@@ -101,6 +101,7 @@ type DeviceRegistry interface {
 	List(context.Context) ([]devices.Device, error)
 	Register(context.Context, devices.Device) (devices.Registration, error)
 	SetSyncMode(context.Context, string, devices.SyncMode) error
+	SetPolicy(context.Context, string, devices.Policy) error
 	Delete(context.Context, string) error
 	ListHoldings(context.Context, string) ([]devices.Holding, error)
 	ReportHoldings(context.Context, string, []devices.Holding) error
@@ -187,6 +188,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/devices", d.handleDevices)
 	mux.HandleFunc("POST /sync/v1/devices", d.handleDeviceRegister)
 	mux.HandleFunc("PATCH /sync/v1/devices/{id}", d.handleDeviceSyncMode)
+	mux.HandleFunc("PUT /sync/v1/devices/{id}/policy", d.handleDevicePolicy)
 	mux.HandleFunc("DELETE /sync/v1/devices/{id}", d.handleDeviceDelete)
 	mux.HandleFunc("GET /sync/v1/devices/{id}/holdings", d.handleDeviceHoldings)
 	mux.HandleFunc("PUT /sync/v1/devices/{id}/holdings", d.handleDeviceHoldingsReport)
@@ -627,14 +629,46 @@ func (d Deps) handleSpotifyImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result, 0)
 }
 
+type devicePolicy struct {
+	Scope             string  `json:"scope"`
+	AffinityThreshold float64 `json:"affinity_threshold"`
+	StorageCapBytes   int64   `json:"storage_cap_bytes"`
+	NetworkRule       string  `json:"network_rule"`
+	MirrorDeletions   bool    `json:"mirror_deletions"`
+	Quality           string  `json:"quality"`
+}
+
+func newDevicePolicy(policy devices.Policy) devicePolicy {
+	return devicePolicy{
+		Scope:             string(policy.Scope),
+		AffinityThreshold: policy.AffinityThreshold,
+		StorageCapBytes:   policy.StorageCapBytes,
+		NetworkRule:       string(policy.NetworkRule),
+		MirrorDeletions:   policy.MirrorDeletions,
+		Quality:           string(policy.Quality),
+	}
+}
+
+func (p devicePolicy) toDevices() devices.Policy {
+	return devices.Policy{
+		Scope:             devices.Scope(p.Scope),
+		AffinityThreshold: p.AffinityThreshold,
+		StorageCapBytes:   p.StorageCapBytes,
+		NetworkRule:       devices.NetworkRule(p.NetworkRule),
+		MirrorDeletions:   p.MirrorDeletions,
+		Quality:           devices.Quality(p.Quality),
+	}
+}
+
 type deviceResponse struct {
-	ID        string `json:"id"`
-	Name      string `json:"name"`
-	Platform  string `json:"platform"`
-	Build     int    `json:"build"`
-	SyncMode  string `json:"sync_mode"`
-	CreatedAt string `json:"created_at,omitempty"`
-	LastSeen  string `json:"last_seen,omitempty"`
+	ID        string       `json:"id"`
+	Name      string       `json:"name"`
+	Platform  string       `json:"platform"`
+	Build     int          `json:"build"`
+	SyncMode  string       `json:"sync_mode"`
+	Policy    devicePolicy `json:"policy"`
+	CreatedAt string       `json:"created_at,omitempty"`
+	LastSeen  string       `json:"last_seen,omitempty"`
 }
 
 func newDeviceResponse(device devices.Device) deviceResponse {
@@ -644,6 +678,7 @@ func newDeviceResponse(device devices.Device) deviceResponse {
 		Platform: device.Platform,
 		Build:    device.Build,
 		SyncMode: string(device.SyncMode),
+		Policy:   newDevicePolicy(device.Policy),
 	}
 	if !device.CreatedAt.IsZero() {
 		resp.CreatedAt = device.CreatedAt.UTC().Format(time.RFC3339Nano)
@@ -682,6 +717,7 @@ func (d Deps) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		Platform string           `json:"platform"`
 		Build    int              `json:"build"`
 		SyncMode devices.SyncMode `json:"sync_mode"`
+		Policy   devicePolicy     `json:"policy"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
@@ -693,6 +729,7 @@ func (d Deps) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		Platform: req.Platform,
 		Build:    req.Build,
 		SyncMode: req.SyncMode,
+		Policy:   req.Policy.toDevices(),
 	})
 	if err != nil {
 		writeDeviceError(w, err)
@@ -722,6 +759,28 @@ func (d Deps) handleDeviceSyncMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.Devices.SetSyncMode(r.Context(), id, req.SyncMode); err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleDevicePolicy(w http.ResponseWriter, r *http.Request) {
+	if d.Devices == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	var req devicePolicy
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	if err := d.Devices.SetPolicy(r.Context(), id, req.toDevices()); err != nil {
 		writeDeviceError(w, err)
 		return
 	}

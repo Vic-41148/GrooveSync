@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -161,6 +162,95 @@ func TestDeviceSyncModeAndDelete(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/sync/v1/devices/phone", nil))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestDeviceRegisterWithPolicy(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	repo := devices.Repo{DB: db, Token: func() (string, error) { return "device-token", nil }}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 11, Now: time.Now, Devices: repo})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/devices", strings.NewReader(`{
+		"id":"phone","name":"Phone",
+		"policy":{"scope":"affinity","affinity_threshold":0.6,"storage_cap_bytes":8589934592,"network_rule":"wifi","quality":"high"}
+	}`)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+	var created struct {
+		Device struct {
+			Policy devicePolicy `json:"policy"`
+		} `json:"device"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	want := devicePolicy{Scope: "affinity", AffinityThreshold: 0.6, StorageCapBytes: 8 << 30, NetworkRule: "wifi", Quality: "high"}
+	if created.Device.Policy != want {
+		t.Fatalf("policy = %#v, want %#v", created.Device.Policy, want)
+	}
+}
+
+func TestDevicePolicy(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	tokens := 0
+	repo := devices.Repo{DB: db, Token: func() (string, error) {
+		tokens++
+		return fmt.Sprintf("device-token-%d", tokens), nil
+	}}
+	if _, err := repo.Register(ctx, devices.Device{ID: "phone", Name: "Phone"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	if _, err := repo.Register(ctx, devices.Device{ID: "desktop", Name: "Desktop", SyncMode: devices.ModeExternal}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 11, Now: time.Now, Devices: repo})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/phone/policy", strings.NewReader(`{
+		"scope":"liked","network_rule":"wifi","mirror_deletions":true,"quality":"data_saver"
+	}`)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	want := devices.Policy{Scope: devices.ScopeLiked, NetworkRule: devices.NetworkWiFi, MirrorDeletions: true, Quality: devices.QualityDataSaver}
+	for _, device := range list {
+		if device.ID == "phone" && device.Policy != want {
+			t.Fatalf("policy = %#v, want %#v", device.Policy, want)
+		}
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/desktop/policy", strings.NewReader(`{"mirror_deletions":true}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("external mirror deletions status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/phone/policy", strings.NewReader(`{"scope":"sometimes"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid scope status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/missing/policy", strings.NewReader(`{}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing device status = %d, want %d", rec.Code, http.StatusNotFound)
 	}
 }
 

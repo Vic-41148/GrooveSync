@@ -177,6 +177,105 @@ func TestSyncModeAndTouch(t *testing.T) {
 	}
 }
 
+func TestRegisterDefaultsPolicy(t *testing.T) {
+	t.Parallel()
+
+	db := openDeviceDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := Repo{DB: db, Token: fixedToken("token")}
+	registration, err := repo.Register(ctx, Device{ID: "phone", Name: "Phone"})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	want := Policy{Scope: ScopeEverything, NetworkRule: NetworkAny, Quality: QualityOriginal}
+	if registration.Device.Policy != want {
+		t.Fatalf("policy = %#v, want %#v", registration.Device.Policy, want)
+	}
+}
+
+func TestSetPolicy(t *testing.T) {
+	t.Parallel()
+
+	db := openDeviceDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := Repo{DB: db, Token: fixedToken("token")}
+	if _, err := repo.Register(ctx, Device{ID: "phone", Name: "Phone"}); err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+
+	want := Policy{
+		Scope:             ScopeAffinity,
+		AffinityThreshold: 0.6,
+		StorageCapBytes:   8 << 30,
+		NetworkRule:       NetworkWiFi,
+		Quality:           QualityHigh,
+	}
+	if err := repo.SetPolicy(ctx, "phone", want); err != nil {
+		t.Fatalf("SetPolicy() error = %v", err)
+	}
+	list, err := repo.List(ctx)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(list) != 1 || list[0].Policy != want {
+		t.Fatalf("device = %#v, want policy %#v", list, want)
+	}
+
+	if err := repo.SetPolicy(ctx, "missing", want); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("SetPolicy(missing) error = %v, want ErrDeviceNotFound", err)
+	}
+	if err := repo.SetPolicy(ctx, "phone", Policy{Scope: "sometimes"}); !errors.Is(err, ErrInvalidDevice) {
+		t.Fatalf("SetPolicy(invalid) error = %v, want ErrInvalidDevice", err)
+	}
+}
+
+func TestPolicyValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		mode    SyncMode
+		policy  Policy
+		wantErr bool
+	}{
+		{name: "defaults", policy: Policy{}},
+		{name: "liked scope", policy: Policy{Scope: ScopeLiked}},
+		{name: "affinity with threshold", policy: Policy{Scope: ScopeAffinity, AffinityThreshold: 0.5}},
+		{name: "affinity without threshold", policy: Policy{Scope: ScopeAffinity}, wantErr: true},
+		{name: "threshold above one", policy: Policy{AffinityThreshold: 1.5}, wantErr: true},
+		{name: "negative threshold", policy: Policy{AffinityThreshold: -0.1}, wantErr: true},
+		{name: "negative cap", policy: Policy{StorageCapBytes: -1}, wantErr: true},
+		{name: "unknown scope", policy: Policy{Scope: "sometimes"}, wantErr: true},
+		{name: "unknown network", policy: Policy{NetworkRule: "carrier_pigeon"}, wantErr: true},
+		{name: "unknown quality", policy: Policy{Quality: "lossless"}, wantErr: true},
+		{name: "external mirror deletions", mode: ModeExternal, policy: Policy{MirrorDeletions: true}, wantErr: true},
+		{name: "app mirror deletions", mode: ModeApp, policy: Policy{MirrorDeletions: true}},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := normalizePolicy(tc.policy, tc.mode)
+			if tc.wantErr {
+				if !errors.Is(err, ErrInvalidDevice) {
+					t.Fatalf("normalizePolicy() error = %v, want ErrInvalidDevice", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("normalizePolicy() error = %v", err)
+			}
+			if got.Scope == "" || got.NetworkRule == "" || got.Quality == "" {
+				t.Fatalf("policy = %#v, want defaults filled in", got)
+			}
+		})
+	}
+}
+
 func TestDeleteRemovesHoldings(t *testing.T) {
 	t.Parallel()
 
