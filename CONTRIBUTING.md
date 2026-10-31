@@ -1,21 +1,11 @@
-# Contributing
+Contributor guidelines
 
-Thanks for helping GrooveSync.
+This project uses the Developer Certificate of Origin (DCO). Do not submit a
+Contributor License Agreement (CLA). Sign your commits using "git commit -s".
 
-## Branches
+By contributing you certify that you have the right to submit the changes and
+that your contribution can be distributed under the project's AGPL-3.0-or-later
+license.
 
-- `main` stays stable
-- `dev` is for active work
-
-## Commits
-
-- Sign every commit with GPG
-- Use DCO sign-off with `git commit -s`
-- Keep subjects short, imperative, and plain
-- Do not use `Co-Authored-By`
-
-## Repo rules
-
-- Keep `docs/` local-only
-- Keep the Flatpak manifest human-written
-- Do not add Spotify or YouTube audio, an in-app APK updater, or proprietary SDKs
+Please keep changes small and well-scoped. Tests are expected for new behavior
+and must pass locally before submitting.

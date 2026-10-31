@@ -22,3 +22,7 @@ go test ./...
 The service currently exposes:
 - `GET /healthz`
 - `GET /sync/v1/meta`
+
+## License
+
+This project is licensed under the GNU Affero General Public License v3 or later (AGPL-3.0-or-later). See LICENSE for the full text. By contributing, you agree to sign-off your commits using the Developer Certificate of Origin (DCO). For details on contribution and DCO sign-off see CONTRIBUTING.md.
