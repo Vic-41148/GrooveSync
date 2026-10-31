@@ -31,6 +31,10 @@ type HashBackfill struct {
 	// Root resolves relative paths reported by Navidrome. Absolute paths are
 	// read as they are.
 	Root string
+	// StabilityInterval is the duration to wait between two stats when
+	// checking a file is stable before hashing. If zero, a sensible default
+	// is used to preserve existing behaviour.
+	StabilityInterval time.Duration
 }
 
 // Run hashes at most limit renditions that have no digest yet.
@@ -116,7 +120,34 @@ func (h HashBackfill) hashFile(path string) (string, error) {
 	// half-written file, re-stat the file before and after hashing and
 	// retry a few times when its size or modtime changes while reading.
 	const maxAttempts = 3
+	// Use configured stability interval or fall back to the previous
+	// behaviour of sleeping 50ms when a change is observed.
+	stability := h.StabilityInterval
+	if stability <= 0 {
+		stability = 50 * time.Millisecond
+	}
+
 	for attempt := 0; attempt < maxAttempts; attempt++ {
+		// Pre-check: stat, wait stability interval, stat again. This
+		// reduces the chance we start hashing while another process is
+		// writing the file.
+		info1, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		time.Sleep(stability)
+		info2, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		if info1.Size() != info2.Size() || !info1.ModTime().Equal(info2.ModTime()) {
+			if attempt+1 == maxAttempts {
+				return "", fmt.Errorf("library: file changed while waiting for stability: %s", path)
+			}
+			// brief backoff before retrying the pre-check
+			time.Sleep(stability)
+			continue
+		}
 		file, err := os.Open(path)
 		if err != nil {
 			return "", err

@@ -7,9 +7,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestHashBackfillStoresDigests(t *testing.T) {
@@ -65,4 +67,65 @@ func TestHashBackfillRequiresDatabase(t *testing.T) {
 	if _, err := (HashBackfill{}).Run(context.Background(), 10); err == nil {
 		t.Fatal("Run() without a database error = nil, want failure")
 	}
+}
+
+func TestHashFileStabilityWindow(t *testing.T) {
+	t.Parallel()
+
+	// Create a file that is being written concurrently but becomes stable
+	// before the stability interval completes.
+	root := t.TempDir()
+	path := filepath.Join(root, "song.flac")
+	// Start with some content
+	if err := os.WriteFile(path, []byte("part1"), 0o644); err != nil {
+		t.Fatalf("write initial: %v", err)
+	}
+
+	// Create a goroutine that appends data then stops, so the file is
+	// unstable briefly but becomes stable for hashing.
+	done := make(chan struct{})
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		_ = os.WriteFile(path, []byte("part1part2"), 0o644)
+		close(done)
+	}()
+
+	// Use a small stability interval so the test runs fast but still
+	// exercises the pre-check logic.
+	hb := HashBackfill{Root: root, StabilityInterval: 20 * time.Millisecond}
+	sum, err := hb.hashFile(path)
+	if err != nil {
+		t.Fatalf("hashFile error = %v", err)
+	}
+	// Ensure goroutine finished
+	<-done
+	if sum == "" {
+		t.Fatal("empty hash returned")
+	}
+}
+
+func TestHashFileFailsWhenNeverStable(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	path := filepath.Join(root, "song.flac")
+	if err := os.WriteFile(path, []byte("a"), 0o644); err != nil {
+		t.Fatalf("write initial: %v", err)
+	}
+
+	// Continuously modify the file so it never becomes stable.
+	stop := make(chan struct{})
+	go func() {
+		defer close(stop)
+		for i := 0; i < 10; i++ {
+			time.Sleep(10 * time.Millisecond)
+			_ = os.WriteFile(path, []byte(fmt.Sprintf("%d", i)), 0o644)
+		}
+	}()
+
+	hb := HashBackfill{Root: root, StabilityInterval: 15 * time.Millisecond}
+	if _, err := hb.hashFile(path); err == nil {
+		t.Fatal("hashFile succeeded despite continuous changes, want failure")
+	}
+	<-stop
 }
