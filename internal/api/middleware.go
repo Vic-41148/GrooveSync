@@ -13,8 +13,8 @@ import (
 type contextKey int
 
 const (
-	requestIDKey contextKey = iota
-	requestIDHeader        = "X-Request-Id"
+	requestIDKey    contextKey = iota
+	requestIDHeader            = "X-Request-Id"
 )
 
 // withRequestID reuses a caller id when it is safe to log, so one id spans the
