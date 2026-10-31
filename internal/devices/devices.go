@@ -9,8 +9,10 @@ import (
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -65,12 +67,14 @@ type Policy struct {
 
 // Device is one registered client.
 type Device struct {
-	ID        string
-	Name      string
-	Platform  string
-	Build     int
-	SyncMode  SyncMode
-	Policy    Policy
+	ID       string
+	Name     string
+	Platform string
+	Build    int
+	SyncMode SyncMode
+	Policy   Policy
+	// URLs is the ordered server list the device tries, LAN first.
+	URLs      []string
 	CreatedAt time.Time
 	LastSeen  time.Time
 }
@@ -135,6 +139,14 @@ func (r Repo) Register(ctx context.Context, device Device) (Registration, error)
 		return Registration{}, err
 	}
 	device.Policy = policy
+	device.URLs, err = normalizeURLs(device.URLs)
+	if err != nil {
+		return Registration{}, err
+	}
+	urls, err := json.Marshal(device.URLs)
+	if err != nil {
+		return Registration{}, fmt.Errorf("devices: encode urls: %w", err)
+	}
 
 	token, err := r.token()
 	if err != nil {
@@ -144,8 +156,8 @@ func (r Repo) Register(ctx context.Context, device Device) (Registration, error)
 	if _, err := r.DB.ExecContext(ctx, `
 INSERT INTO device (
     id, name, platform, build, last_seen, token_hash, sync_mode,
-    scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality, urls
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     name = excluded.name,
     platform = excluded.platform,
@@ -158,9 +170,10 @@ ON CONFLICT(id) DO UPDATE SET
     storage_cap_bytes = excluded.storage_cap_bytes,
     network_rule = excluded.network_rule,
     mirror_deletions = excluded.mirror_deletions,
-    quality = excluded.quality
+    quality = excluded.quality,
+    urls = excluded.urls
 `, device.ID, device.Name, device.Platform, device.Build, now.Format(time.RFC3339Nano), hashToken(token), string(device.SyncMode),
-		string(policy.Scope), policy.AffinityThreshold, policy.StorageCapBytes, string(policy.NetworkRule), boolInt(policy.MirrorDeletions), string(policy.Quality)); err != nil {
+		string(policy.Scope), policy.AffinityThreshold, policy.StorageCapBytes, string(policy.NetworkRule), boolInt(policy.MirrorDeletions), string(policy.Quality), string(urls)); err != nil {
 		return Registration{}, fmt.Errorf("devices: register %s: %w", device.ID, err)
 	}
 
@@ -177,7 +190,7 @@ func (r Repo) List(ctx context.Context) ([]Device, error) {
 		return nil, errors.New("devices: database is required")
 	}
 	rows, err := r.DB.QueryContext(ctx, `
-SELECT id, name, platform, build, sync_mode, scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality, created_at, last_seen
+SELECT id, name, platform, build, sync_mode, scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality, urls, created_at, last_seen
 FROM device
 ORDER BY id ASC
 `)
@@ -206,7 +219,7 @@ func (r Repo) Get(ctx context.Context, id string) (Device, error) {
 		return Device{}, errors.New("devices: database is required")
 	}
 	device, err := scanDevice(r.DB.QueryRowContext(ctx, `
-SELECT id, name, platform, build, sync_mode, scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality, created_at, last_seen
+SELECT id, name, platform, build, sync_mode, scope, affinity_threshold, storage_cap_bytes, network_rule, mirror_deletions, quality, urls, created_at, last_seen
 FROM device
 WHERE id = ?
 `, id))
@@ -225,13 +238,13 @@ type deviceScanner interface {
 
 func scanDevice(row deviceScanner) (Device, error) {
 	var device Device
-	var mode, scope, network, quality string
+	var mode, scope, network, quality, urls string
 	var mirrorDeletions int
 	var createdAt, lastSeen sql.NullString
 	if err := row.Scan(
 		&device.ID, &device.Name, &device.Platform, &device.Build, &mode,
 		&scope, &device.Policy.AffinityThreshold, &device.Policy.StorageCapBytes,
-		&network, &mirrorDeletions, &quality, &createdAt, &lastSeen,
+		&network, &mirrorDeletions, &quality, &urls, &createdAt, &lastSeen,
 	); err != nil {
 		return Device{}, err
 	}
@@ -243,6 +256,11 @@ func scanDevice(row deviceScanner) (Device, error) {
 		NetworkRule:       NetworkRule(network),
 		MirrorDeletions:   mirrorDeletions != 0,
 		Quality:           Quality(quality),
+	}
+	if strings.TrimSpace(urls) != "" {
+		if err := json.Unmarshal([]byte(urls), &device.URLs); err != nil {
+			return Device{}, fmt.Errorf("devices: decode urls: %w", err)
+		}
 	}
 	device.CreatedAt = parseTime(createdAt)
 	device.LastSeen = parseTime(lastSeen)
@@ -264,6 +282,33 @@ func (r Repo) SetSyncMode(ctx context.Context, id string, mode SyncMode) error {
 	affected, err := res.RowsAffected()
 	if err != nil {
 		return fmt.Errorf("devices: set sync mode for %s: %w", id, err)
+	}
+	if affected == 0 {
+		return ErrDeviceNotFound
+	}
+	return nil
+}
+
+// SetURLs replaces the ordered server list a device tries.
+func (r Repo) SetURLs(ctx context.Context, id string, urls []string) error {
+	if r.DB == nil {
+		return errors.New("devices: database is required")
+	}
+	normalized, err := normalizeURLs(urls)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return fmt.Errorf("devices: encode urls: %w", err)
+	}
+	res, err := r.DB.ExecContext(ctx, `UPDATE device SET urls = ? WHERE id = ?`, string(encoded), id)
+	if err != nil {
+		return fmt.Errorf("devices: set urls for %s: %w", id, err)
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("devices: set urls for %s: %w", id, err)
 	}
 	if affected == 0 {
 		return ErrDeviceNotFound
@@ -520,6 +565,28 @@ func validMode(mode SyncMode) bool {
 	default:
 		return false
 	}
+}
+
+func normalizeURLs(urls []string) ([]string, error) {
+	out := make([]string, 0, len(urls))
+	seen := make(map[string]bool, len(urls))
+	for _, raw := range urls {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return nil, fmt.Errorf("%w: invalid server url %q", ErrInvalidDevice, raw)
+		}
+		clean := strings.TrimRight(raw, "/")
+		if seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		out = append(out, clean)
+	}
+	return out, nil
 }
 
 func normalizePolicy(policy Policy, mode SyncMode) (Policy, error) {

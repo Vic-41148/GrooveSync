@@ -112,6 +112,7 @@ type DeviceRegistry interface {
 	List(context.Context) ([]devices.Device, error)
 	Register(context.Context, devices.Device) (devices.Registration, error)
 	SetSyncMode(context.Context, string, devices.SyncMode) error
+	SetURLs(context.Context, string, []string) error
 	SetPolicy(context.Context, string, devices.Policy) error
 	Delete(context.Context, string) error
 	ListHoldings(context.Context, string) ([]devices.Holding, error)
@@ -257,6 +258,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/devices", d.handleDevices)
 	mux.HandleFunc("POST /sync/v1/devices", d.handleDeviceRegister)
 	mux.HandleFunc("PATCH /sync/v1/devices/{id}", d.handleDeviceSyncMode)
+	mux.HandleFunc("PUT /sync/v1/devices/{id}/urls", d.handleDeviceURLs)
 	mux.HandleFunc("PUT /sync/v1/devices/{id}/policy", d.handleDevicePolicy)
 	mux.HandleFunc("DELETE /sync/v1/devices/{id}", d.handleDeviceDelete)
 	mux.HandleFunc("GET /sync/v1/devices/{id}/holdings", d.handleDeviceHoldings)
@@ -1049,11 +1051,16 @@ type deviceResponse struct {
 	Build     int          `json:"build"`
 	SyncMode  string       `json:"sync_mode"`
 	Policy    devicePolicy `json:"policy"`
+	URLs      []string     `json:"urls"`
 	CreatedAt string       `json:"created_at,omitempty"`
 	LastSeen  string       `json:"last_seen,omitempty"`
 }
 
 func newDeviceResponse(device devices.Device) deviceResponse {
+	urls := device.URLs
+	if urls == nil {
+		urls = []string{}
+	}
 	resp := deviceResponse{
 		ID:       device.ID,
 		Name:     device.Name,
@@ -1061,6 +1068,7 @@ func newDeviceResponse(device devices.Device) deviceResponse {
 		Build:    device.Build,
 		SyncMode: string(device.SyncMode),
 		Policy:   newDevicePolicy(device.Policy),
+		URLs:     urls,
 	}
 	if !device.CreatedAt.IsZero() {
 		resp.CreatedAt = device.CreatedAt.UTC().Format(time.RFC3339Nano)
@@ -1100,6 +1108,7 @@ func (d Deps) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		Build    int              `json:"build"`
 		SyncMode devices.SyncMode `json:"sync_mode"`
 		Policy   devicePolicy     `json:"policy"`
+		URLs     []string         `json:"urls"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
@@ -1112,6 +1121,7 @@ func (d Deps) handleDeviceRegister(w http.ResponseWriter, r *http.Request) {
 		Build:    req.Build,
 		SyncMode: req.SyncMode,
 		Policy:   req.Policy.toDevices(),
+		URLs:     req.URLs,
 	})
 	if err != nil {
 		writeDeviceError(w, err)
@@ -1141,6 +1151,30 @@ func (d Deps) handleDeviceSyncMode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.Devices.SetSyncMode(r.Context(), id, req.SyncMode); err != nil {
+		writeDeviceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleDeviceURLs(w http.ResponseWriter, r *http.Request) {
+	if d.Devices == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "devices unavailable"}, 0)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	var req struct {
+		URLs []string `json:"urls"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	if err := d.Devices.SetURLs(r.Context(), id, req.URLs); err != nil {
 		writeDeviceError(w, err)
 		return
 	}

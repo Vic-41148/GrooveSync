@@ -84,7 +84,7 @@ func TestDeviceRegisterAndList(t *testing.T) {
 	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 7, Now: time.Now, Devices: repo})
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/devices", strings.NewReader(`{"id":"phone","name":"Phone","platform":"android","build":12,"sync_mode":"external"}`)))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/devices", strings.NewReader(`{"id":"phone","name":"Phone","platform":"android","build":12,"sync_mode":"external","urls":["http://192.168.1.10:8080/","https://box.tailnet.ts.net"]}`)))
 
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusCreated)
@@ -102,6 +102,10 @@ func TestDeviceRegisterAndList(t *testing.T) {
 	}
 	if device["id"] != "phone" || device["sync_mode"] != "external" {
 		t.Fatalf("device = %#v, want phone in external mode", device)
+	}
+	urls, ok := device["urls"].([]any)
+	if !ok || len(urls) != 2 || urls[0] != "http://192.168.1.10:8080" || urls[1] != "https://box.tailnet.ts.net" {
+		t.Fatalf("urls = %#v, want the ordered server list", device["urls"])
 	}
 
 	rec = httptest.NewRecorder()
@@ -151,6 +155,25 @@ func TestDeviceSyncModeAndDelete(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/sync/v1/devices/missing", strings.NewReader(`{"sync_mode":"app"}`)))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/phone/urls", strings.NewReader(`{"urls":["http://192.168.1.10:8080","https://box.tailnet.ts.net"]}`)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("urls status = %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	device, err := repo.Get(ctx, "phone")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if len(device.URLs) != 2 || device.URLs[0] != "http://192.168.1.10:8080" || device.URLs[1] != "https://box.tailnet.ts.net" {
+		t.Fatalf("urls = %#v, want the ordered server list", device.URLs)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/phone/urls", strings.NewReader(`{"urls":["ftp://example.org"]}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid urls status = %d, want %d", rec.Code, http.StatusBadRequest)
 	}
 
 	rec = httptest.NewRecorder()

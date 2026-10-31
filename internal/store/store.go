@@ -18,7 +18,7 @@ var migrationsFS embed.FS
 // SchemaVersion is the migration level this binary expects. A database newer
 // than this refuses to start rather than running against an unknown schema
 // (handbook GOV-3).
-const SchemaVersion int64 = 15
+const SchemaVersion int64 = 16
 
 // pragmas are per-connection, so they ride in the DSN. journal_mode is
 // persistent; the rest are not.

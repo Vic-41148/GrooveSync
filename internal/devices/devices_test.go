@@ -177,6 +177,67 @@ func TestSyncModeAndTouch(t *testing.T) {
 	}
 }
 
+func TestDeviceURLs(t *testing.T) {
+	t.Parallel()
+
+	db := openDeviceDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	repo := Repo{DB: db, Now: time.Now, Token: fixedToken("secret")}
+
+	registration, err := repo.Register(ctx, Device{
+		ID:   "phone",
+		Name: "Phone",
+		URLs: []string{"http://192.168.1.10:8080/", "https://box.tailnet.ts.net", "http://192.168.1.10:8080"},
+	})
+	if err != nil {
+		t.Fatalf("Register() error = %v", err)
+	}
+	want := []string{"http://192.168.1.10:8080", "https://box.tailnet.ts.net"}
+	if !equalStrings(registration.Device.URLs, want) {
+		t.Fatalf("registered urls = %#v, want %#v", registration.Device.URLs, want)
+	}
+
+	device, err := repo.Get(ctx, "phone")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if !equalStrings(device.URLs, want) {
+		t.Fatalf("stored urls = %#v, want %#v", device.URLs, want)
+	}
+
+	updated := []string{"https://music.example.org"}
+	if err := repo.SetURLs(ctx, "phone", updated); err != nil {
+		t.Fatalf("SetURLs() error = %v", err)
+	}
+	device, err = repo.Get(ctx, "phone")
+	if err != nil {
+		t.Fatalf("Get() after update error = %v", err)
+	}
+	if !equalStrings(device.URLs, updated) {
+		t.Fatalf("updated urls = %#v, want %#v", device.URLs, updated)
+	}
+
+	if err := repo.SetURLs(ctx, "phone", []string{"ftp://example.org"}); !errors.Is(err, ErrInvalidDevice) {
+		t.Fatalf("SetURLs() invalid error = %v, want ErrInvalidDevice", err)
+	}
+	if err := repo.SetURLs(ctx, "missing", updated); !errors.Is(err, ErrDeviceNotFound) {
+		t.Fatalf("SetURLs() missing error = %v, want ErrDeviceNotFound", err)
+	}
+}
+
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func TestRegisterDefaultsPolicy(t *testing.T) {
 	t.Parallel()
 
