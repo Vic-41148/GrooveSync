@@ -99,3 +99,77 @@ func TestRebuildThenUploadRecordsBothPaths(t *testing.T) {
 		t.Fatalf("content_path entries missing: sync=%v upload=%v", seenSync, seenUpload)
 	}
 }
+
+func TestConcurrentRebuildAndUpload(t *testing.T) {
+	t.Parallel()
+
+	db := openLibraryDB(t)
+	ctx := context.Background()
+	root := t.TempDir()
+
+	content := []byte("concurrent audio")
+	// File on disk for the rebuild
+	diskPath := filepath.Join(root, "song.flac")
+	if err := os.WriteFile(diskPath, content, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	// Upload path with same content but different filename
+	uploadDir := t.TempDir()
+	uploadPath := filepath.Join(uploadDir, "upload-song.flac")
+	if err := os.WriteFile(uploadPath, content, 0o644); err != nil {
+		t.Fatalf("write upload: %v", err)
+	}
+
+	// Run Rebuilder and Ingest concurrently
+	reb := Rebuilder{DB: db, Root: root}
+	done := make(chan error, 2)
+	go func() {
+		_, err := reb.Run(ctx)
+		done <- err
+	}()
+	go func() {
+		// Small sleep not required; allow real concurrency
+		_, err := Ingestor{DB: db}.Ingest(ctx, "", uploadPath, func() string { s := sha256.Sum256(content); return hex.EncodeToString(s[:]) }(), "upload-song.flac")
+		done <- err
+	}()
+
+	// Wait for both
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("concurrent op error: %v", err)
+		}
+	}
+
+	// Ensure only one stored rendition for this content
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM rendition WHERE kind = 'file'`).Scan(&count); err != nil {
+		t.Fatalf("count rendition: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("renditions = %d, want 1", count)
+	}
+
+	// Ensure two content_path entries (sync and upload)
+	rows, err := db.Query(`SELECT source, path_or_uri FROM content_path`)
+	if err != nil {
+		t.Fatalf("query content_path: %v", err)
+	}
+	defer rows.Close()
+	var seenSync, seenUpload bool
+	for rows.Next() {
+		var src, p string
+		if err := rows.Scan(&src, &p); err != nil {
+			t.Fatalf("scan content_path: %v", err)
+		}
+		if src == "sync" && p == diskPath {
+			seenSync = true
+		}
+		if src == "upload" && p == uploadPath {
+			seenUpload = true
+		}
+	}
+	if !seenSync || !seenUpload {
+		t.Fatalf("content_path entries missing in concurrent run: sync=%v upload=%v", seenSync, seenUpload)
+	}
+}
