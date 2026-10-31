@@ -2745,6 +2745,16 @@ func (connectorActionsStub) MarkSpotifyInvalidGrant(context.Context, string, str
 	return nil
 }
 
+func (connectorActionsStub) UpsertSpotifyAuth(context.Context, connectors.SpotifyAuthState) error {
+	return nil
+}
+func (connectorActionsStub) CreatePKCEState(context.Context, connectors.PKCEState) error { return nil }
+func (connectorActionsStub) GetPKCEState(context.Context, string) (connectors.PKCEState, error) {
+	return connectors.PKCEState{}, sql.ErrNoRows
+}
+func (connectorActionsStub) DeletePKCEState(context.Context, string) error             { return nil }
+func (connectorActionsStub) CleanupExpiredPKCEStates(context.Context, time.Time) error { return nil }
+
 type spotifyLibraryStub struct{}
 
 func (spotifyLibraryStub) QueueSpotifyLibraryWrite(context.Context, string, string, []string) error {

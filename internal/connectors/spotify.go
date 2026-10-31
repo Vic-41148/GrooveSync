@@ -76,6 +76,15 @@ type Repo struct {
 	db *sql.DB
 	// Now is injectable so lifecycle derivation is deterministic in tests.
 	Now func() time.Time
+	// key is an optional AES key used to encrypt connector tokens at rest.
+	// It is nil when no encryption is configured. It remains for backwards
+	// compatibility with callers that only set a single key via SetKey.
+	key []byte
+	// keys holds multiple decryption keys keyed by ID and primary is the ID
+	// used for new encryptions when SetKeys is used. When keys is nil the
+	// repository behaves as before and only r.key is used.
+	keys    map[string][]byte
+	primary string
 }
 
 const (
@@ -86,6 +95,33 @@ const (
 // NewRepo builds a connector repository around a database handle.
 func NewRepo(db *sql.DB) *Repo {
 	return &Repo{db: db}
+}
+
+// SetKey configures an AES key for token encryption. The key must be 16, 24
+// or 32 bytes long (AES-128/192/256). Passing nil or empty disables
+// encryption.
+func (r *Repo) SetKey(key []byte) {
+	r.key = key
+	// preserve existing behaviour: do not set keys map. Existing rows will
+	// decrypt with r.key and new writes will not record a key_id.
+}
+
+// SetKeys configures multiple keys for decryption and a primary key id for
+// encrypting new tokens. keys maps key IDs to raw AES keys. primary must be
+// one of the keys' map keys. Passing nil clears keys and primary.
+func (r *Repo) SetKeys(keys map[string][]byte, primary string) {
+	if keys == nil {
+		r.keys = nil
+		r.primary = ""
+		return
+	}
+	r.keys = make(map[string][]byte, len(keys))
+	for k, v := range keys {
+		r.keys[k] = v
+	}
+	r.primary = primary
+	// clear legacy single-key field to avoid ambiguity
+	r.key = nil
 }
 
 func (r *Repo) now() time.Time {
@@ -153,18 +189,56 @@ ON CONFLICT(provider, account_id) DO UPDATE SET
 	}
 
 	if state.AccessToken != "" || state.RefreshToken != "" {
+		access := state.AccessToken
+		refresh := state.RefreshToken
+		var err error
+		var keyID sql.NullString
+		// Determine encryption key: prefer keys map primary when set, otherwise
+		// fall back to legacy single key r.key.
+		if r.keys != nil && r.primary != "" {
+			if k, ok := r.keys[r.primary]; ok {
+				if access != "" {
+					access, err = encryptToken(k, access)
+					if err != nil {
+						return fmt.Errorf("connectors: encrypt access token: %w", err)
+					}
+				}
+				if refresh != "" {
+					refresh, err = encryptToken(k, refresh)
+					if err != nil {
+						return fmt.Errorf("connectors: encrypt refresh token: %w", err)
+					}
+				}
+				keyID = sql.NullString{String: r.primary, Valid: true}
+			}
+		} else if r.key != nil && len(r.key) > 0 {
+			if access != "" {
+				access, err = encryptToken(r.key, access)
+				if err != nil {
+					return fmt.Errorf("connectors: encrypt access token: %w", err)
+				}
+			}
+			if refresh != "" {
+				refresh, err = encryptToken(r.key, refresh)
+				if err != nil {
+					return fmt.Errorf("connectors: encrypt refresh token: %w", err)
+				}
+			}
+			// legacy behaviour: key_id remains NULL
+		}
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO connector_token (
-    provider, account_id, access_token, refresh_token, token_type, scope, access_expires_at, refresh_expires_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    provider, account_id, access_token, refresh_token, key_id, token_type, scope, access_expires_at, refresh_expires_at
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(provider, account_id) DO UPDATE SET
     access_token = excluded.access_token,
     refresh_token = excluded.refresh_token,
+    key_id = excluded.key_id,
     token_type = excluded.token_type,
     scope = excluded.scope,
     access_expires_at = excluded.access_expires_at,
     refresh_expires_at = excluded.refresh_expires_at
-`, ProviderSpotify, state.AccountID, state.AccessToken, state.RefreshToken, nullableString(state.TokenType), nullableString(state.Scope), nullableTime(state.AccessExpiresAt), nullableTime(state.RefreshExpiresAt)); err != nil {
+`, ProviderSpotify, state.AccountID, access, refresh, keyID, nullableString(state.TokenType), nullableString(state.Scope), nullableTime(state.AccessExpiresAt), nullableTime(state.RefreshExpiresAt)); err != nil {
 			return fmt.Errorf("connectors: upsert spotify token: %w", err)
 		}
 	}
@@ -363,6 +437,132 @@ type SpotifyToken struct {
 	RefreshExpiresAt time.Time
 }
 
+// PKCEState holds a short-lived PKCE exchange record used during the
+// authorization flow.
+type PKCEState struct {
+	State        string
+	AccountID    string
+	CodeVerifier string
+	ReturnTo     string
+	ExpiresAt    time.Time
+	CreatedAt    time.Time
+}
+
+// CreatePKCEState stores a new PKCE state record.
+func (r *Repo) CreatePKCEState(ctx context.Context, s PKCEState) error {
+	if s.State == "" || s.AccountID == "" || s.CodeVerifier == "" {
+		return errors.New("connectors: invalid pkce state")
+	}
+	if s.ExpiresAt.IsZero() {
+		s.ExpiresAt = r.now().Add(10 * time.Minute)
+	}
+	if s.CreatedAt.IsZero() {
+		s.CreatedAt = r.now()
+	}
+	code := s.CodeVerifier
+	var keyID sql.NullString
+	// Determine encryption key: prefer keys map primary when set, otherwise
+	// fall back to legacy single key r.key.
+	if r.keys != nil && r.primary != "" {
+		if k, ok := r.keys[r.primary]; ok {
+			if code != "" {
+				enc, err := encryptToken(k, code)
+				if err != nil {
+					return fmt.Errorf("connectors: encrypt pkce verifier: %w", err)
+				}
+				code = enc
+				keyID = sql.NullString{String: r.primary, Valid: true}
+			}
+		}
+	} else if r.key != nil && len(r.key) > 0 {
+		if code != "" {
+			enc, err := encryptToken(r.key, code)
+			if err != nil {
+				return fmt.Errorf("connectors: encrypt pkce verifier: %w", err)
+			}
+			code = enc
+		}
+	}
+	if _, err := r.db.ExecContext(ctx, `
+INSERT INTO connector_pkce_state (state, account_id, code_verifier, return_to, expires_at, created_at, key_id)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT(state) DO UPDATE SET
+    account_id = excluded.account_id,
+    code_verifier = excluded.code_verifier,
+    return_to = excluded.return_to,
+    expires_at = excluded.expires_at,
+    created_at = excluded.created_at,
+    key_id = excluded.key_id
+`, s.State, s.AccountID, code, nullableString(s.ReturnTo), s.ExpiresAt.UTC().Format(time.RFC3339Nano), s.CreatedAt.UTC().Format(time.RFC3339Nano), keyID); err != nil {
+		return fmt.Errorf("connectors: create pkce state: %w", err)
+	}
+	return nil
+}
+
+// GetPKCEState looks up a PKCE state record by state value.
+func (r *Repo) GetPKCEState(ctx context.Context, state string) (PKCEState, error) {
+	var out PKCEState
+	row := r.db.QueryRowContext(ctx, `
+SELECT state, account_id, code_verifier, return_to, expires_at, created_at
+FROM connector_pkce_state
+WHERE state = ?
+`, state)
+	var expiresAt, createdAt sql.NullString
+	var returnTo sql.NullString
+	var keyID sql.NullString
+	if err := row.Scan(&out.State, &out.AccountID, &out.CodeVerifier, &returnTo, &expiresAt, &createdAt, &keyID); err != nil {
+		return PKCEState{}, err
+	}
+	if returnTo.Valid {
+		out.ReturnTo = returnTo.String
+	}
+	if expiresAt.Valid {
+		if ts, err := time.Parse(time.RFC3339Nano, expiresAt.String); err == nil {
+			out.ExpiresAt = ts
+		}
+	}
+	if createdAt.Valid {
+		if ts, err := time.Parse(time.RFC3339Nano, createdAt.String); err == nil {
+			out.CreatedAt = ts
+		}
+	}
+	// Attempt decryption if key information is present
+	if keyID.Valid {
+		if k, ok := r.keys[keyID.String]; ok {
+			if out.CodeVerifier != "" {
+				if dec, derr := decryptToken(k, out.CodeVerifier); derr == nil {
+					out.CodeVerifier = dec
+				}
+			}
+		}
+	} else if r.key != nil && len(r.key) > 0 {
+		if out.CodeVerifier != "" {
+			if dec, derr := decryptToken(r.key, out.CodeVerifier); derr == nil {
+				out.CodeVerifier = dec
+			}
+		}
+	}
+	return out, nil
+}
+
+// DeletePKCEState removes a PKCE state record.
+func (r *Repo) DeletePKCEState(ctx context.Context, state string) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM connector_pkce_state WHERE state = ?`, state); err != nil {
+		return fmt.Errorf("connectors: delete pkce state: %w", err)
+	}
+	return nil
+}
+
+// CleanupExpiredPKCEStates removes PKCE records with expires_at before the
+// provided time. It is intended to be called periodically by a background
+// janitor loop.
+func (r *Repo) CleanupExpiredPKCEStates(ctx context.Context, before time.Time) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM connector_pkce_state WHERE expires_at <= ?`, before.UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("connectors: cleanup pkce states: %w", err)
+	}
+	return nil
+}
+
 // GetSpotifyToken loads the stored tokens for one account.
 func (r *Repo) GetSpotifyToken(ctx context.Context, accountID string) (SpotifyToken, error) {
 	if accountID == "" {
@@ -370,13 +570,81 @@ func (r *Repo) GetSpotifyToken(ctx context.Context, accountID string) (SpotifyTo
 	}
 	var token SpotifyToken
 	var tokenType, scope, accessExpires, refreshExpires sql.NullString
+	var keyID sql.NullString
 	err := r.db.QueryRowContext(ctx, `
-SELECT access_token, refresh_token, token_type, scope, access_expires_at, refresh_expires_at
+SELECT access_token, refresh_token, key_id, token_type, scope, access_expires_at, refresh_expires_at
 FROM connector_token
 WHERE provider = ? AND account_id = ?
-`, ProviderSpotify, accountID).Scan(&token.AccessToken, &token.RefreshToken, &tokenType, &scope, &accessExpires, &refreshExpires)
+`, ProviderSpotify, accountID).Scan(&token.AccessToken, &token.RefreshToken, &keyID, &tokenType, &scope, &accessExpires, &refreshExpires)
 	if err != nil {
 		return SpotifyToken{}, err
+	}
+	// Attempt decryption; if decryption fails we fall back to the stored value
+	// (this allows reading plaintext rows when no encryption key was used).
+	if r.keys != nil {
+		// Prefer the recorded key_id when present.
+		if keyID.Valid {
+			if k, ok := r.keys[keyID.String]; ok {
+				if token.AccessToken != "" {
+					if dec, derr := decryptToken(k, token.AccessToken); derr == nil {
+						token.AccessToken = dec
+					}
+				}
+				if token.RefreshToken != "" {
+					if dec, derr := decryptToken(k, token.RefreshToken); derr == nil {
+						token.RefreshToken = dec
+					}
+				}
+			} else {
+				// Unknown key id - attempt to decrypt with any available key as a
+				// best-effort fallback.
+				for _, k := range r.keys {
+					if token.AccessToken != "" {
+						if dec, derr := decryptToken(k, token.AccessToken); derr == nil {
+							token.AccessToken = dec
+							break
+						}
+					}
+				}
+				for _, k := range r.keys {
+					if token.RefreshToken != "" {
+						if dec, derr := decryptToken(k, token.RefreshToken); derr == nil {
+							token.RefreshToken = dec
+							break
+						}
+					}
+				}
+			}
+		} else {
+			// No key_id recorded, try all keys.
+			for _, k := range r.keys {
+				if token.AccessToken != "" {
+					if dec, derr := decryptToken(k, token.AccessToken); derr == nil {
+						token.AccessToken = dec
+						break
+					}
+				}
+			}
+			for _, k := range r.keys {
+				if token.RefreshToken != "" {
+					if dec, derr := decryptToken(k, token.RefreshToken); derr == nil {
+						token.RefreshToken = dec
+						break
+					}
+				}
+			}
+		}
+	} else if r.key != nil && len(r.key) > 0 {
+		if token.AccessToken != "" {
+			if dec, derr := decryptToken(r.key, token.AccessToken); derr == nil {
+				token.AccessToken = dec
+			}
+		}
+		if token.RefreshToken != "" {
+			if dec, derr := decryptToken(r.key, token.RefreshToken); derr == nil {
+				token.RefreshToken = dec
+			}
+		}
 	}
 	if tokenType.Valid {
 		token.TokenType = tokenType.String

@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -52,6 +54,20 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	defer db.Close()
 
 	connectorRepo := connectors.NewRepo(db)
+
+	// Optional: connector token encryption key from environment. Expect a hex
+	// encoded AES key (16/24/32 bytes). If provided, validate and set it on
+	// the repository so tokens are encrypted at rest.
+	if raw := strings.TrimSpace(getenv("SYNCD_CONNECTOR_KEY_HEX")); raw != "" {
+		key, err := hex.DecodeString(raw)
+		if err != nil {
+			return fmt.Errorf("syncd: invalid SYNCD_CONNECTOR_KEY_HEX: %w", err)
+		}
+		if len(key) != 16 && len(key) != 24 && len(key) != 32 {
+			return fmt.Errorf("syncd: SYNCD_CONNECTOR_KEY_HEX must decode to 16, 24 or 32 bytes, got %d", len(key))
+		}
+		connectorRepo.SetKey(key)
+	}
 	deviceRepo := devices.Repo{DB: db}
 	eventStore := taste.NewStore(db)
 	acquisitionRepo := acquisition.Repo{DB: db}
@@ -199,15 +215,19 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 			Client: connectors.SpotifyClient{},
 			Tokens: connectors.SpotifyRepoTokenSource{Repo: connectorRepo},
 		},
-		Playlists:          libraryRepo,
-		YouTubeImport:      youtubeImport,
-		YouTubePlaylists:   youtubePlaylists,
-		YouTubeHealth:      youtubeHealth,
-		NavidromeHealth:    navidromeHealth,
-		ListenBrainzImport: listenBrainz,
-		ConnectorHealth:    connectors.HealthRepo{DB: db},
-		Transfer:           transfer.Planner{DB: db, Devices: deviceRepo},
-		Rollout:            queueRepo,
+		Playlists:                libraryRepo,
+		YouTubeImport:            youtubeImport,
+		YouTubePlaylists:         youtubePlaylists,
+		YouTubeHealth:            youtubeHealth,
+		NavidromeHealth:          navidromeHealth,
+		ListenBrainzImport:       listenBrainz,
+		ConnectorHealth:          connectors.HealthRepo{DB: db},
+		Transfer:                 transfer.Planner{DB: db, Devices: deviceRepo},
+		Rollout:                  queueRepo,
+		AdminToken:               os.Getenv("SYNCD_ADMIN_TOKEN"),
+		SpotifyClientID:          strings.TrimSpace(getenv("SYNCD_SPOTIFY_CLIENT_ID")),
+		SpotifyClientSecret:      strings.TrimSpace(getenv("SYNCD_SPOTIFY_CLIENT_SECRET")),
+		SpotifyReturnToWhitelist: strings.TrimSpace(getenv("SYNCD_SPOTIFY_RETURN_TO_WHITELIST")),
 	})
 
 	srv := &http.Server{
@@ -227,6 +247,8 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	go runLibraryLoop(ctx, logger, libraryMirror, cfg.LibrarySyncInterval)
 	go runHashLoop(ctx, logger, libraryHashes, cfg.HashInterval, cfg.HashLimit)
 	go runEnrichLoop(ctx, logger, enricher, cfg.EnrichInterval, cfg.EnrichLimit)
+	// PKCE janitor cleans up expired short-lived PKCE states.
+	go runPKCEJanitor(ctx, logger, connectorRepo, 5*time.Minute)
 
 	select {
 	case <-ctx.Done():
@@ -261,6 +283,24 @@ func runQueueLoop(ctx context.Context, logger interface{ Warn(string, ...any) },
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+	}
+}
+
+func runPKCEJanitor(ctx context.Context, logger interface{ Warn(string, ...any) }, repo *connectors.Repo, interval time.Duration) {
+	if repo == nil || interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := repo.CleanupExpiredPKCEStates(ctx, time.Now()); err != nil {
+				logger.Warn("pkce janitor failed", "error", err)
+			}
 		}
 	}
 }

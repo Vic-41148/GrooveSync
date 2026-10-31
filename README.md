@@ -38,10 +38,14 @@ New devices default to `app`. To opt in to `external`, send
 during registration keeps the mode already stored for an existing device; send
 an explicit mode to change it.
 
-In `app` mode a device advertises LAN URLs that other devices connect to. The
-service has no authentication layer yet, so anyone who can reach those URLs can
-reach the sync endpoints. Keep it on a trusted network or behind a VPN such as
-Tailscale, and do not expose it to the internet.
+In `app` mode a device advertises LAN URLs that other devices connect to. By
+default the server listens on the loopback address inside the container and the
+HTTP API is guarded by an optional administrator bearer token. Set
+`SYNCD_ADMIN_TOKEN` to enable admin-only access for administrative operations
+(device registration via POST /sync/v1/devices intentionally remains
+unauthenticated so new devices can register). If you publish the service on a
+LAN address or the internet, set `SYNCD_ADMIN_TOKEN` and keep the instance
+behind a VPN such as Tailscale.
 
 ## Docker
 

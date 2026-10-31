@@ -7,13 +7,17 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +32,10 @@ import (
 	"github.com/Vic-41148/groovesync/internal/transfer"
 	"github.com/Vic-41148/groovesync/internal/writeback"
 )
+
+// spotifyTokenEndpoint is the OAuth token endpoint used to exchange codes for
+// tokens. It is a variable so tests can override it.
+var spotifyTokenEndpoint = "https://accounts.spotify.com/api/token"
 
 // Deps is everything the HTTP layer needs. No globals, so tests can build a
 // handler with fixed values.
@@ -75,6 +83,17 @@ type Deps struct {
 	ConnectorHealth    ConnectorHealthStore
 	Transfer           TransferPlanner
 	Rollout            RolloutSettings
+	// AdminToken is an optional bearer token that grants administrative
+	// privileges for device management and connector actions. When empty the
+	// middleware remains permissive for tests that don't configure auth.
+	AdminToken string
+	// Spotify client credentials used when the server performs token exchanges.
+	// These are read from environment in the main binary and injected here.
+	SpotifyClientID     string
+	SpotifyClientSecret string
+	// Comma-separated list of allowed return_to origins or full URLs. If empty
+	// only relative paths and same-origin URLs are allowed.
+	SpotifyReturnToWhitelist string
 }
 
 // Pinger reports whether the backing store is reachable.
@@ -108,6 +127,14 @@ type ConnectorLister interface {
 type ConnectorActions interface {
 	DisconnectSpotify(context.Context, string, string) error
 	MarkSpotifyInvalidGrant(context.Context, string, string, time.Time) error
+	UpsertSpotifyAuth(context.Context, connectors.SpotifyAuthState) error
+	// PKCE state operations
+	CreatePKCEState(context.Context, connectors.PKCEState) error
+	GetPKCEState(context.Context, string) (connectors.PKCEState, error)
+	DeletePKCEState(context.Context, string) error
+	// CleanupExpiredPKCEStates removes expired PKCE records. Implemented by the
+	// repository so the main binary can run a janitor loop.
+	CleanupExpiredPKCEStates(context.Context, time.Time) error
 }
 
 // SpotifyLibraryActions handles Spotify URI writes and lookups.
@@ -267,6 +294,9 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/invalid-grant", d.handleSpotifyInvalidGrant)
+	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/start-auth", d.handleSpotifyStartAuth)
+	mux.HandleFunc("GET /sync/v1/connectors/spotify/callback", d.handleSpotifyCallback)
+	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/complete-auth", d.handleSpotifyCompleteAuth)
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/import", d.handleSpotifyImport)
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/playlists/import", d.handleSpotifyPlaylistImport)
 	mux.HandleFunc("POST /sync/v1/connectors/youtube/import", d.handleYouTubeImport)
@@ -306,6 +336,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/library/uploads/{hash}", d.handleLibraryUploadStatus)
 
 	var h http.Handler = mux
+	// Wrap auth first so handlers see an authenticated request context.
+	h = withAuth(depsAdapter{d}, h)
 	h = withLogging(d.Logger, h)
 	h = withRecovery(d.Logger, h)
 	h = withRequestID(h)
@@ -884,6 +916,295 @@ func (d Deps) handleSpotifyInvalidGrant(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Spotify PKCE handlers -------------------------------------------------
+
+// handleSpotifyStartAuth begins a PKCE authorization by creating a verifier
+// and state, persisting them, and returning the Spotify authorization URL.
+func (d Deps) handleSpotifyStartAuth(w http.ResponseWriter, r *http.Request) {
+	if d.ConnectorActions == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "connector actions unavailable"}, 0)
+		return
+	}
+	accountID := r.PathValue("accountID")
+	if accountID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_id required"}, 0)
+		return
+	}
+	returnTo := r.URL.Query().Get("return_to")
+	// validate return_to: allow relative paths, same-origin, or whitelist entries
+	if returnTo != "" {
+		if strings.HasPrefix(returnTo, "/") {
+			// relative path is allowed
+		} else {
+			u, err := url.Parse(returnTo)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid return_to"}, 0)
+				return
+			}
+			// same-origin
+			if u.Host == r.Host && (u.Scheme == "http" || u.Scheme == "https") {
+				// allowed
+			} else {
+				// check whitelist
+				allowed := false
+				if d.SpotifyReturnToWhitelist != "" {
+					for _, item := range strings.Split(d.SpotifyReturnToWhitelist, ",") {
+						if strings.TrimSpace(item) == returnTo {
+							allowed = true
+							break
+						}
+					}
+				}
+				if !allowed {
+					writeJSON(w, http.StatusBadRequest, map[string]string{"error": "return_to not allowed"}, 0)
+					return
+				}
+			}
+		}
+	}
+
+	// generate code_verifier and state
+	codeVerifierB := make([]byte, 32)
+	if _, err := rand.Read(codeVerifierB); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "generate verifier"}, 0)
+		return
+	}
+	codeVerifier := base64.RawURLEncoding.EncodeToString(codeVerifierB)
+	sum := sha256.Sum256([]byte(codeVerifier))
+	codeChallenge := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	stateB := make([]byte, 32)
+	if _, err := rand.Read(stateB); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "generate state"}, 0)
+		return
+	}
+	state := base64.RawURLEncoding.EncodeToString(stateB)
+
+	pk := connectors.PKCEState{
+		State:        state,
+		AccountID:    accountID,
+		CodeVerifier: codeVerifier,
+		ReturnTo:     returnTo,
+		ExpiresAt:    d.Now().UTC().Add(10 * time.Minute),
+	}
+	if err := d.ConnectorActions.CreatePKCEState(r.Context(), pk); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "persist pkce state"}, 0)
+		return
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	redirectURI := (&url.URL{Scheme: scheme, Host: r.Host, Path: "/sync/v1/connectors/spotify/callback"}).String()
+
+	scopes := []string{"playlist-read-private", "playlist-modify-private", "playlist-modify-public", "user-read-private", "user-read-email", "user-library-read"}
+	authURL := (&url.URL{Scheme: "https", Host: "accounts.spotify.com", Path: "/authorize"})
+	q := authURL.Query()
+	q.Set("client_id", d.SpotifyClientID)
+	q.Set("response_type", "code")
+	q.Set("redirect_uri", redirectURI)
+	q.Set("code_challenge_method", "S256")
+	q.Set("code_challenge", codeChallenge)
+	q.Set("state", state)
+	q.Set("scope", strings.Join(scopes, " "))
+	authURL.RawQuery = q.Encode()
+
+	writeJSON(w, http.StatusOK, map[string]any{"url": authURL.String(), "state": state, "code_challenge": codeChallenge}, 0)
+}
+
+// handleSpotifyCallback accepts the redirect from Spotify, exchanges the code
+// for tokens using the stored verifier, persists them and redirects to the
+// stored return_to or returns JSON when requested.
+func (d Deps) handleSpotifyCallback(w http.ResponseWriter, r *http.Request) {
+	if d.ConnectorActions == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "connector actions unavailable"}, 0)
+		return
+	}
+	q := r.URL.Query()
+	code := q.Get("code")
+	state := q.Get("state")
+	if code == "" || state == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "code and state required"}, 0)
+		return
+	}
+	pk, err := d.ConnectorActions.GetPKCEState(r.Context(), state)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid state"}, 0)
+		return
+	}
+	if !pk.ExpiresAt.IsZero() && d.Now().UTC().After(pk.ExpiresAt) {
+		_ = d.ConnectorActions.DeletePKCEState(r.Context(), state)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "state expired"}, 0)
+		return
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	redirectURI := (&url.URL{Scheme: scheme, Host: r.Host, Path: "/sync/v1/connectors/spotify/callback"}).String()
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", code)
+	form.Set("redirect_uri", redirectURI)
+	form.Set("client_id", d.SpotifyClientID)
+	form.Set("code_verifier", pk.CodeVerifier)
+
+	req, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, spotifyTokenEndpoint, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if d.SpotifyClientSecret != "" {
+		auth := base64.StdEncoding.EncodeToString([]byte(d.SpotifyClientID + ":" + d.SpotifyClientSecret))
+		req.Header.Set("Authorization", "Basic "+auth)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "token exchange failed"}, 0)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "token exchange failed"}, 0)
+		return
+	}
+	var tok struct {
+		AccessToken  string `json:"access_token"`
+		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
+		ExpiresIn    int    `json:"expires_in"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "invalid token response"}, 0)
+		return
+	}
+
+	now := d.Now().UTC()
+	stateRow := connectors.SpotifyAuthState{
+		AccountID:       pk.AccountID,
+		AccessToken:     tok.AccessToken,
+		RefreshToken:    tok.RefreshToken,
+		TokenType:       tok.TokenType,
+		Scope:           tok.Scope,
+		AccessExpiresAt: now.Add(time.Duration(tok.ExpiresIn) * time.Second),
+		AuthorizedAt:    now,
+	}
+	if err := d.ConnectorActions.UpsertSpotifyAuth(r.Context(), stateRow); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "persist tokens failed"}, 0)
+		return
+	}
+	_ = d.ConnectorActions.DeletePKCEState(r.Context(), state)
+
+	if strings.Contains(r.Header.Get("Accept"), "application/json") || r.URL.Query().Get("json") == "1" {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"}, 0)
+		return
+	}
+	to := pk.ReturnTo
+	if to == "" {
+		to = "/"
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
+}
+
+// handleSpotifyCompleteAuth is an alternative flow where the client posts the
+// authorization code and state to the server (for SPA flows). The server then
+// performs the same exchange as the callback handler.
+func (d Deps) handleSpotifyCompleteAuth(w http.ResponseWriter, r *http.Request) {
+	if d.ConnectorActions == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "connector actions unavailable"}, 0)
+		return
+	}
+	accountID := r.PathValue("accountID")
+	if accountID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_id required"}, 0)
+		return
+	}
+	var req struct {
+		Code  string `json:"code"`
+		State string `json:"state"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	if req.Code == "" || req.State == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "code and state required"}, 0)
+		return
+	}
+	pk, err := d.ConnectorActions.GetPKCEState(r.Context(), req.State)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid state"}, 0)
+		return
+	}
+	if pk.AccountID != accountID {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "state does not match account"}, 0)
+		return
+	}
+	if !pk.ExpiresAt.IsZero() && d.Now().UTC().After(pk.ExpiresAt) {
+		_ = d.ConnectorActions.DeletePKCEState(r.Context(), req.State)
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "state expired"}, 0)
+		return
+	}
+
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	redirectURI := (&url.URL{Scheme: scheme, Host: r.Host, Path: "/sync/v1/connectors/spotify/callback"}).String()
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", req.Code)
+	form.Set("redirect_uri", redirectURI)
+	form.Set("client_id", d.SpotifyClientID)
+	form.Set("code_verifier", pk.CodeVerifier)
+
+	request, _ := http.NewRequestWithContext(r.Context(), http.MethodPost, spotifyTokenEndpoint, strings.NewReader(form.Encode()))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if d.SpotifyClientSecret != "" {
+		auth := base64.StdEncoding.EncodeToString([]byte(d.SpotifyClientID + ":" + d.SpotifyClientSecret))
+		request.Header.Set("Authorization", "Basic "+auth)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(request)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "token exchange failed"}, 0)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "token exchange failed"}, 0)
+		return
+	}
+	var tok struct {
+		AccessToken  string `json:"access_token"`
+		TokenType    string `json:"token_type"`
+		Scope        string `json:"scope"`
+		ExpiresIn    int    `json:"expires_in"`
+		RefreshToken string `json:"refresh_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&tok); err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "invalid token response"}, 0)
+		return
+	}
+	now := d.Now().UTC()
+	stateRow := connectors.SpotifyAuthState{
+		AccountID:       accountID,
+		AccessToken:     tok.AccessToken,
+		RefreshToken:    tok.RefreshToken,
+		TokenType:       tok.TokenType,
+		Scope:           tok.Scope,
+		AccessExpiresAt: now.Add(time.Duration(tok.ExpiresIn) * time.Second),
+		AuthorizedAt:    now,
+	}
+	if err := d.ConnectorActions.UpsertSpotifyAuth(r.Context(), stateRow); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "persist tokens failed"}, 0)
+		return
+	}
+	_ = d.ConnectorActions.DeletePKCEState(r.Context(), req.State)
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"}, 0)
 }
 
 func (d Deps) handleSpotifyImport(w http.ResponseWriter, r *http.Request) {
