@@ -22,10 +22,11 @@ type ImportOptions struct {
 
 // ImportResult counts what one pass saw and stored.
 type ImportResult struct {
-	Seen    int `json:"seen"`
-	Matched int `json:"matched"`
-	Created int `json:"created"`
-	Queued  int `json:"queued"`
+	Seen      int `json:"seen"`
+	Matched   int `json:"matched"`
+	Created   int `json:"created"`
+	Queued    int `json:"queued"`
+	Playlists int `json:"playlists"`
 }
 
 // SpotifyImporter mirrors liked songs into canonical tracks and like state.
@@ -72,7 +73,7 @@ func (i SpotifyImporter) Import(ctx context.Context, accountID string, opts Impo
 	var result ImportResult
 	for _, track := range tracks {
 		result.Seen++
-		outcome, canonicalID, err := i.store(ctx, track, pool, threshold, opts)
+		outcome, canonicalID, err := i.store(ctx, track, pool, threshold, opts, true)
 		if err != nil {
 			return result, err
 		}
@@ -108,7 +109,7 @@ const (
 	importQueued
 )
 
-func (i SpotifyImporter) store(ctx context.Context, track SpotifyTrack, pool []localCandidate, threshold float64, opts ImportOptions) (importOutcome, string, error) {
+func (i SpotifyImporter) store(ctx context.Context, track SpotifyTrack, pool []localCandidate, threshold float64, opts ImportOptions, markLiked bool) (importOutcome, string, error) {
 	tx, err := i.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, "", fmt.Errorf("connectors: begin import tx: %w", err)
@@ -121,8 +122,10 @@ SELECT canonical_id FROM alias WHERE service = ? AND service_id = ?
 `, ProviderSpotify, track.URI).Scan(&canonicalID)
 	switch {
 	case err == nil:
-		if err := touchServiceState(ctx, tx, canonicalID, track, i.now(opts)); err != nil {
-			return 0, "", err
+		if markLiked {
+			if err := touchServiceState(ctx, tx, canonicalID, track, i.now(opts)); err != nil {
+				return 0, "", err
+			}
 		}
 		if err := tx.Commit(); err != nil {
 			return 0, "", fmt.Errorf("connectors: commit import tx: %w", err)
@@ -179,13 +182,162 @@ ON CONFLICT(service, service_id) DO NOTHING
 `, ProviderSpotify, track.URI, canonicalID, confidence, string(method)); err != nil {
 		return 0, "", fmt.Errorf("connectors: store spotify alias %s: %w", track.URI, err)
 	}
-	if err := touchServiceState(ctx, tx, canonicalID, track, i.now(opts)); err != nil {
-		return 0, "", err
+	if markLiked {
+		if err := touchServiceState(ctx, tx, canonicalID, track, i.now(opts)); err != nil {
+			return 0, "", err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return 0, "", fmt.Errorf("connectors: commit import tx: %w", err)
 	}
 	return outcome, canonicalID, nil
+}
+
+// PlaylistImportOptions selects which playlists one pass reads.
+type PlaylistImportOptions struct {
+	ImportOptions
+	PlaylistIDs []string
+}
+
+// ImportPlaylists mirrors owned and followed playlists. Playlist membership is
+// not a like: it creates tracks and aliases but never touches like state.
+func (i SpotifyImporter) ImportPlaylists(ctx context.Context, accountID string, opts PlaylistImportOptions) (ImportResult, error) {
+	if i.DB == nil {
+		return ImportResult{}, errors.New("connectors: database is required for import")
+	}
+	if i.Tokens == nil {
+		return ImportResult{}, errors.New("connectors: spotify token source is required")
+	}
+	if strings.TrimSpace(accountID) == "" {
+		return ImportResult{}, errors.New("connectors: spotify account id is required")
+	}
+	threshold := opts.Threshold
+	if threshold <= 0 {
+		threshold = 0.8
+	}
+
+	playlists, err := i.Client.Playlists(ctx, accountID, i.Tokens)
+	if err != nil {
+		return ImportResult{}, err
+	}
+	wanted := make(map[string]bool, len(opts.PlaylistIDs))
+	for _, id := range opts.PlaylistIDs {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			wanted[trimmed] = true
+		}
+	}
+
+	pool, err := i.localCandidates(ctx)
+	if err != nil {
+		return ImportResult{}, err
+	}
+
+	var result ImportResult
+	for _, playlist := range playlists {
+		if len(wanted) > 0 && !wanted[playlist.ID] {
+			continue
+		}
+		tracks, err := i.Client.PlaylistTracks(ctx, accountID, i.Tokens, playlist.ID)
+		if err != nil {
+			return result, err
+		}
+		ids, outcomes, nextPool, err := i.storePlaylistTracks(ctx, tracks, pool, threshold, opts.ImportOptions)
+		if err != nil {
+			return result, err
+		}
+		pool = nextPool
+		if err := i.writePlaylist(ctx, playlist, ids, opts.ImportOptions); err != nil {
+			return result, err
+		}
+		result.Playlists++
+		result.Seen += len(tracks)
+		for _, outcome := range outcomes {
+			switch outcome {
+			case importCreated:
+				result.Created++
+			case importMatched:
+				result.Matched++
+			case importQueued:
+				result.Queued++
+			}
+		}
+	}
+	return result, nil
+}
+
+func (i SpotifyImporter) storePlaylistTracks(ctx context.Context, tracks []SpotifyTrack, pool []localCandidate, threshold float64, opts ImportOptions) ([]string, []importOutcome, []localCandidate, error) {
+	ids := make([]string, len(tracks))
+	outcomes := make([]importOutcome, len(tracks))
+	for idx, track := range tracks {
+		outcome, canonicalID, err := i.store(ctx, track, pool, threshold, opts, false)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		outcomes[idx] = outcome
+		if outcome == importQueued || canonicalID == "" {
+			continue
+		}
+		ids[idx] = canonicalID
+		if outcome == importCreated {
+			pool = append(pool, localCandidate{
+				CanonicalID: canonicalID,
+				Track: identity.Track{
+					ISRC:       track.ISRC,
+					Title:      track.Name,
+					Artist:     strings.Join(track.Artists, ", "),
+					DurationMS: track.DurationMS,
+				},
+				NormTitle: identity.NormalizeTitle(track.Name),
+			})
+		}
+	}
+	return ids, outcomes, pool, nil
+}
+
+func (i SpotifyImporter) writePlaylist(ctx context.Context, playlist SpotifyPlaylist, ids []string, opts ImportOptions) error {
+	playlistID := ProviderSpotify + ":" + playlist.ID
+	tx, err := i.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("connectors: begin playlist tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+INSERT INTO playlist (id, service, service_id, name, owner, collaborative, updated_at)
+VALUES (?, ?, ?, ?, NULLIF(?, ''), ?, ?)
+ON CONFLICT(service, service_id) DO UPDATE SET
+    name = excluded.name,
+    owner = excluded.owner,
+    collaborative = excluded.collaborative,
+    updated_at = excluded.updated_at
+`, playlistID, ProviderSpotify, playlist.ID, playlist.Name, playlist.Owner, boolValue(playlist.Collaborative), i.now(opts).Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("connectors: store playlist %s: %w", playlist.ID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM playlist_item WHERE playlist_id = ?`, playlistID); err != nil {
+		return fmt.Errorf("connectors: clear playlist %s: %w", playlist.ID, err)
+	}
+	for position, canonicalID := range ids {
+		if canonicalID == "" {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO playlist_item (playlist_id, position, canonical_id)
+VALUES (?, ?, ?)
+`, playlistID, position, canonicalID); err != nil {
+			return fmt.Errorf("connectors: store playlist item %s at %d: %w", playlist.ID, position, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("connectors: commit playlist tx: %w", err)
+	}
+	return nil
+}
+
+func boolValue(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (i SpotifyImporter) likedURIs(ctx context.Context, accountID string) (map[string]bool, error) {

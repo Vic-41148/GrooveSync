@@ -220,6 +220,69 @@ func TestSpotifyClientBatchesLibraryCalls(t *testing.T) {
 	}
 }
 
+func TestSpotifyClientPlaylistsAndTracks(t *testing.T) {
+	t.Parallel()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me/playlists":
+			if offset := r.URL.Query().Get("offset"); offset != "0" {
+				t.Errorf("playlists offset = %q, want 0", offset)
+			}
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{{
+					"id":            "pl-1",
+					"name":          "Road trip",
+					"collaborative": true,
+					"owner":         map[string]any{"display_name": "Vic", "id": "vic"},
+					"tracks":        map[string]any{"total": 2},
+				}},
+				"next": "",
+			}); err != nil {
+				t.Errorf("encode playlists: %v", err)
+			}
+		case "/playlists/pl-1/tracks":
+			if offset := r.URL.Query().Get("offset"); offset != "0" {
+				t.Errorf("tracks offset = %q, want 0", offset)
+			}
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{
+					spotifyItem("spotify:track:a", "Song A"),
+					spotifyItem("spotify:track:b", "Song B"),
+				},
+				"next": "",
+			}); err != nil {
+				t.Errorf("encode playlist tracks: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	client := SpotifyClient{BaseURL: srv.URL}
+	playlists, err := client.Playlists(context.Background(), "acct-1", spotifyTokenSource("token"))
+	if err != nil {
+		t.Fatalf("Playlists() error = %v", err)
+	}
+	want := SpotifyPlaylist{ID: "pl-1", Name: "Road trip", Owner: "Vic", Collaborative: true, TrackCount: 2}
+	if len(playlists) != 1 || playlists[0] != want {
+		t.Fatalf("playlists = %#v, want %#v", playlists, want)
+	}
+
+	tracks, err := client.PlaylistTracks(context.Background(), "acct-1", spotifyTokenSource("token"), "pl-1")
+	if err != nil {
+		t.Fatalf("PlaylistTracks() error = %v", err)
+	}
+	if len(tracks) != 2 || tracks[0].URI != "spotify:track:a" || tracks[1].Name != "Song B" {
+		t.Fatalf("tracks = %#v, want the playlist order", tracks)
+	}
+
+	if _, err := client.PlaylistTracks(context.Background(), "acct-1", spotifyTokenSource("token"), " "); err == nil {
+		t.Fatal("PlaylistTracks() without a playlist id error = nil, want failure")
+	}
+}
+
 func spotifyTokenSource(token string) SpotifyTokenSource {
 	return SpotifyTokenSourceFunc(func(context.Context, string) (string, error) {
 		return token, nil

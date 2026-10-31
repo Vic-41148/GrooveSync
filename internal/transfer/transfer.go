@@ -78,10 +78,6 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 	if device.SyncMode == devices.ModeOff || device.Policy.Scope == devices.ScopeOff {
 		return plan, nil
 	}
-	if device.Policy.Scope == devices.ScopePlaylists {
-		plan.Warnings = append(plan.Warnings, "playlist scope has no playlist source yet")
-		return plan, nil
-	}
 
 	holdings, err := p.Devices.ListHoldings(ctx, deviceID)
 	if err != nil {
@@ -173,6 +169,8 @@ func (p Planner) targets(ctx context.Context, policy devices.Policy) ([]target, 
 		return p.likedTracks(ctx)
 	case devices.ScopeAffinity:
 		return p.affinityTracks(ctx, policy.AffinityThreshold)
+	case devices.ScopePlaylists:
+		return p.playlistTracks(ctx)
 	default:
 		return nil, fmt.Errorf("transfer: unsupported scope %q", policy.Scope)
 	}
@@ -221,6 +219,31 @@ ORDER BY canonical_id ASC
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("transfer: iterate liked tracks: %w", err)
+	}
+	return out, nil
+}
+
+func (p Planner) playlistTracks(ctx context.Context) ([]target, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+SELECT DISTINCT canonical_id
+FROM playlist_item
+ORDER BY canonical_id ASC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("transfer: list playlist tracks: %w", err)
+	}
+	defer rows.Close()
+
+	var out []target
+	for rows.Next() {
+		var target target
+		if err := rows.Scan(&target.CanonicalID); err != nil {
+			return nil, fmt.Errorf("transfer: scan playlist track: %w", err)
+		}
+		out = append(out, target)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("transfer: iterate playlist tracks: %w", err)
 	}
 	return out, nil
 }

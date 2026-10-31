@@ -249,11 +249,28 @@ func TestPlanQualityPreference(t *testing.T) {
 	}
 }
 
-func TestPlanPlaylistScopeWarns(t *testing.T) {
+func TestPlanPlaylistScope(t *testing.T) {
 	t.Parallel()
 
 	db := openTransferDB(t)
 	ctx := context.Background()
+	seedTrack(t, db, "in-playlist", "In")
+	seedRendition(t, db, "in-playlist", testHash("in"), "In.flac", "flac", 10)
+	seedTrack(t, db, "outside", "Out")
+	seedRendition(t, db, "outside", testHash("out"), "Out.flac", "flac", 10)
+	if _, err := db.Exec(`
+INSERT INTO playlist (id, service, service_id, name, updated_at)
+VALUES ('spotify:pl-1', 'spotify', 'pl-1', 'Road trip', '2026-10-31T12:00:00Z')
+`); err != nil {
+		t.Fatalf("insert playlist: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO playlist_item (playlist_id, position, canonical_id)
+VALUES ('spotify:pl-1', 0, 'in-playlist')
+`); err != nil {
+		t.Fatalf("insert playlist item: %v", err)
+	}
+
 	repo := seedDevice(t, db, devices.Device{ID: "phone", Name: "Phone"})
 	if err := repo.SetPolicy(ctx, "phone", devices.Policy{Scope: devices.ScopePlaylists}); err != nil {
 		t.Fatalf("SetPolicy() error = %v", err)
@@ -263,8 +280,8 @@ func TestPlanPlaylistScopeWarns(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
-	if len(plan.Downloads) != 0 || len(plan.Warnings) != 1 {
-		t.Fatalf("plan = %#v, want no downloads and one warning", plan)
+	if len(plan.Downloads) != 1 || plan.Downloads[0].CanonicalID != "in-playlist" {
+		t.Fatalf("downloads = %#v, want only the playlist track", plan.Downloads)
 	}
 }
 

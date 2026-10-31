@@ -282,6 +282,191 @@ func TestSpotifyImportRequiresDependencies(t *testing.T) {
 	}
 }
 
+func TestSpotifyImportPlaylists(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `
+INSERT INTO track (canonical_id, isrc, title, artist, duration_ms)
+VALUES ('local-1', 'ISRC-1', 'Song A', 'Artist', 180000)
+`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	server := playlistServer(t, []map[string]any{
+		spotifyImportItem("spotify:track:a", "Song A", []string{"Artist"}, "ISRC-1", 180000),
+		spotifyImportItem("spotify:track:b", "Song B", []string{"Other"}, "", 200000),
+	})
+	importer := SpotifyImporter{
+		DB:     db,
+		Client: SpotifyClient{BaseURL: server.URL},
+		Tokens: spotifyTokenSource("token"),
+	}
+	id := 0
+	opts := PlaylistImportOptions{ImportOptions: ImportOptions{
+		NewID: func() (string, error) {
+			id++
+			return fmt.Sprintf("canon-%d", id), nil
+		},
+		Now: func() time.Time { return time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC) },
+	}}
+
+	result, err := importer.ImportPlaylists(ctx, "acct-1", opts)
+	if err != nil {
+		t.Fatalf("ImportPlaylists() error = %v", err)
+	}
+	if result != (ImportResult{Seen: 2, Matched: 1, Created: 1, Playlists: 1}) {
+		t.Fatalf("result = %#v, want one matched and one created track", result)
+	}
+
+	var name, owner string
+	var collaborative int
+	if err := db.QueryRow(`SELECT name, COALESCE(owner, ''), collaborative FROM playlist WHERE service = 'spotify' AND service_id = 'pl-1'`).Scan(&name, &owner, &collaborative); err != nil {
+		t.Fatalf("load playlist: %v", err)
+	}
+	if name != "Road trip" || owner != "Vic" || collaborative != 1 {
+		t.Fatalf("playlist = %q %q %d, want the Spotify metadata", name, owner, collaborative)
+	}
+
+	rows, err := db.Query(`SELECT position, canonical_id FROM playlist_item ORDER BY position ASC`)
+	if err != nil {
+		t.Fatalf("list items: %v", err)
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var position int
+		var canonicalID string
+		if err := rows.Scan(&position, &canonicalID); err != nil {
+			t.Fatalf("scan item: %v", err)
+		}
+		items = append(items, fmt.Sprintf("%d:%s", position, canonicalID))
+	}
+	if len(items) != 2 || items[0] != "0:local-1" || items[1] != "1:canon-1" {
+		t.Fatalf("items = %#v, want the playlist order", items)
+	}
+
+	var states int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM service_state WHERE service = 'spotify'`).Scan(&states); err != nil {
+		t.Fatalf("count service state: %v", err)
+	}
+	if states != 0 {
+		t.Fatalf("service state rows = %d, want none for playlist membership", states)
+	}
+
+	if result, err = importer.ImportPlaylists(ctx, "acct-1", opts); err != nil {
+		t.Fatalf("second ImportPlaylists() error = %v", err)
+	}
+	if result.Playlists != 1 || result.Seen != 2 {
+		t.Fatalf("second result = %#v, want the same playlist refreshed", result)
+	}
+	var stored int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM playlist_item`).Scan(&stored); err != nil {
+		t.Fatalf("count items: %v", err)
+	}
+	if stored != 2 {
+		t.Fatalf("items = %d, want two after the refresh", stored)
+	}
+}
+
+func TestSpotifyImportPlaylistsSelectsIDs(t *testing.T) {
+	t.Parallel()
+
+	db := openConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me/playlists":
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{
+					playlistPayload("pl-1", "One"),
+					playlistPayload("pl-2", "Two"),
+				},
+				"next": "",
+			}); err != nil {
+				t.Errorf("encode playlists: %v", err)
+			}
+		case "/playlists/pl-2/tracks":
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{spotifyImportItem("spotify:track:b", "Song B", []string{"Artist"}, "", 180000)},
+				"next":  "",
+			}); err != nil {
+				t.Errorf("encode tracks: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	result, err := SpotifyImporter{
+		DB:     db,
+		Client: SpotifyClient{BaseURL: server.URL},
+		Tokens: spotifyTokenSource("token"),
+	}.ImportPlaylists(ctx, "acct-1", PlaylistImportOptions{PlaylistIDs: []string{"pl-2"}})
+	if err != nil {
+		t.Fatalf("ImportPlaylists() error = %v", err)
+	}
+	if result.Playlists != 1 || result.Seen != 1 {
+		t.Fatalf("result = %#v, want only the selected playlist", result)
+	}
+
+	var ids []string
+	rows, err := db.Query(`SELECT service_id FROM playlist ORDER BY service_id`)
+	if err != nil {
+		t.Fatalf("list playlists: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			t.Fatalf("scan playlist: %v", err)
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) != 1 || ids[0] != "pl-2" {
+		t.Fatalf("playlists = %#v, want pl-2 only", ids)
+	}
+}
+
+func playlistServer(t *testing.T, items []map[string]any) *httptest.Server {
+	t.Helper()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/me/playlists":
+			if err := json.NewEncoder(w).Encode(map[string]any{
+				"items": []map[string]any{playlistPayload("pl-1", "Road trip")},
+				"next":  "",
+			}); err != nil {
+				t.Errorf("encode playlists: %v", err)
+			}
+		case "/playlists/pl-1/tracks":
+			if err := json.NewEncoder(w).Encode(map[string]any{"items": items, "next": ""}); err != nil {
+				t.Errorf("encode tracks: %v", err)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func playlistPayload(id, name string) map[string]any {
+	return map[string]any{
+		"id":            id,
+		"name":          name,
+		"collaborative": id == "pl-1",
+		"owner":         map[string]any{"display_name": "Vic", "id": "vic"},
+		"tracks":        map[string]any{"total": 0},
+	}
+}
+
 func likedTracksServer(t *testing.T, items []map[string]any) *httptest.Server {
 	t.Helper()
 

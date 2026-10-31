@@ -34,6 +34,77 @@ type Repo struct {
 	DB *sql.DB
 }
 
+// Playlist is one mirrored service playlist with its tracks in order.
+type Playlist struct {
+	ID            string   `json:"id"`
+	Service       string   `json:"service"`
+	ServiceID     string   `json:"service_id"`
+	Name          string   `json:"name"`
+	Owner         string   `json:"owner,omitempty"`
+	Collaborative bool     `json:"collaborative"`
+	UpdatedAt     string   `json:"updated_at,omitempty"`
+	TrackIDs      []string `json:"track_ids"`
+}
+
+// ListPlaylists returns every stored playlist with its ordered track ids.
+func (r Repo) ListPlaylists(ctx context.Context) ([]Playlist, error) {
+	if r.DB == nil {
+		return nil, errors.New("library: database is required")
+	}
+	rows, err := r.DB.QueryContext(ctx, `
+SELECT id, service, service_id, name, COALESCE(owner, ''), collaborative, updated_at
+FROM playlist
+ORDER BY name COLLATE NOCASE ASC, id ASC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("library: list playlists: %w", err)
+	}
+	defer rows.Close()
+
+	playlists := make([]Playlist, 0)
+	byID := make(map[string]int)
+	for rows.Next() {
+		var playlist Playlist
+		var collaborative int
+		if err := rows.Scan(&playlist.ID, &playlist.Service, &playlist.ServiceID, &playlist.Name, &playlist.Owner, &collaborative, &playlist.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("library: scan playlist: %w", err)
+		}
+		playlist.Collaborative = collaborative != 0
+		playlist.TrackIDs = make([]string, 0)
+		byID[playlist.ID] = len(playlists)
+		playlists = append(playlists, playlist)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("library: iterate playlists: %w", err)
+	}
+	if len(playlists) == 0 {
+		return playlists, nil
+	}
+
+	items, err := r.DB.QueryContext(ctx, `
+SELECT playlist_id, canonical_id
+FROM playlist_item
+ORDER BY playlist_id ASC, position ASC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("library: list playlist items: %w", err)
+	}
+	defer items.Close()
+	for items.Next() {
+		var playlistID, canonicalID string
+		if err := items.Scan(&playlistID, &canonicalID); err != nil {
+			return nil, fmt.Errorf("library: scan playlist item: %w", err)
+		}
+		if index, ok := byID[playlistID]; ok {
+			playlists[index].TrackIDs = append(playlists[index].TrackIDs, canonicalID)
+		}
+	}
+	if err := items.Err(); err != nil {
+		return nil, fmt.Errorf("library: iterate playlist items: %w", err)
+	}
+	return playlists, nil
+}
+
 // List returns one page of tracks in title order.
 func (r Repo) List(ctx context.Context, limit, offset int) ([]Track, error) {
 	if r.DB == nil {

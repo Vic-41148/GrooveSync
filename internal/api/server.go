@@ -55,6 +55,8 @@ type Deps struct {
 	Library            LibraryLister
 	Enrich             MetadataEnricher
 	SpotifyImport      SpotifyLikeImport
+	SpotifyPlaylists   SpotifyPlaylistImport
+	Playlists          PlaylistLister
 	Transfer           TransferPlanner
 	Rollout            RolloutSettings
 }
@@ -160,6 +162,16 @@ type SpotifyLikeImport interface {
 	Import(context.Context, string, connectors.ImportOptions) (connectors.ImportResult, error)
 }
 
+// SpotifyPlaylistImport mirrors service playlists into canonical tracks.
+type SpotifyPlaylistImport interface {
+	ImportPlaylists(context.Context, string, connectors.PlaylistImportOptions) (connectors.ImportResult, error)
+}
+
+// PlaylistLister returns the stored playlists.
+type PlaylistLister interface {
+	ListPlaylists(context.Context) ([]library.Playlist, error)
+}
+
 // TransferPlanner builds the file plan for one device.
 type TransferPlanner interface {
 	Plan(context.Context, string) (transfer.Plan, error)
@@ -189,6 +201,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/invalid-grant", d.handleSpotifyInvalidGrant)
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/import", d.handleSpotifyImport)
+	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/playlists/import", d.handleSpotifyPlaylistImport)
+	mux.HandleFunc("GET /sync/v1/playlists", d.handlePlaylists)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
 	mux.HandleFunc("DELETE /sync/v1/me/library", d.handleSpotifyLibraryWrite("unlike"))
 	mux.HandleFunc("GET /sync/v1/me/library/contains", d.handleSpotifyLibraryContains)
@@ -635,6 +649,54 @@ func (d Deps) handleSpotifyImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, result, 0)
+}
+
+func (d Deps) handleSpotifyPlaylistImport(w http.ResponseWriter, r *http.Request) {
+	if d.SpotifyPlaylists == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "playlist import unavailable"}, 0)
+		return
+	}
+	accountID := r.PathValue("accountID")
+	if accountID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_id required"}, 0)
+		return
+	}
+	threshold := 0.0
+	query := r.URL.Query()
+	if raw := query.Get("threshold"); raw != "" {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil || parsed <= 0 || parsed > 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid threshold"}, 0)
+			return
+		}
+		threshold = parsed
+	}
+	result, err := d.SpotifyPlaylists.ImportPlaylists(r.Context(), accountID, connectors.PlaylistImportOptions{
+		ImportOptions: connectors.ImportOptions{Threshold: threshold},
+		PlaylistIDs:   query["playlist"],
+	})
+	if err != nil {
+		if errors.Is(err, connectors.ErrSpotifyInvalidGrant) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "spotify reconnect required"}, 0)
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "playlist import failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, result, 0)
+}
+
+func (d Deps) handlePlaylists(w http.ResponseWriter, r *http.Request) {
+	if d.Playlists == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"playlists": []library.Playlist{}}, 0)
+		return
+	}
+	playlists, err := d.Playlists.ListPlaylists(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "playlists unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"playlists": playlists}, 0)
 }
 
 type devicePolicy struct {

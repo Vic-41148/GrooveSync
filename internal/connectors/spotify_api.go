@@ -61,6 +61,61 @@ type SpotifyTrack struct {
 	AddedAt    time.Time
 }
 
+// SpotifyPlaylist is one playlist the account owns or follows.
+type SpotifyPlaylist struct {
+	ID            string
+	Name          string
+	Owner         string
+	Collaborative bool
+	TrackCount    int
+	UpdatedAt     time.Time
+}
+
+type spotifyTrackItem struct {
+	AddedAt string `json:"added_at"`
+	Track   struct {
+		URI        string `json:"uri"`
+		Name       string `json:"name"`
+		DurationMS int    `json:"duration_ms"`
+		Artists    []struct {
+			Name string `json:"name"`
+		} `json:"artists"`
+		Album struct {
+			Name string `json:"name"`
+		} `json:"album"`
+		ExternalIDs struct {
+			ISRC string `json:"isrc"`
+		} `json:"external_ids"`
+	} `json:"track"`
+}
+
+type spotifyTrackPage struct {
+	Items []spotifyTrackItem `json:"items"`
+	Next  string             `json:"next"`
+}
+
+func (item spotifyTrackItem) track() (SpotifyTrack, bool) {
+	if item.Track.URI == "" {
+		return SpotifyTrack{}, false
+	}
+	track := SpotifyTrack{
+		URI:        item.Track.URI,
+		Name:       item.Track.Name,
+		Album:      item.Track.Album.Name,
+		DurationMS: item.Track.DurationMS,
+		ISRC:       strings.TrimSpace(item.Track.ExternalIDs.ISRC),
+	}
+	for _, artist := range item.Track.Artists {
+		track.Artists = append(track.Artists, artist.Name)
+	}
+	if item.AddedAt != "" {
+		if ts, err := time.Parse(time.RFC3339, item.AddedAt); err == nil {
+			track.AddedAt = ts.UTC()
+		}
+	}
+	return track, true
+}
+
 // SpotifyClient talks to the Spotify Web API. HTTP and BaseURL are injected so
 // tests can use a local server.
 type SpotifyClient struct {
@@ -85,26 +140,7 @@ func (c SpotifyClient) LikedTracks(ctx context.Context, accountID string, tokens
 			return out, spotifyStatusError(resp)
 		}
 
-		var page struct {
-			Items []struct {
-				AddedAt string `json:"added_at"`
-				Track   struct {
-					URI        string `json:"uri"`
-					Name       string `json:"name"`
-					DurationMS int    `json:"duration_ms"`
-					Artists    []struct {
-						Name string `json:"name"`
-					} `json:"artists"`
-					Album struct {
-						Name string `json:"name"`
-					} `json:"album"`
-					ExternalIDs struct {
-						ISRC string `json:"isrc"`
-					} `json:"external_ids"`
-				} `json:"track"`
-			} `json:"items"`
-			Next string `json:"next"`
-		}
+		var page spotifyTrackPage
 		err = json.NewDecoder(resp.Body).Decode(&page)
 		resp.Body.Close()
 		if err != nil {
@@ -113,32 +149,121 @@ func (c SpotifyClient) LikedTracks(ctx context.Context, accountID string, tokens
 
 		reachedKnown := false
 		for _, item := range page.Items {
-			if item.Track.URI == "" {
+			track, ok := item.track()
+			if !ok {
 				continue
 			}
-			if known != nil && known(item.Track.URI) {
+			if known != nil && known(track.URI) {
 				reachedKnown = true
 				break
-			}
-			track := SpotifyTrack{
-				URI:        item.Track.URI,
-				Name:       item.Track.Name,
-				Album:      item.Track.Album.Name,
-				DurationMS: item.Track.DurationMS,
-				ISRC:       strings.TrimSpace(item.Track.ExternalIDs.ISRC),
-			}
-			for _, artist := range item.Track.Artists {
-				track.Artists = append(track.Artists, artist.Name)
-			}
-			if item.AddedAt != "" {
-				if ts, err := time.Parse(time.RFC3339, item.AddedAt); err == nil {
-					track.AddedAt = ts.UTC()
-				}
 			}
 			out = append(out, track)
 		}
 
 		if reachedKnown || page.Next == "" || len(page.Items) < spotifyPageSize {
+			break
+		}
+	}
+	return out, nil
+}
+
+// Playlists lists the playlists the account owns or follows.
+func (c SpotifyClient) Playlists(ctx context.Context, accountID string, tokens SpotifyTokenSource) ([]SpotifyPlaylist, error) {
+	if tokens == nil {
+		return nil, errors.New("connectors: spotify token source is required")
+	}
+	var out []SpotifyPlaylist
+	for offset := 0; ; offset += spotifyPageSize {
+		endpoint := fmt.Sprintf("%s/me/playlists?limit=%d&offset=%d", c.baseURL(), spotifyPageSize, offset)
+		resp, err := c.request(ctx, http.MethodGet, endpoint, accountID, tokens, nil)
+		if err != nil {
+			return out, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return out, spotifyStatusError(resp)
+		}
+
+		var page struct {
+			Items []struct {
+				ID            string `json:"id"`
+				Name          string `json:"name"`
+				Collaborative bool   `json:"collaborative"`
+				Owner         struct {
+					DisplayName string `json:"display_name"`
+					ID          string `json:"id"`
+				} `json:"owner"`
+				Tracks struct {
+					Total int `json:"total"`
+				} `json:"tracks"`
+			} `json:"items"`
+			Next string `json:"next"`
+		}
+		err = json.NewDecoder(resp.Body).Decode(&page)
+		resp.Body.Close()
+		if err != nil {
+			return out, fmt.Errorf("connectors: decode spotify playlists: %w", err)
+		}
+
+		for _, item := range page.Items {
+			if strings.TrimSpace(item.ID) == "" {
+				continue
+			}
+			owner := item.Owner.DisplayName
+			if owner == "" {
+				owner = item.Owner.ID
+			}
+			out = append(out, SpotifyPlaylist{
+				ID:            item.ID,
+				Name:          item.Name,
+				Owner:         owner,
+				Collaborative: item.Collaborative,
+				TrackCount:    item.Tracks.Total,
+			})
+		}
+
+		if page.Next == "" || len(page.Items) < spotifyPageSize {
+			break
+		}
+	}
+	return out, nil
+}
+
+// PlaylistTracks reads every track in one playlist, keeping playlist order.
+func (c SpotifyClient) PlaylistTracks(ctx context.Context, accountID string, tokens SpotifyTokenSource, playlistID string) ([]SpotifyTrack, error) {
+	if tokens == nil {
+		return nil, errors.New("connectors: spotify token source is required")
+	}
+	playlistID = strings.TrimSpace(playlistID)
+	if playlistID == "" {
+		return nil, errors.New("connectors: spotify playlist id is required")
+	}
+	var out []SpotifyTrack
+	for offset := 0; ; offset += spotifyPageSize {
+		endpoint := fmt.Sprintf("%s/playlists/%s/tracks?limit=%d&offset=%d", c.baseURL(), url.PathEscape(playlistID), spotifyPageSize, offset)
+		resp, err := c.request(ctx, http.MethodGet, endpoint, accountID, tokens, nil)
+		if err != nil {
+			return out, err
+		}
+		if resp.StatusCode != http.StatusOK {
+			return out, spotifyStatusError(resp)
+		}
+
+		var page spotifyTrackPage
+		err = json.NewDecoder(resp.Body).Decode(&page)
+		resp.Body.Close()
+		if err != nil {
+			return out, fmt.Errorf("connectors: decode spotify playlist tracks: %w", err)
+		}
+
+		for _, item := range page.Items {
+			track, ok := item.track()
+			if !ok {
+				continue
+			}
+			out = append(out, track)
+		}
+
+		if page.Next == "" || len(page.Items) < spotifyPageSize {
 			break
 		}
 	}

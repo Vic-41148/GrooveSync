@@ -1192,6 +1192,104 @@ func (s spotifyImportStub) Import(context.Context, string, connectors.ImportOpti
 	return s.result, s.err
 }
 
+func TestSpotifyPlaylistImport(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:          "1.2.3",
+		Proto:            3,
+		Schema:           13,
+		Now:              time.Now,
+		SpotifyPlaylists: playlistImportStub{result: connectors.ImportResult{Seen: 5, Matched: 3, Created: 2, Playlists: 1}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/spotify/acct-1/playlists/import?threshold=0.9&playlist=pl-1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got connectors.ImportResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got != (connectors.ImportResult{Seen: 5, Matched: 3, Created: 2, Playlists: 1}) {
+		t.Fatalf("result = %#v, want the playlist import counts", got)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/spotify/acct-1/playlists/import?threshold=2", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad threshold status = %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/spotify/acct-1/playlists/import", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("unavailable status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now, SpotifyPlaylists: playlistImportStub{err: connectors.ErrSpotifyInvalidGrant}}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/spotify/acct-1/playlists/import", nil))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("reconnect status = %d, want %d", rec.Code, http.StatusConflict)
+	}
+}
+
+func TestPlaylists(t *testing.T) {
+	t.Parallel()
+
+	playlists := []library.Playlist{{
+		ID:        "spotify:pl-1",
+		Service:   "spotify",
+		ServiceID: "pl-1",
+		Name:      "Road trip",
+		TrackIDs:  []string{"track-1"},
+	}}
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now, Playlists: playlistListerStub{playlists: playlists}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/playlists", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var got struct {
+		Playlists []library.Playlist `json:"playlists"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(got.Playlists) != 1 || got.Playlists[0].Name != "Road trip" || len(got.Playlists[0].TrackIDs) != 1 {
+		t.Fatalf("playlists = %#v, want the stub playlist", got.Playlists)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/playlists", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unavailable status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+type playlistImportStub struct {
+	result connectors.ImportResult
+	err    error
+}
+
+func (s playlistImportStub) ImportPlaylists(context.Context, string, connectors.PlaylistImportOptions) (connectors.ImportResult, error) {
+	return s.result, s.err
+}
+
+type playlistListerStub struct {
+	playlists []library.Playlist
+	err       error
+}
+
+func (s playlistListerStub) ListPlaylists(context.Context) ([]library.Playlist, error) {
+	return s.playlists, s.err
+}
+
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 

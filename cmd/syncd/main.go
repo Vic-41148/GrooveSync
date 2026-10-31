@@ -121,8 +121,14 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 			Client: connectors.SpotifyClient{},
 			Tokens: connectors.SpotifyRepoTokenSource{Repo: connectorRepo},
 		},
-		Transfer: transfer.Planner{DB: db, Devices: deviceRepo},
-		Rollout:  queueRepo,
+		SpotifyPlaylists: connectors.SpotifyImporter{
+			DB:     db,
+			Client: connectors.SpotifyClient{},
+			Tokens: connectors.SpotifyRepoTokenSource{Repo: connectorRepo},
+		},
+		Playlists: libraryRepo,
+		Transfer:  transfer.Planner{DB: db, Devices: deviceRepo},
+		Rollout:   queueRepo,
 	})
 
 	srv := &http.Server{
