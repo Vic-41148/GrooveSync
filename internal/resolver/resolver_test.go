@@ -72,6 +72,22 @@ func TestResolve(t *testing.T) {
 			wantManual: true,
 		},
 		{
+			name:  "manual alias outranks a low score",
+			track: identity.Track{Title: "Song", Artist: "Artist", DurationMS: 180000},
+			candidates: []Candidate{
+				{Provider: "spotify", ServiceID: "uri:4", Track: identity.Track{Title: "Other", Artist: "Other", DurationMS: 240000}},
+			},
+			seed: func(ctx context.Context, t *testing.T, db *sql.DB) {
+				t.Helper()
+				if _, err := db.ExecContext(ctx, `INSERT INTO alias (service, service_id, canonical_id, confidence, method, decided_by) VALUES ('spotify', 'uri:4', 'track-1', 1, 'manual', 'manual')`); err != nil {
+					t.Fatalf("seed alias: %v", err)
+				}
+			},
+			wantIndex:  0,
+			wantMethod: identity.MethodNone,
+			wantManual: true,
+		},
+		{
 			name:  "best candidate wins",
 			track: identity.Track{Title: "Song", Artist: "Artist", DurationMS: 180000},
 			candidates: []Candidate{

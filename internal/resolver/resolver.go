@@ -47,6 +47,11 @@ func (r Repo) Resolve(ctx context.Context, canonicalID string, candidates []Cand
 	if len(candidates) == 0 {
 		return Result{Index: -1, Match: identity.Match{Method: identity.MethodNone}, NeedsReview: true}, nil
 	}
+	if index, match, ok, err := r.manualCandidate(ctx, local, candidates); err != nil {
+		return Result{}, err
+	} else if ok {
+		return Result{Index: index, Match: match, Manual: true}, nil
+	}
 
 	bestIndex := 0
 	best := identity.Score(local, candidates[0].Track)
@@ -70,18 +75,25 @@ func (r Repo) Resolve(ctx context.Context, canonicalID string, candidates []Cand
 		return result, nil
 	}
 
-	manual, err := r.aliasIsManual(ctx, candidates[bestIndex])
-	if err != nil {
-		return Result{}, err
-	}
-	if manual {
-		result.Manual = true
-		return result, nil
-	}
 	if err := r.saveAlias(ctx, canonicalID, candidates[bestIndex], best); err != nil {
 		return Result{}, err
 	}
 	return result, nil
+}
+
+// manualCandidate returns a candidate a human already linked. That decision
+// outranks the score, so a later pass cannot send the same item back to review.
+func (r Repo) manualCandidate(ctx context.Context, local identity.Track, candidates []Candidate) (int, identity.Match, bool, error) {
+	for i, candidate := range candidates {
+		manual, err := r.aliasIsManual(ctx, candidate)
+		if err != nil {
+			return 0, identity.Match{}, false, err
+		}
+		if manual {
+			return i, identity.Score(local, candidate.Track), true, nil
+		}
+	}
+	return 0, identity.Match{}, false, nil
 }
 
 func (r Repo) localTrack(ctx context.Context, canonicalID string) (identity.Track, error) {
