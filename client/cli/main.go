@@ -6,13 +6,16 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
-	"path"
+	"path/filepath"
 	"strings"
 )
 
@@ -82,4 +85,92 @@ func main() {
 	body := new(bytes.Buffer)
 	_, _ = body.ReadFrom(resp2.Body)
 	fmt.Printf("complete-auth result: %s\n%s\n", resp2.Status, strings.TrimSpace(body.String()))
+}
+
+// uploadFile uploads a file in a single chunk and then downloads it back.
+func uploadFile(server, filename string) error {
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	size := info.Size()
+	hash := sha256.New()
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err := io.Copy(hash, f); err != nil {
+		return err
+	}
+	sum := hex.EncodeToString(hash.Sum(nil))
+	// rewind
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+
+	putURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s?name=%s", strings.TrimRight(server, "/"), sum, filepath.Base(filename))
+	req, err := http.NewRequest(http.MethodPut, putURL, f)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", size-1, size))
+	client := &http.Client{}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
+		body := new(bytes.Buffer)
+		_, _ = body.ReadFrom(resp.Body)
+		return fmt.Errorf("upload failed: %s - %s", resp.Status, strings.TrimSpace(body.String()))
+	}
+	fmt.Printf("upload accepted: %s\n", resp.Status)
+
+	// poll status
+	statusURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s", strings.TrimRight(server, "/"), sum)
+	for i := 0; i < 10; i++ {
+		resp2, err := http.Get(statusURL)
+		if err != nil {
+			return err
+		}
+		var st struct {
+			Hash     string `json:"hash"`
+			Received int64  `json:"received"`
+			Total    int64  `json:"total"`
+			Complete bool   `json:"complete"`
+			Path     string `json:"path"`
+		}
+		_ = json.NewDecoder(resp2.Body).Decode(&st)
+		resp2.Body.Close()
+		fmt.Printf("status: %d/%d complete=%v\n", st.Received, st.Total, st.Complete)
+		if st.Complete {
+			// download the file
+			fileURL := fmt.Sprintf("%s/sync/v1/library/files/%s", strings.TrimRight(server, "/"), sum)
+			r, err := http.Get(fileURL)
+			if err != nil {
+				return err
+			}
+			defer r.Body.Close()
+			out := filepath.Base(filename) + ".download"
+			o, err := os.Create(out)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(o, r.Body); err != nil {
+				o.Close()
+				return err
+			}
+			o.Close()
+			fmt.Printf("downloaded to %s\n", out)
+			return nil
+		}
+		// simple sleep
+		_ = exec.Command("sleep", "1").Run()
+	}
+	return fmt.Errorf("upload did not complete in time")
 }
