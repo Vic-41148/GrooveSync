@@ -147,6 +147,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		YouTubeImport:    youtubeImport,
 		YouTubePlaylists: youtubePlaylists,
 		YouTubeHealth:    youtubeHealth,
+		ConnectorHealth:  connectors.HealthRepo{DB: db},
 		Transfer:         transfer.Planner{DB: db, Devices: deviceRepo},
 		Rollout:          queueRepo,
 	})

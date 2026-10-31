@@ -1328,10 +1328,17 @@ func TestYouTubeImport(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now, YouTubeImport: youtubeImportStub{err: errors.New("sidecar down")}}).
+	health := &connectorHealthStub{}
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now, YouTubeImport: youtubeImportStub{err: errors.New("sidecar down")}, ConnectorHealth: health}).
 		ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/youtube/import", nil))
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("sidecar failure status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+	if len(health.reports) != 1 || health.reports[0].provider != connectors.ProviderYouTube || health.reports[0].status != connectors.HealthDegraded {
+		t.Fatalf("reports = %#v, want one degraded youtube report", health.reports)
+	}
+	if health.reports[0].reason != "sidecar down" {
+		t.Fatalf("reason = %q, want the sidecar error", health.reports[0].reason)
 	}
 }
 
@@ -1850,6 +1857,10 @@ func TestHealthReport(t *testing.T) {
 		ReviewQueue:   reviewQueueStub{},
 		Library:       libraryListerStub{count: 12},
 		Playlists:     playlistListerStub{playlists: []library.Playlist{{ID: "spotify:pl-1"}}},
+		ConnectorHealth: &connectorHealthStub{states: []connectors.HealthState{{
+			Provider: connectors.ProviderYouTube,
+			Status:   connectors.HealthOK,
+		}}},
 	})
 
 	rec := httptest.NewRecorder()
@@ -1874,6 +1885,10 @@ func TestHealthReport(t *testing.T) {
 			LibraryTracks int `json:"library_tracks"`
 			Playlists     int `json:"playlists"`
 		} `json:"counts"`
+		ConnectorHealth []struct {
+			Provider string `json:"provider"`
+			Status   string `json:"status"`
+		} `json:"connector_health"`
 		WritebackMode string `json:"writeback_mode"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
@@ -1890,6 +1905,9 @@ func TestHealthReport(t *testing.T) {
 	}
 	if got.Counts.LibraryTracks != 12 || got.Counts.Playlists != 1 {
 		t.Fatalf("counts = %#v, want 12 tracks and 1 playlist", got.Counts)
+	}
+	if len(got.ConnectorHealth) != 1 || got.ConnectorHealth[0].Status != connectors.HealthOK {
+		t.Fatalf("connector health = %#v, want one healthy row", got.ConnectorHealth)
 	}
 
 	rec = httptest.NewRecorder()
@@ -1919,6 +1937,29 @@ type healthStub struct {
 
 func (s healthStub) Health(context.Context) error {
 	return s.err
+}
+
+type connectorHealthStub struct {
+	reports []struct {
+		provider string
+		status   string
+		reason   string
+	}
+	states []connectors.HealthState
+	err    error
+}
+
+func (s *connectorHealthStub) Report(_ context.Context, provider, status, reason string) error {
+	s.reports = append(s.reports, struct {
+		provider string
+		status   string
+		reason   string
+	}{provider: provider, status: status, reason: reason})
+	return s.err
+}
+
+func (s *connectorHealthStub) List(context.Context) ([]connectors.HealthState, error) {
+	return s.states, s.err
 }
 
 type libraryListerStub struct {

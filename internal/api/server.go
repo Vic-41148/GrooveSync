@@ -60,6 +60,7 @@ type Deps struct {
 	YouTubePlaylists   YouTubePlaylistImport
 	Playlists          PlaylistLister
 	YouTubeHealth      HealthChecker
+	ConnectorHealth    ConnectorHealthStore
 	Transfer           TransferPlanner
 	Rollout            RolloutSettings
 }
@@ -163,6 +164,12 @@ type MetadataEnricher interface {
 // HealthChecker reports whether an external service is usable.
 type HealthChecker interface {
 	Health(context.Context) error
+}
+
+// ConnectorHealthStore records and reads the last connector pass outcome.
+type ConnectorHealthStore interface {
+	Report(context.Context, string, string, string) error
+	List(context.Context) ([]connectors.HealthState, error)
 }
 
 // SpotifyLikeImport mirrors liked songs into canonical tracks.
@@ -302,14 +309,14 @@ func (d Deps) handleHealthReport(w http.ResponseWriter, r *http.Request) {
 	}
 	payload["database"] = database
 
-	connectors := map[string]any{}
+	connectorState := map[string]any{}
 	if d.Connectors != nil {
 		accounts, err := d.spotifyAccounts(ctx)
 		if err != nil {
-			connectors["spotify"] = "unavailable"
+			connectorState["spotify"] = "unavailable"
 			status = "degraded"
 		} else {
-			connectors["spotify"] = accounts
+			connectorState["spotify"] = accounts
 		}
 	}
 	if d.YouTubeHealth != nil {
@@ -319,9 +326,24 @@ func (d Deps) handleHealthReport(w http.ResponseWriter, r *http.Request) {
 			youtube["reason"] = err.Error()
 			status = "degraded"
 		}
-		connectors["youtube"] = youtube
+		connectorState["youtube"] = youtube
 	}
-	payload["connectors"] = connectors
+	payload["connectors"] = connectorState
+
+	if d.ConnectorHealth != nil {
+		states, err := d.ConnectorHealth.List(ctx)
+		if err != nil {
+			payload["connector_health"] = "unavailable"
+			status = "degraded"
+		} else {
+			payload["connector_health"] = states
+			for _, state := range states {
+				if state.Status != connectors.HealthOK {
+					status = "degraded"
+				}
+			}
+		}
+	}
 
 	counts := map[string]any{}
 	if d.ReviewQueue != nil {
@@ -767,6 +789,7 @@ func (d Deps) handleSpotifyImport(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := d.SpotifyImport.Import(r.Context(), accountID, connectors.ImportOptions{Threshold: threshold})
 	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderSpotify, connectors.HealthDegraded, err.Error())
 		if errors.Is(err, connectors.ErrSpotifyInvalidGrant) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "spotify reconnect required"}, 0)
 			return
@@ -774,6 +797,7 @@ func (d Deps) handleSpotifyImport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "spotify import failed"}, 0)
 		return
 	}
+	d.reportConnectorHealth(r.Context(), connectors.ProviderSpotify, connectors.HealthOK, "")
 	writeJSON(w, http.StatusOK, result, 0)
 }
 
@@ -802,6 +826,7 @@ func (d Deps) handleSpotifyPlaylistImport(w http.ResponseWriter, r *http.Request
 		PlaylistIDs:   query["playlist"],
 	})
 	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderSpotify, connectors.HealthDegraded, err.Error())
 		if errors.Is(err, connectors.ErrSpotifyInvalidGrant) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "spotify reconnect required"}, 0)
 			return
@@ -809,6 +834,7 @@ func (d Deps) handleSpotifyPlaylistImport(w http.ResponseWriter, r *http.Request
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "playlist import failed"}, 0)
 		return
 	}
+	d.reportConnectorHealth(r.Context(), connectors.ProviderSpotify, connectors.HealthOK, "")
 	writeJSON(w, http.StatusOK, result, 0)
 }
 
@@ -828,9 +854,11 @@ func (d Deps) handleYouTubeImport(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := d.YouTubeImport.ImportLikes(r.Context(), connectors.ImportOptions{Threshold: threshold})
 	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube import failed"}, 0)
 		return
 	}
+	d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthOK, "")
 	writeJSON(w, http.StatusOK, result, 0)
 }
 
@@ -854,10 +882,19 @@ func (d Deps) handleYouTubePlaylistImport(w http.ResponseWriter, r *http.Request
 		PlaylistIDs:   query["playlist"],
 	})
 	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube playlist import failed"}, 0)
 		return
 	}
+	d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthOK, "")
 	writeJSON(w, http.StatusOK, result, 0)
+}
+
+func (d Deps) reportConnectorHealth(ctx context.Context, provider, status, reason string) {
+	if d.ConnectorHealth == nil {
+		return
+	}
+	_ = d.ConnectorHealth.Report(ctx, provider, status, reason)
 }
 
 func (d Deps) handlePlaylists(w http.ResponseWriter, r *http.Request) {
