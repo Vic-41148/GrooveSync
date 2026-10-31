@@ -56,6 +56,13 @@ func (r Rebuilder) Run(ctx context.Context) (int, error) {
 		if _, err := ing.Ingest(ctx, "", path, sum, filepath.Base(path)); err != nil {
 			return err
 		}
+		// Mark the contribution as coming from the filesystem/sync rather
+		// than an upload. Ingest records content_path with source 'upload',
+		// so update the source for this path to 'sync'. This is a small
+		// migration-friendly step to avoid duplicating Ingestor logic.
+		if _, err := r.DB.ExecContext(ctx, `UPDATE content_path SET source = 'sync' WHERE path_or_uri = ?`, path); err != nil {
+			return err
+		}
 		added++
 		return nil
 	})

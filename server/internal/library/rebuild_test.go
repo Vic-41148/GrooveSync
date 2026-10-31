@@ -49,3 +49,53 @@ func TestRebuildFromFolder(t *testing.T) {
 		t.Fatalf("a hash = %q, want %q", hash, hex.EncodeToString(sum[:]))
 	}
 }
+
+func TestRebuildThenUploadRecordsBothPaths(t *testing.T) {
+	t.Parallel()
+
+	db := openLibraryDB(t)
+	ctx := context.Background()
+	root := t.TempDir()
+
+	content := []byte("audio bytes")
+	filePath := filepath.Join(root, "song.flac")
+	if err := os.WriteFile(filePath, content, 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	// Rebuild (sync arrival)
+	reb := Rebuilder{DB: db, Root: root}
+	if _, err := reb.Run(ctx); err != nil {
+		t.Fatalf("Rebuild Run() error = %v", err)
+	}
+
+	// Now simulate an upload of the same content under a different path
+	uPath, h := uploadFixture(t, "upload-song.flac", content)
+	_, err := Ingestor{DB: db}.Ingest(ctx, "", uPath, h, "upload-song.flac")
+	if err != nil {
+		t.Fatalf("Ingest() error = %v", err)
+	}
+
+	// Expect two content_path rows with sources 'sync' and 'upload'
+	rows, err := db.Query(`SELECT source, path_or_uri FROM content_path`)
+	if err != nil {
+		t.Fatalf("query content_path: %v", err)
+	}
+	defer rows.Close()
+	var seenSync, seenUpload bool
+	for rows.Next() {
+		var src, p string
+		if err := rows.Scan(&src, &p); err != nil {
+			t.Fatalf("scan content_path: %v", err)
+		}
+		if src == "sync" && p == filePath {
+			seenSync = true
+		}
+		if src == "upload" && p == uPath {
+			seenUpload = true
+		}
+	}
+	if !seenSync || !seenUpload {
+		t.Fatalf("content_path entries missing: sync=%v upload=%v", seenSync, seenUpload)
+	}
+}
