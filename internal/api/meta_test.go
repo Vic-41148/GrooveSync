@@ -962,6 +962,95 @@ func (e enrichStub) Run(context.Context, int) (metadata.BackfillResult, error) {
 	return e.result, e.err
 }
 
+func TestSpotifyImport(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{
+		Version:       "1.2.3",
+		Proto:         3,
+		Schema:        10,
+		Now:           time.Now,
+		SpotifyImport: spotifyImportStub{result: connectors.ImportResult{Seen: 4, Matched: 2, Created: 1, Queued: 1}},
+	})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/spotify/acct-1/import?threshold=0.9", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got connectors.ImportResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got != (connectors.ImportResult{Seen: 4, Matched: 2, Created: 1, Queued: 1}) {
+		t.Fatalf("result = %#v, want the import counts", got)
+	}
+}
+
+func TestSpotifyImportRejectsBadThreshold(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, SpotifyImport: spotifyImportStub{}})
+	for _, url := range []string{
+		"/sync/v1/connectors/spotify/acct-1/import?threshold=0",
+		"/sync/v1/connectors/spotify/acct-1/import?threshold=1.5",
+		"/sync/v1/connectors/spotify/acct-1/import?threshold=high",
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, url, nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("%s: status = %d, want %d", url, rec.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestSpotifyImportUnavailable(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/spotify/acct-1/import", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
+func TestSpotifyImportFailures(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+	}{
+		{name: "reconnect required", err: connectors.ErrSpotifyInvalidGrant, wantStatus: http.StatusConflict},
+		{name: "upstream failure", err: errors.New("spotify down"), wantStatus: http.StatusBadGateway},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 10, Now: time.Now, SpotifyImport: spotifyImportStub{err: tc.err}})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/connectors/spotify/acct-1/import", nil))
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+		})
+	}
+}
+
+type spotifyImportStub struct {
+	result connectors.ImportResult
+	err    error
+}
+
+func (s spotifyImportStub) Import(context.Context, string, connectors.ImportOptions) (connectors.ImportResult, error) {
+	return s.result, s.err
+}
+
 func TestDeviceRegisterRejectsInvalidInput(t *testing.T) {
 	t.Parallel()
 

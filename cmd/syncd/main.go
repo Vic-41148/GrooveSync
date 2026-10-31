@@ -68,7 +68,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		},
 	}
 
-	features := []string{"meta", "review_queue", "connectors", "spotify_library", "plan", "write_log", "devices", "events", "score", "mix", "library", "acquisition", "settings"}
+	features := []string{"meta", "review_queue", "connectors", "spotify_library", "spotify_import", "plan", "write_log", "devices", "events", "score", "mix", "library", "acquisition", "settings"}
 	var libraryMirror api.LibraryMirror
 	if cfg.NavidromeURL != "" {
 		if cfg.NavidromeUser == "" || cfg.NavidromePassword == "" {
@@ -115,7 +115,12 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		LibrarySync:        libraryMirror,
 		Library:            libraryRepo,
 		Enrich:             enricher,
-		Rollout:            queueRepo,
+		SpotifyImport: connectors.SpotifyImporter{
+			DB:     db,
+			Client: connectors.SpotifyClient{},
+			Tokens: connectors.SpotifyRepoTokenSource{Repo: connectorRepo},
+		},
+		Rollout: queueRepo,
 	})
 
 	srv := &http.Server{

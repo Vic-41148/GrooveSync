@@ -53,6 +53,7 @@ type Deps struct {
 	LibrarySync        LibraryMirror
 	Library            LibraryLister
 	Enrich             MetadataEnricher
+	SpotifyImport      SpotifyLikeImport
 	Rollout            RolloutSettings
 }
 
@@ -151,6 +152,11 @@ type MetadataEnricher interface {
 	Run(context.Context, int) (metadata.BackfillResult, error)
 }
 
+// SpotifyLikeImport mirrors liked songs into canonical tracks.
+type SpotifyLikeImport interface {
+	Import(context.Context, string, connectors.ImportOptions) (connectors.ImportResult, error)
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -174,6 +180,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/connectors", d.handleConnectors)
 	mux.HandleFunc("DELETE /sync/v1/connectors/spotify/{accountID}", d.handleDisconnectSpotify)
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/invalid-grant", d.handleSpotifyInvalidGrant)
+	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/import", d.handleSpotifyImport)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
 	mux.HandleFunc("DELETE /sync/v1/me/library", d.handleSpotifyLibraryWrite("unlike"))
 	mux.HandleFunc("GET /sync/v1/me/library/contains", d.handleSpotifyLibraryContains)
@@ -587,6 +594,37 @@ func (d Deps) handleSpotifyInvalidGrant(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleSpotifyImport(w http.ResponseWriter, r *http.Request) {
+	if d.SpotifyImport == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "spotify import unavailable"}, 0)
+		return
+	}
+	accountID := r.PathValue("accountID")
+	if accountID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "account_id required"}, 0)
+		return
+	}
+	threshold := 0.0
+	if raw := r.URL.Query().Get("threshold"); raw != "" {
+		parsed, err := strconv.ParseFloat(raw, 64)
+		if err != nil || parsed <= 0 || parsed > 1 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid threshold"}, 0)
+			return
+		}
+		threshold = parsed
+	}
+	result, err := d.SpotifyImport.Import(r.Context(), accountID, connectors.ImportOptions{Threshold: threshold})
+	if err != nil {
+		if errors.Is(err, connectors.ErrSpotifyInvalidGrant) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "spotify reconnect required"}, 0)
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "spotify import failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, result, 0)
 }
 
 type deviceResponse struct {
