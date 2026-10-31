@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
 // Package logging builds the process logger: JSON to stdout via log/slog, with
 // a redaction hook for anything that looks like a credential (handbook GOV-5).
 package logging

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
 // Package api serves the syncd HTTP surface. Only the contract endpoint exists
 // so far; the sync endpoints land with the HLC work (handbook §2.5).
 package api

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
 // Package ytmusic talks to the ytmusicapi sidecar. The sidecar is a separate
 // process that owns the YouTube account; syncd only exchanges JSON with it, so
 // the core never needs a Python runtime or the account cookies.

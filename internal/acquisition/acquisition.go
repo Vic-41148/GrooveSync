@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
 // Package acquisition stores requests for the optional download worker. The
 // core only ever records intent here, so the plugin stays out of this repo.
 package acquisition

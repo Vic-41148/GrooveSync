@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
 // Package navidrome mirrors a Navidrome library over the OpenSubsonic API.
 // syncd keeps its own canonical ids; Navidrome ids, paths and hashes are only
 // mapped attributes, because Navidrome rewrites its ids across major versions.

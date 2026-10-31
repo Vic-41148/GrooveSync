@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
 // Package listenbrainz reads ListenBrainz recording feedback. The service is
 // optional: syncd only uses it when a user name is configured.
 package listenbrainz

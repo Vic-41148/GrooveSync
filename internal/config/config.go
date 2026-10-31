@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (C) 2026 GrooveSync Authors
+
 // Package config loads syncd configuration from environment variables and
 // command-line flags, in that order of precedence (flags win).
 package config
