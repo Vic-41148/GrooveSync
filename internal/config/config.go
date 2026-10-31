@@ -38,6 +38,8 @@ type Config struct {
 	MusicBrainzURL    string
 	MusicBrainzAgent  string
 	ListenBrainzURL   string
+	// ListenBrainzToken comes from the environment only.
+	ListenBrainzToken string
 	YTMusicURL        string
 	ReleasesURL       string
 	// LibrarySyncInterval is zero when the mirror only runs on request.
@@ -66,6 +68,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		MusicBrainzURL:    envOr(getenv, "SYNCD_MUSICBRAINZ_URL", DefaultMusicBrainzURL),
 		MusicBrainzAgent:  envOr(getenv, "SYNCD_MUSICBRAINZ_AGENT", DefaultMusicBrainzAgent),
 		ListenBrainzURL:   envOr(getenv, "SYNCD_LISTENBRAINZ_URL", DefaultListenBrainzURL),
+		ListenBrainzToken: envOr(getenv, "SYNCD_LISTENBRAINZ_TOKEN", ""),
 		YTMusicURL:        envOr(getenv, "SYNCD_YTMUSIC_URL", ""),
 		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
 		Proto:             DefaultProto,

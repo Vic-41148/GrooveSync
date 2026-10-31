@@ -110,6 +110,45 @@ func (c *Client) Feedback(ctx context.Context, user string, score int) ([]Feedba
 	return out, nil
 }
 
+// SendFeedback submits love or hate for one recording. A score of 0 removes
+// the feedback. The token is the user's ListenBrainz auth token.
+func (c *Client) SendFeedback(ctx context.Context, token, mbid string, score int) error {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return errors.New("listenbrainz: auth token is required")
+	}
+	mbid = strings.TrimSpace(mbid)
+	if mbid == "" {
+		return errors.New("listenbrainz: recording mbid is required")
+	}
+	if score != -1 && score != 0 && score != 1 {
+		return fmt.Errorf("listenbrainz: unsupported score %d", score)
+	}
+	body, err := json.Marshal(struct {
+		RecordingMBID string `json:"recording_mbid"`
+		Score         int    `json:"score"`
+	}{RecordingMBID: mbid, Score: score})
+	if err != nil {
+		return fmt.Errorf("listenbrainz: encode feedback: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL()+"/1/feedback/recording-feedback", strings.NewReader(string(body)))
+	if err != nil {
+		return fmt.Errorf("listenbrainz: build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Token "+token)
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("listenbrainz: send feedback: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusNoContent {
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return fmt.Errorf("listenbrainz: status %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+	return nil
+}
+
 func (c *Client) baseURL() string {
 	if strings.TrimSpace(c.BaseURL) == "" {
 		return DefaultBaseURL

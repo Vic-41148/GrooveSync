@@ -106,6 +106,63 @@ func TestClientFeedbackFiltersScore(t *testing.T) {
 	}
 }
 
+func TestClientSendFeedback(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		score     int
+		wantScore float64
+	}{
+		{name: "love", score: 1, wantScore: 1},
+		{name: "remove", score: 0, wantScore: 0},
+		{name: "hate", score: -1, wantScore: -1},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var got map[string]any
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/1/feedback/recording-feedback" {
+					t.Errorf("request = %s %s, want the feedback endpoint", r.Method, r.URL.Path)
+				}
+				if r.Header.Get("Authorization") != "Token secret" {
+					t.Errorf("Authorization = %q, want Token secret", r.Header.Get("Authorization"))
+				}
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Errorf("decode body: %v", err)
+				}
+				w.WriteHeader(http.StatusOK)
+			}))
+			t.Cleanup(srv.Close)
+
+			if err := (&Client{BaseURL: srv.URL}).SendFeedback(context.Background(), "secret", "mbid-1", tc.score); err != nil {
+				t.Fatalf("SendFeedback() error = %v", err)
+			}
+			if got["recording_mbid"] != "mbid-1" || got["score"] != tc.wantScore {
+				t.Fatalf("body = %#v, want mbid-1 and score %v", got, tc.wantScore)
+			}
+		})
+	}
+}
+
+func TestClientSendFeedbackValidation(t *testing.T) {
+	t.Parallel()
+
+	client := &Client{BaseURL: DefaultBaseURL}
+	if err := client.SendFeedback(context.Background(), "", "mbid-1", 1); err == nil {
+		t.Fatal("SendFeedback() without a token error = nil, want failure")
+	}
+	if err := client.SendFeedback(context.Background(), "secret", " ", 1); err == nil {
+		t.Fatal("SendFeedback() without an mbid error = nil, want failure")
+	}
+	if err := client.SendFeedback(context.Background(), "secret", "mbid-1", 2); err == nil {
+		t.Fatal("SendFeedback() with an unsupported score error = nil, want failure")
+	}
+}
+
 func TestClientFeedbackValidation(t *testing.T) {
 	t.Parallel()
 

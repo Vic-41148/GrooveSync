@@ -118,6 +118,9 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 			return err
 		}
 		listenBrainz = connectors.ListenBrainzImporter{DB: db, Client: client}
+		if cfg.ListenBrainzToken != "" {
+			processor.Executors[connectors.ProviderListenBrainz] = connectors.ListenBrainzRemoteWriteExecutor(db, client, cfg.ListenBrainzToken)
+		}
 		features = append(features, "listenbrainz")
 	}
 

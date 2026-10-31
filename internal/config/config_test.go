@@ -214,16 +214,23 @@ func TestLoadParsesListenBrainzSettings(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Load(func(key string) string {
-		if key == "SYNCD_LISTENBRAINZ_URL" {
+		switch key {
+		case "SYNCD_LISTENBRAINZ_URL":
 			return "http://listenbrainz.internal"
+		case "SYNCD_LISTENBRAINZ_TOKEN":
+			return "secret"
+		default:
+			return ""
 		}
-		return ""
 	}, nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
 	if cfg.ListenBrainzURL != "http://listenbrainz.internal" {
 		t.Fatalf("listenbrainz url = %q, want the environment value", cfg.ListenBrainzURL)
+	}
+	if cfg.ListenBrainzToken != "secret" {
+		t.Fatalf("listenbrainz token = %q, want the environment value", cfg.ListenBrainzToken)
 	}
 
 	cfg, err = Load(func(string) string { return "" }, nil, &bytes.Buffer{})
