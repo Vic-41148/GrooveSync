@@ -151,9 +151,9 @@ ON CONFLICT(service, service_id) DO UPDATE SET
 func (r Repo) addReview(ctx context.Context, canonicalID string, candidate Candidate, match identity.Match) error {
 	reason := fmt.Sprintf("low confidence %.2f", match.Confidence)
 	if _, err := r.DB.ExecContext(ctx, `
-INSERT INTO review_queue (canonical_id, service, service_id, reason)
-VALUES (?, ?, ?, ?)
-`, canonicalID, candidate.Provider, candidate.ServiceID, reason); err != nil {
+INSERT INTO review_queue (canonical_id, service, service_id, reason, method, confidence)
+VALUES (?, ?, ?, ?, ?, ?)
+`, canonicalID, candidate.Provider, candidate.ServiceID, reason, string(match.Method), match.Confidence); err != nil {
 		return fmt.Errorf("resolver: add review item %s/%s: %w", candidate.Provider, candidate.ServiceID, err)
 	}
 	return nil

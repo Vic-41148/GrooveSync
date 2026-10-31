@@ -43,6 +43,8 @@ type ReviewItem struct {
 	Provider    string
 	ServiceID   string
 	Reason      string
+	Method      string
+	Confidence  float64
 	CreatedAt   time.Time
 }
 
@@ -445,9 +447,9 @@ ORDER BY provider, external_id
 // AddReviewQueueItem inserts a review item for manual resolution.
 func (r *Repo) AddReviewQueueItem(ctx context.Context, item ReviewItem) (int64, error) {
 	res, err := r.db.ExecContext(ctx, `
-INSERT INTO review_queue (canonical_id, service, service_id, reason)
-VALUES (?, ?, ?, ?)
-`, nullableString(item.CanonicalID), item.Provider, item.ServiceID, item.Reason)
+INSERT INTO review_queue (canonical_id, service, service_id, reason, method, confidence)
+VALUES (?, ?, ?, ?, ?, ?)
+`, nullableString(item.CanonicalID), item.Provider, item.ServiceID, item.Reason, item.Method, item.Confidence)
 	if err != nil {
 		return 0, fmt.Errorf("writeback: add review item %s/%s: %w", item.Provider, item.ServiceID, err)
 	}
@@ -485,10 +487,10 @@ func (r *Repo) ResolveReviewQueueItem(ctx context.Context, id int64) error {
 	var item ReviewItem
 	var canonical sql.NullString
 	if err := tx.QueryRowContext(ctx, `
-SELECT id, canonical_id, service, service_id, reason
+SELECT id, canonical_id, service, service_id, reason, method, confidence
 FROM review_queue
 WHERE id = ?
-`, id).Scan(&item.ID, &canonical, &item.Provider, &item.ServiceID, &item.Reason); err != nil {
+`, id).Scan(&item.ID, &canonical, &item.Provider, &item.ServiceID, &item.Reason, &item.Method, &item.Confidence); err != nil {
 		if err == sql.ErrNoRows {
 			return sql.ErrNoRows
 		}
@@ -523,7 +525,7 @@ ON CONFLICT(service, service_id) DO UPDATE SET
 // ListReviewQueue returns all review items in creation order.
 func (r *Repo) ListReviewQueue(ctx context.Context) ([]ReviewItem, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, canonical_id, service, service_id, reason, created_at
+SELECT id, canonical_id, service, service_id, reason, method, confidence, created_at
 FROM review_queue
 ORDER BY id ASC
 `)
@@ -537,7 +539,7 @@ ORDER BY id ASC
 		var item ReviewItem
 		var canonical sql.NullString
 		var created string
-		if err := rows.Scan(&item.ID, &canonical, &item.Provider, &item.ServiceID, &item.Reason, &created); err != nil {
+		if err := rows.Scan(&item.ID, &canonical, &item.Provider, &item.ServiceID, &item.Reason, &item.Method, &item.Confidence, &created); err != nil {
 			return nil, fmt.Errorf("writeback: scan review item: %w", err)
 		}
 		if canonical.Valid {
