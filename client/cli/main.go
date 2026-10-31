@@ -25,6 +25,7 @@ func main() {
 	open := flag.Bool("open", false, "try to open the auth URL in a browser")
 	mode := flag.String("mode", "auth", "operation mode: auth or upload")
 	file := flag.String("file", "", "file to upload when mode=upload")
+	chunkSize := flag.Int64("chunk-size", 4*1024*1024, "upload chunk size in bytes")
 	flag.Parse()
 
 	switch *mode {
@@ -95,7 +96,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "-file is required in upload mode")
 			os.Exit(2)
 		}
-		if err := uploadFile(*server, *file); err != nil {
+		if err := uploadFile(*server, *file, *chunkSize); err != nil {
 			fmt.Fprintf(os.Stderr, "upload failed: %v\n", err)
 			os.Exit(2)
 		}
@@ -106,8 +107,8 @@ func main() {
 	}
 }
 
-// uploadFile uploads a file in a single chunk and then downloads it back.
-func uploadFile(server, filename string) error {
+// uploadFile uploads a file in chunks and then downloads it back.
+func uploadFile(server, filename string, chunkSize int64) error {
 	f, err := os.Open(filename)
 	if err != nil {
 		return err
@@ -131,28 +132,41 @@ func uploadFile(server, filename string) error {
 		return err
 	}
 
-	putURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s?name=%s", strings.TrimRight(server, "/"), sum, filepath.Base(filename))
-	req, err := http.NewRequest(http.MethodPut, putURL, f)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", size-1, size))
+	// chunked upload
 	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusAccepted {
+	var start int64
+	for start < size {
+		end := start + chunkSize - 1
+		if end >= size {
+			end = size - 1
+		}
+		if _, err := f.Seek(start, io.SeekStart); err != nil {
+			return err
+		}
+		part := io.LimitReader(f, end-start+1)
+		putURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s?name=%s", strings.TrimRight(server, "/"), sum, filepath.Base(filename))
+		req, err := http.NewRequest(http.MethodPut, putURL, part)
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, size))
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
 		body := new(bytes.Buffer)
 		_, _ = body.ReadFrom(resp.Body)
-		return fmt.Errorf("upload failed: %s - %s", resp.Status, strings.TrimSpace(body.String()))
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusCreated {
+			return fmt.Errorf("upload failed: %s - %s", resp.Status, strings.TrimSpace(body.String()))
+		}
+		fmt.Printf("uploaded bytes %d-%d (%s)\n", start, end, resp.Status)
+		start = end + 1
 	}
-	fmt.Printf("upload accepted: %s\n", resp.Status)
 
 	// poll status
 	statusURL := fmt.Sprintf("%s/sync/v1/library/uploads/%s", strings.TrimRight(server, "/"), sum)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 20; i++ {
 		resp2, err := http.Get(statusURL)
 		if err != nil {
 			return err
