@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -113,19 +112,29 @@ func TestHashFileFailsWhenNeverStable(t *testing.T) {
 		t.Fatalf("write initial: %v", err)
 	}
 
-	// Continuously modify the file so it never becomes stable.
+	// Rewrite the file from a tight loop so no stability window can close.
+	// A sleeping writer races the scheduler and occasionally finishes before
+	// hashFile starts, which made this test flaky.
 	stop := make(chan struct{})
+	finished := make(chan struct{})
+	contents := [][]byte{[]byte("a"), []byte("ab")}
 	go func() {
-		defer close(stop)
-		for i := 0; i < 10; i++ {
-			time.Sleep(10 * time.Millisecond)
-			_ = os.WriteFile(path, []byte(fmt.Sprintf("%d", i)), 0o644)
+		defer close(finished)
+		for i := 0; ; i++ {
+			select {
+			case <-stop:
+				return
+			default:
+			}
+			_ = os.WriteFile(path, contents[i%2], 0o644)
 		}
 	}()
 
-	hb := HashBackfill{Root: root, StabilityInterval: 15 * time.Millisecond}
-	if _, err := hb.hashFile(path); err == nil {
+	hb := HashBackfill{Root: root, StabilityInterval: 50 * time.Millisecond}
+	_, err := hb.hashFile(path)
+	close(stop)
+	<-finished
+	if err == nil {
 		t.Fatal("hashFile succeeded despite continuous changes, want failure")
 	}
-	<-stop
 }
