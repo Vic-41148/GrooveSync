@@ -223,14 +223,37 @@ func (m Mirror) resolve(ctx context.Context, tx *sql.Tx, song Song) (string, boo
 	}
 
 	path := strings.TrimSpace(song.Path)
-	if path == "" {
-		return "", false, nil
-	}
-	err = tx.QueryRowContext(ctx, `
+	if path != "" {
+		err = tx.QueryRowContext(ctx, `
 SELECT canonical_id FROM rendition
 WHERE kind = 'file' AND path_or_uri = ?
 ORDER BY id ASC LIMIT 1
 `, path).Scan(&canonicalID)
+		if errors.Is(err, nil) || !errors.Is(err, sql.ErrNoRows) {
+			if errors.Is(err, nil) {
+				return canonicalID, false, nil
+			}
+			return "", false, fmt.Errorf("navidrome: load rendition %s: %w", path, err)
+		}
+	}
+
+	// If no alias and no rendition matched by path, try to find an existing
+	// canonical track that appears to be the same song. Matching by title,
+	// artist, album and duration avoids creating duplicate canonical tracks
+	// when a library contains multiple encodings (for example flac and mp3)
+	// of the same recording.
+	var albumVal any
+	if strings.TrimSpace(song.Album) == "" {
+		albumVal = nil
+	} else {
+		albumVal = song.Album
+	}
+	err = tx.QueryRowContext(ctx, `
+SELECT canonical_id FROM track
+WHERE title = ? AND artist = ? AND (album IS ? OR album = ?)
+AND duration_ms = ?
+ORDER BY canonical_id ASC LIMIT 1
+`, song.Title, song.Artist, albumVal, song.Album, song.DurationSeconds*1000).Scan(&canonicalID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}

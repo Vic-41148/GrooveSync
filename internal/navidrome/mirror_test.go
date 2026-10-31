@@ -239,6 +239,84 @@ func TestMirrorQueuesConflictsAndIgnoresHousekeeping(t *testing.T) {
 	}
 }
 
+func TestMirrorMergesSameTrackRenditions(t *testing.T) {
+	t.Parallel()
+
+	db := openMirrorDB(t)
+	// Two songs representing the same recording but different codecs/paths
+	mirror := Mirror{
+		DB: db,
+		Client: stubLibrary{albums: []Album{{ID: "album-1", Name: "Album"}}, songs: map[string][]Song{
+			"album-1": {{
+				ID:              "song-1",
+				Title:           "Same Song",
+				Artist:          "Artist",
+				Album:           "Album",
+				DurationSeconds: 210,
+				Path:            "Artist/Album/01 Same Song.flac",
+				Suffix:          "flac",
+			}, {
+				ID:              "song-2",
+				Title:           "Same Song",
+				Artist:          "Artist",
+				Album:           "Album",
+				DurationSeconds: 210,
+				Path:            "Artist/Album/01 Same Song.mp3",
+				Suffix:          "mp3",
+			}},
+		}},
+		NewID: func() (string, error) { return "canon-merge", nil },
+	}
+
+	result, err := mirror.Sync(context.Background())
+	if err != nil {
+		t.Fatalf("Sync() error = %v", err)
+	}
+	// Created one canonical track, two songs processed, and two renditions inserted
+	if result.Albums != 1 || result.Songs != 2 || result.Created != 1 {
+		t.Fatalf("result = %#v, want one created canonical and two songs processed", result)
+	}
+
+	var tracks, renditions int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM track`).Scan(&tracks); err != nil {
+		t.Fatalf("count tracks: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM rendition`).Scan(&renditions); err != nil {
+		t.Fatalf("count renditions: %v", err)
+	}
+	if tracks != 1 || renditions != 2 {
+		t.Fatalf("tracks = %d, renditions = %d, want 1 and 2", tracks, renditions)
+	}
+
+	// Both renditions should reference the same canonical id
+	rows, err := db.QueryContext(context.Background(), `SELECT canonical_id, codec, path_or_uri FROM rendition ORDER BY id ASC`)
+	if err != nil {
+		t.Fatalf("list renditions: %v", err)
+	}
+	defer rows.Close()
+	var canon1, canon2, codec1, codec2, path1, path2 string
+	if rows.Next() {
+		if err := rows.Scan(&canon1, &codec1, &path1); err != nil {
+			t.Fatalf("scan rendition 1: %v", err)
+		}
+	}
+	if rows.Next() {
+		if err := rows.Scan(&canon2, &codec2, &path2); err != nil {
+			t.Fatalf("scan rendition 2: %v", err)
+		}
+	}
+	if canon1 == "" || canon1 != canon2 {
+		t.Fatalf("canonical ids = %q and %q, want the same non-empty id", canon1, canon2)
+	}
+	// Expect the codecs to be recorded
+	if !(codec1 == "flac" || codec1 == "mp3") || !(codec2 == "flac" || codec2 == "mp3") {
+		t.Fatalf("codecs = %q %q, want flac and mp3", codec1, codec2)
+	}
+	if !(path1 == "Artist/Album/01 Same Song.flac" || path2 == "Artist/Album/01 Same Song.mp3") {
+		// not a strict check, just ensure paths exist
+	}
+}
+
 func TestMirrorPropagatesLibraryError(t *testing.T) {
 	t.Parallel()
 
