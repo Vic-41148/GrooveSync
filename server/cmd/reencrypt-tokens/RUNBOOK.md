@@ -40,19 +40,19 @@ Common operations
 
 1) Dry-run (discover what would change)
 
-   go run ./cmd/reencrypt-tokens --db /path/to/syncd.db
+   go run ./server/cmd/reencrypt-tokens --db /path/to/syncd.db
 
 2) Apply encryption (offline, single-key)
 
-   go run ./cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --yes --key-hex <HEX>
+   go run ./server/cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --yes --key-hex <HEX>
 
 3) Apply encryption (online, single-key)
 
-   go run ./cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --online --yes --key-hex <HEX>
+   go run ./server/cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --online --yes --key-hex <HEX>
 
 4) Multi-key setup: add two keys and set primary
 
-   go run ./cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --yes \
+   go run ./server/cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --yes \
      --key old=<OLD_HEX> --key new=<NEW_HEX> --kid new
 
    This will configure the tool to encrypt with the primary key "new" and, when applied to plaintext rows, will write key_id = "new" on updated rows.
@@ -60,10 +60,10 @@ Common operations
 5) Rotate-only: re-encrypt rows that were encrypted with a specific KID
 
    - Offline (recommended when you can stop the server):
-     go run ./cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --yes --key old=<OLD_HEX> --key new=<NEW_HEX> --kid new --rotate-only --from-kid old
+     go run ./server/cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --yes --key old=<OLD_HEX> --key new=<NEW_HEX> --kid new --rotate-only --from-kid old
 
    - Online (no downtime):
-     go run ./cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --online --yes --key old=<OLD_HEX> --key new=<NEW_HEX> --kid new --rotate-only --from-kid old
+     go run ./server/cmd/reencrypt-tokens --db /path/to/syncd.db --dry-run=false --online --yes --key old=<OLD_HEX> --key new=<NEW_HEX> --kid new --rotate-only --from-kid old
 
    Notes:
    - rotate-only targets rows where connector_token.key_id = <from-kid>. It decrypts using the from key and re-encrypts with the destination key, then writes the destination key_id.

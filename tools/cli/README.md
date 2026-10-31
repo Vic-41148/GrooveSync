@@ -6,7 +6,7 @@ production client.
 
 Auth:
 
-  go run ./client/cli -server http://127.0.0.1:8080 -account acct-1 -open
+  go run ./tools/cli -server http://127.0.0.1:8080 -account acct-1 -open
 
 The program calls the server's start-auth endpoint, prints the authorization
 URL, and optionally opens it in the desktop browser. If the server cannot be
@@ -15,7 +15,7 @@ prompt to complete the flow via POST /sync/v1/connectors/spotify/{account}/compl
 
 Upload:
 
-  go run ./client/cli -server http://127.0.0.1:8080 \
+  go run ./tools/cli -server http://127.0.0.1:8080 \
     -mode upload -file track.flac -token "$SYNCD_ADMIN_TOKEN" -chunk-size 4194304
 
 The file is hashed locally, uploaded in parts, indexed as a file rendition,

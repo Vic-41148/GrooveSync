@@ -17,7 +17,7 @@ go test ./...
 
 ## Service
 
-`cmd/syncd` starts the companion HTTP service.
+`server/cmd/syncd` starts the companion HTTP service.
 
 The service currently exposes:
 - `GET /healthz`
