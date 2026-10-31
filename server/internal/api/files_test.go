@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -83,6 +84,59 @@ func TestLibraryUploadChunks(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("hash mismatch status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+}
+
+func TestLibraryUploadBadDigestLeavesNoHalfState(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	content := []byte("audio bytes")
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+
+	h := New(Deps{
+		Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now,
+		LibraryUploads: library.NewUploadStore(dir),
+		LibraryIngest:  library.Ingestor{DB: db},
+	})
+
+	// Upload with a wrong hash - the store test ensures the .part is removed,
+	// but at the API level we also ensure no DB rows or files remain.
+	other := sha256.Sum256([]byte("other"))
+	wrongHash := hex.EncodeToString(other[:])
+	req := httptest.NewRequest(http.MethodPut, "/sync/v1/library/uploads/"+wrongHash+"?name=song.flac", strings.NewReader(string(content)))
+	req.Header.Set("Content-Range", "bytes 0-10/11")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("hash mismatch status = %d, want %d", rec.Code, http.StatusUnprocessableEntity)
+	}
+
+	// upload dir should have no .part for the wrong hash
+	if _, err := os.Stat(filepath.Join(dir, wrongHash+".part")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("part file still exists after API hash mismatch: %v", err)
+	}
+
+	// database should have no rendition, track or review entries for this hash
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM rendition WHERE lower(sha256) = ?`, wrongHash).Scan(&count); err != nil {
+		t.Fatalf("query rendition: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rendition count = %d, want 0", count)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM track WHERE canonical_id LIKE ?`, "upload-%").Scan(&count); err != nil {
+		t.Fatalf("query track: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("track count = %d, want 0", count)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM review_queue WHERE service = 'upload'`).Scan(&count); err != nil {
+		t.Fatalf("query review_queue: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("review_queue count = %d, want 0", count)
 	}
 }
 
