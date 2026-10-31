@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // HashResult counts one content-hash pass.
@@ -108,15 +109,44 @@ func (h HashBackfill) hashFile(path string) (string, error) {
 	if path == "" {
 		return "", os.ErrNotExist
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-	defer file.Close()
+	// To avoid races where a concurrently-writing process leaves a
+	// half-written file, re-stat the file before and after hashing and
+	// retry a few times when its size or modtime changes while reading.
+	const maxAttempts = 3
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		file, err := os.Open(path)
+		if err != nil {
+			return "", err
+		}
 
-	digest := sha256.New()
-	if _, err := io.Copy(digest, file); err != nil {
-		return "", fmt.Errorf("library: hash %s: %w", path, err)
+		infoBefore, err := file.Stat()
+		if err != nil {
+			file.Close()
+			return "", err
+		}
+
+		digest := sha256.New()
+		if _, err := io.Copy(digest, file); err != nil {
+			file.Close()
+			return "", fmt.Errorf("library: hash %s: %w", path, err)
+		}
+		file.Close()
+
+		infoAfter, err := os.Stat(path)
+		if err != nil {
+			return "", err
+		}
+		// If file size or modtime changed during the read, assume it was
+		// being written and retry. Small sleeps back off briefly.
+		if infoBefore.Size() != infoAfter.Size() || !infoBefore.ModTime().Equal(infoAfter.ModTime()) {
+			if attempt+1 == maxAttempts {
+				return "", fmt.Errorf("library: file changed while hashing: %s", path)
+			}
+			time.Sleep(50 * time.Millisecond)
+			continue
+		}
+
+		return hex.EncodeToString(digest.Sum(nil)), nil
 	}
-	return hex.EncodeToString(digest.Sum(nil)), nil
+	return "", fmt.Errorf("library: failed to hash %s", path)
 }
