@@ -242,6 +242,40 @@ func TestLoadParsesListenBrainzSettings(t *testing.T) {
 	}
 }
 
+func TestLoadParsesAcoustIDSettings(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := Load(func(key string) string {
+		switch key {
+		case "SYNCD_ACOUSTID_URL":
+			return "http://acoustid.internal/v2/lookup"
+		case "SYNCD_ACOUSTID_KEY":
+			return "app-key"
+		case "SYNCD_FPCALC":
+			return "/usr/local/bin/fpcalc"
+		default:
+			return ""
+		}
+	}, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.AcoustIDURL != "http://acoustid.internal/v2/lookup" || cfg.AcoustIDKey != "app-key" {
+		t.Fatalf("acoustid config = %q %q, want the environment values", cfg.AcoustIDURL, cfg.AcoustIDKey)
+	}
+	if cfg.FPCalcPath != "/usr/local/bin/fpcalc" {
+		t.Fatalf("fpcalc path = %q, want the environment value", cfg.FPCalcPath)
+	}
+
+	cfg, err = Load(func(string) string { return "" }, nil, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() defaults error = %v", err)
+	}
+	if cfg.AcoustIDURL != DefaultAcoustIDURL || cfg.FPCalcPath != DefaultFPCalcPath || cfg.AcoustIDKey != "" {
+		t.Fatalf("acoustid defaults = %q %q %q, want the package defaults", cfg.AcoustIDURL, cfg.FPCalcPath, cfg.AcoustIDKey)
+	}
+}
+
 func TestLoadRejectsUnknownLogLevel(t *testing.T) {
 	t.Parallel()
 

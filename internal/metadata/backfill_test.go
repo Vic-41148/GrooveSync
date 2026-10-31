@@ -181,6 +181,77 @@ func TestBackfillPropagatesLookupError(t *testing.T) {
 	}
 }
 
+func TestBackfillFillsMBIDFromFingerprint(t *testing.T) {
+	t.Parallel()
+
+	db := openMetadataDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-1", "", "", 180000)
+	seedRendition(t, db, "track-1", "/music/song.flac")
+
+	fingerprinter := &stubFingerprinter{}
+	lookup := stubFingerprintLookup{matches: []FingerprintMatch{
+		{MBID: "mbid-low", Score: 0.2},
+		{MBID: "mbid-best", Score: 0.9},
+	}}
+	result, err := Backfill{DB: db, Lookup: stubLookup{}, Fingerprinter: fingerprinter, Fingerprints: lookup}.Run(ctx, 10)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result != (BackfillResult{Checked: 1, Updated: 1}) {
+		t.Fatalf("result = %#v, want one updated track", result)
+	}
+	if got := trackMBID(t, db, "track-1"); got != "mbid-best" {
+		t.Fatalf("mbid = %q, want the highest scoring match", got)
+	}
+	if len(fingerprinter.paths) != 1 || fingerprinter.paths[0] != "/music/song.flac" {
+		t.Fatalf("fingerprinted = %#v, want the file rendition", fingerprinter.paths)
+	}
+
+	var cached, score string
+	if err := db.QueryRow(`SELECT COALESCE(mbid, ''), COALESCE(score, 0) FROM fingerprint WHERE path = '/music/song.flac'`).Scan(&cached, &score); err != nil {
+		t.Fatalf("load fingerprint cache: %v", err)
+	}
+	if cached != "mbid-best" {
+		t.Fatalf("cached mbid = %q, want mbid-best", cached)
+	}
+
+	if result, err = (Backfill{DB: db, Lookup: stubLookup{}, Fingerprinter: fingerprinter, Fingerprints: lookup}).Run(ctx, 10); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if len(fingerprinter.paths) != 1 {
+		t.Fatalf("fingerprinted = %#v, want the cached path skipped", fingerprinter.paths)
+	}
+	if got := trackMBID(t, db, "track-1"); got != "mbid-best" {
+		t.Fatalf("second mbid = %q, want it left at mbid-best", got)
+	}
+}
+
+func TestBackfillCachesMissedFingerprints(t *testing.T) {
+	t.Parallel()
+
+	db := openMetadataDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-1", "", "", 180000)
+	seedRendition(t, db, "track-1", "/music/song.flac")
+
+	fingerprinter := &stubFingerprinter{}
+	backfill := Backfill{DB: db, Lookup: stubLookup{}, Fingerprinter: fingerprinter, Fingerprints: stubFingerprintLookup{}}
+	result, err := backfill.Run(ctx, 10)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if result != (BackfillResult{Checked: 1, Missing: 1}) {
+		t.Fatalf("result = %#v, want one missing track", result)
+	}
+	if _, err := backfill.Run(ctx, 10); err != nil {
+		t.Fatalf("second Run() error = %v", err)
+	}
+	if len(fingerprinter.paths) != 1 {
+		t.Fatalf("fingerprinted = %#v, want the missed path cached", fingerprinter.paths)
+	}
+}
+
 func TestBackfillRequiresDependencies(t *testing.T) {
 	t.Parallel()
 
@@ -214,6 +285,28 @@ func (s stubLookup) LookupRecording(_ context.Context, mbid string) (Recording, 
 	return s.byMBID[mbid], nil
 }
 
+type stubFingerprinter struct {
+	paths []string
+	err   error
+}
+
+func (s *stubFingerprinter) Fingerprint(_ context.Context, path string) (Fingerprint, error) {
+	s.paths = append(s.paths, path)
+	if s.err != nil {
+		return Fingerprint{}, s.err
+	}
+	return Fingerprint{Value: "FP", Duration: 180}, nil
+}
+
+type stubFingerprintLookup struct {
+	matches []FingerprintMatch
+	err     error
+}
+
+func (s stubFingerprintLookup) LookupFingerprint(context.Context, Fingerprint) ([]FingerprintMatch, error) {
+	return s.matches, s.err
+}
+
 func openMetadataDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -234,6 +327,16 @@ INSERT INTO track (canonical_id, mbid, isrc, title, artist, duration_ms)
 VALUES (?, NULLIF(?, ''), NULLIF(?, ''), 'Song', 'Artist', ?)
 `, id, mbid, isrc, durationMS); err != nil {
 		t.Fatalf("insert track %s: %v", id, err)
+	}
+}
+
+func seedRendition(t *testing.T, db *sql.DB, canonicalID, path string) {
+	t.Helper()
+
+	if _, err := db.Exec(`
+INSERT INTO rendition (canonical_id, kind, path_or_uri) VALUES (?, 'file', ?)
+`, canonicalID, path); err != nil {
+		t.Fatalf("insert rendition for %s: %v", canonicalID, err)
 	}
 }
 

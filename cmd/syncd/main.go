@@ -91,7 +91,17 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		if err != nil {
 			return err
 		}
-		enricher = metadata.Backfill{DB: db, Lookup: client}
+		backfill := metadata.Backfill{DB: db, Lookup: client}
+		if cfg.AcoustIDKey != "" {
+			acoustID, err := metadata.NewAcoustID(cfg.AcoustIDURL, cfg.AcoustIDKey)
+			if err != nil {
+				return err
+			}
+			backfill.Fingerprinter = metadata.FPCalc{Path: cfg.FPCalcPath}
+			backfill.Fingerprints = acoustID
+			features = append(features, "fingerprint")
+		}
+		enricher = backfill
 		features = append(features, "metadata_enrich")
 	}
 

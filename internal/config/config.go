@@ -23,6 +23,8 @@ const (
 	DefaultMusicBrainzURL   = "https://musicbrainz.org/ws/2"
 	DefaultMusicBrainzAgent = "GrooveSync/1.0 (https://github.com/Vic-41148/groovesync)"
 	DefaultListenBrainzURL  = "https://api.listenbrainz.org"
+	DefaultAcoustIDURL      = "https://api.acoustid.org/v2/lookup"
+	DefaultFPCalcPath       = "fpcalc"
 )
 
 // Config is the single resolved configuration for a syncd process.
@@ -40,8 +42,13 @@ type Config struct {
 	ListenBrainzURL   string
 	// ListenBrainzToken comes from the environment only.
 	ListenBrainzToken string
-	YTMusicURL        string
-	ReleasesURL       string
+	AcoustIDURL       string
+	// AcoustIDKey is an application key from the environment only. Empty
+	// disables fingerprint lookup.
+	AcoustIDKey string
+	FPCalcPath  string
+	YTMusicURL  string
+	ReleasesURL string
 	// LibrarySyncInterval is zero when the mirror only runs on request.
 	LibrarySyncInterval time.Duration
 	// EnrichInterval is zero when MusicBrainz backfill only runs on request.
@@ -69,6 +76,9 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		MusicBrainzAgent:  envOr(getenv, "SYNCD_MUSICBRAINZ_AGENT", DefaultMusicBrainzAgent),
 		ListenBrainzURL:   envOr(getenv, "SYNCD_LISTENBRAINZ_URL", DefaultListenBrainzURL),
 		ListenBrainzToken: envOr(getenv, "SYNCD_LISTENBRAINZ_TOKEN", ""),
+		AcoustIDURL:       envOr(getenv, "SYNCD_ACOUSTID_URL", DefaultAcoustIDURL),
+		AcoustIDKey:       envOr(getenv, "SYNCD_ACOUSTID_KEY", ""),
+		FPCalcPath:        envOr(getenv, "SYNCD_FPCALC", DefaultFPCalcPath),
 		YTMusicURL:        envOr(getenv, "SYNCD_YTMUSIC_URL", ""),
 		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
 		Proto:             DefaultProto,
@@ -105,6 +115,8 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.StringVar(&cfg.NavidromeURL, "navidrome-url", cfg.NavidromeURL, "base URL of the Navidrome instance")
 	fs.StringVar(&cfg.MusicBrainzURL, "musicbrainz-url", cfg.MusicBrainzURL, "base URL of the MusicBrainz web service")
 	fs.StringVar(&cfg.ListenBrainzURL, "listenbrainz-url", cfg.ListenBrainzURL, "base URL of the ListenBrainz API")
+	fs.StringVar(&cfg.AcoustIDURL, "acoustid-url", cfg.AcoustIDURL, "base URL of the AcoustID lookup endpoint")
+	fs.StringVar(&cfg.FPCalcPath, "fpcalc", cfg.FPCalcPath, "path to the Chromaprint fpcalc executable")
 	fs.StringVar(&cfg.YTMusicURL, "ytmusic-url", cfg.YTMusicURL, "base URL of the YouTube Music sidecar")
 	fs.StringVar(&cfg.ReleasesURL, "releases-url", cfg.ReleasesURL, "where clients download builds from")
 	fs.DurationVar(&cfg.LibrarySyncInterval, "library-sync-interval", cfg.LibrarySyncInterval, "how often to refresh the library mirror, zero to disable")

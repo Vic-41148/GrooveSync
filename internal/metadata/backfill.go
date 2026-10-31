@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Lookup is the MusicBrainz surface a backfill needs.
@@ -20,11 +21,27 @@ type BackfillResult struct {
 	Missing int `json:"missing"`
 }
 
-// Backfill fills a missing MBID from an ISRC, or a missing ISRC from an MBID.
-// Progress is stored per track, so calling it again resumes where it stopped.
+// Fingerprinter computes a Chromaprint fingerprint for a file.
+type Fingerprinter interface {
+	Fingerprint(context.Context, string) (Fingerprint, error)
+}
+
+// FingerprintLookup resolves a fingerprint to recordings.
+type FingerprintLookup interface {
+	LookupFingerprint(context.Context, Fingerprint) ([]FingerprintMatch, error)
+}
+
+// Minimum acoustic score accepted as a recording match.
+const minimumFingerprintScore = 0.5
+
+// Backfill fills a missing MBID from an ISRC, a missing ISRC from an MBID, or
+// both from a fingerprint when a file is available. Results are cached per
+// path so a resumable pass does not fingerprint the same file twice.
 type Backfill struct {
-	DB     *sql.DB
-	Lookup Lookup
+	DB            *sql.DB
+	Lookup        Lookup
+	Fingerprinter Fingerprinter
+	Fingerprints  FingerprintLookup
 }
 
 // Run enriches at most limit tracks.
@@ -88,7 +105,117 @@ LIMIT ?
 			result.Missing++
 		}
 	}
+
+	if b.Fingerprinter == nil || b.Fingerprints == nil {
+		return result, nil
+	}
+	fingerprinted, err := b.runFingerprints(ctx, limit)
+	result.Checked += fingerprinted.Checked
+	result.Updated += fingerprinted.Updated
+	result.Missing += fingerprinted.Missing
+	if err != nil {
+		return result, err
+	}
 	return result, nil
+}
+
+func (b Backfill) runFingerprints(ctx context.Context, limit int) (BackfillResult, error) {
+	rows, err := b.DB.QueryContext(ctx, `
+SELECT t.canonical_id, r.path_or_uri
+FROM track t
+JOIN rendition r ON r.canonical_id = t.canonical_id AND r.kind = 'file'
+LEFT JOIN fingerprint f ON f.path = r.path_or_uri
+WHERE (t.mbid IS NULL OR t.mbid = '')
+  AND (t.isrc IS NULL OR t.isrc = '')
+  AND f.path IS NULL
+ORDER BY t.canonical_id ASC, r.id ASC
+LIMIT ?
+`, limit)
+	if err != nil {
+		return BackfillResult{}, fmt.Errorf("metadata: list fingerprint candidates: %w", err)
+	}
+	type candidate struct {
+		canonicalID string
+		path        string
+	}
+	var batch []candidate
+	seen := make(map[string]bool)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.canonicalID, &item.path); err != nil {
+			rows.Close()
+			return BackfillResult{}, fmt.Errorf("metadata: scan fingerprint candidate: %w", err)
+		}
+		if seen[item.canonicalID] {
+			continue
+		}
+		seen[item.canonicalID] = true
+		batch = append(batch, item)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return BackfillResult{}, fmt.Errorf("metadata: iterate fingerprint candidates: %w", err)
+	}
+	rows.Close()
+
+	var result BackfillResult
+	for _, item := range batch {
+		result.Checked++
+		fingerprint, err := b.Fingerprinter.Fingerprint(ctx, item.path)
+		if err != nil {
+			result.Missing++
+			continue
+		}
+		matches, err := b.Fingerprints.LookupFingerprint(ctx, fingerprint)
+		if err != nil {
+			return result, err
+		}
+		best := bestFingerprintMatch(matches)
+		if best.MBID == "" {
+			if err := b.cacheFingerprint(ctx, item.path, fingerprint, "", best.Score); err != nil {
+				return result, err
+			}
+			result.Missing++
+			continue
+		}
+		if _, err := b.DB.ExecContext(ctx, `UPDATE track SET mbid = ? WHERE canonical_id = ?`, best.MBID, item.canonicalID); err != nil {
+			return result, fmt.Errorf("metadata: store fingerprint mbid for %s: %w", item.canonicalID, err)
+		}
+		if err := b.cacheFingerprint(ctx, item.path, fingerprint, best.MBID, best.Score); err != nil {
+			return result, err
+		}
+		result.Updated++
+	}
+	return result, nil
+}
+
+func (b Backfill) cacheFingerprint(ctx context.Context, path string, fingerprint Fingerprint, mbid string, score float64) error {
+	if _, err := b.DB.ExecContext(ctx, `
+INSERT INTO fingerprint (path, value, duration, mbid, score, checked_at)
+VALUES (?, ?, ?, NULLIF(?, ''), ?, ?)
+ON CONFLICT(path) DO UPDATE SET
+    value = excluded.value,
+    duration = excluded.duration,
+    mbid = excluded.mbid,
+    score = excluded.score,
+    checked_at = excluded.checked_at
+`, path, fingerprint.Value, fingerprint.Duration, mbid, score, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("metadata: cache fingerprint for %s: %w", path, err)
+	}
+	return nil
+}
+
+func bestFingerprintMatch(matches []FingerprintMatch) FingerprintMatch {
+	var best FingerprintMatch
+	for _, match := range matches {
+		if match.MBID == "" || match.Score < minimumFingerprintScore {
+			continue
+		}
+		if best.MBID == "" || match.Score > best.Score {
+			best = match
+		}
+	}
+	return best
 }
 
 func (b Backfill) enrich(ctx context.Context, canonicalID, mbid, isrc string, durationMS int) (bool, error) {
