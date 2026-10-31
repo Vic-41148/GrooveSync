@@ -92,6 +92,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	}
 
 	var enricher api.MetadataEnricher
+	var enrichStats api.MetadataStats
 	if cfg.MusicBrainzURL != "" {
 		client, err := metadata.NewMusicBrainz(cfg.MusicBrainzURL, cfg.MusicBrainzAgent)
 		if err != nil {
@@ -108,6 +109,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 			features = append(features, "fingerprint")
 		}
 		enricher = backfill
+		enrichStats = backfill
 		features = append(features, "metadata_enrich")
 	}
 
@@ -164,6 +166,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Library:            libraryRepo,
 		LibraryHashes:      libraryHashes,
 		Enrich:             enricher,
+		EnrichStats:        enrichStats,
 		SpotifyImport: connectors.SpotifyImporter{
 			DB:     db,
 			Client: connectors.SpotifyClient{},

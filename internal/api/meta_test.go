@@ -2000,18 +2000,32 @@ func TestSpotifyLibraryWriteQueuesItems(t *testing.T) {
 func TestHealthReport(t *testing.T) {
 	t.Parallel()
 
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	acquisitionRepo := acquisition.Repo{DB: db}
+	if _, err := acquisitionRepo.Create(ctx, "track-1", "Song Artist"); err != nil {
+		t.Fatalf("create acquisition request: %v", err)
+	}
+
 	h := New(Deps{
-		Version:       "1.2.3",
-		Proto:         3,
-		Schema:        13,
-		Now:           time.Now,
-		Features:      []string{"meta", "youtube"},
-		DB:            pingerStub{},
-		Connectors:    connectorListerStub{accounts: []connectors.SpotifyAuthState{{AccountID: "acct-1", Status: connectors.SpotifyStatusConnected}}},
-		YouTubeHealth: healthStub{},
-		ReviewQueue:   reviewQueueStub{},
-		Library:       libraryListerStub{count: 12},
-		Playlists:     playlistListerStub{playlists: []library.Playlist{{ID: "spotify:pl-1"}}},
+		Version:           "1.2.3",
+		Proto:             3,
+		Schema:            13,
+		Now:               time.Now,
+		Features:          []string{"meta", "youtube"},
+		DB:                pingerStub{},
+		Connectors:        connectorListerStub{accounts: []connectors.SpotifyAuthState{{AccountID: "acct-1", Status: connectors.SpotifyStatusConnected}}},
+		YouTubeHealth:     healthStub{},
+		ReviewQueue:       reviewQueueStub{},
+		Library:           libraryListerStub{count: 12},
+		Playlists:         playlistListerStub{playlists: []library.Playlist{{ID: "spotify:pl-1"}}},
+		Acquisition:       acquisitionRepo,
+		AcquisitionSwitch: acquisitionRepo,
+		EnrichStats:       metadataStatsStub{stats: metadata.Stats{MusicBrainz: 3, Fingerprint: 2}},
 		ConnectorHealth: &connectorHealthStub{states: []connectors.HealthState{{
 			Provider: connectors.ProviderYouTube,
 			Status:   connectors.HealthOK,
@@ -2036,15 +2050,21 @@ func TestHealthReport(t *testing.T) {
 			} `json:"youtube"`
 		} `json:"connectors"`
 		Counts struct {
-			ReviewQueue   int `json:"review_queue"`
-			LibraryTracks int `json:"library_tracks"`
-			Playlists     int `json:"playlists"`
+			ReviewQueue           int `json:"review_queue"`
+			ResolverBacklog       int `json:"resolver_backlog"`
+			LibraryTracks         int `json:"library_tracks"`
+			Playlists             int `json:"playlists"`
+			AcquisitionQueued     int `json:"acquisition_queued"`
+			AcquisitionClaimed    int `json:"acquisition_claimed"`
+			MusicBrainzBacklog    int `json:"musicbrainz_backlog"`
+			FingerprintCandidates int `json:"fingerprint_candidates"`
 		} `json:"counts"`
 		ConnectorHealth []struct {
 			Provider string `json:"provider"`
 			Status   string `json:"status"`
 		} `json:"connector_health"`
-		WritebackMode string `json:"writeback_mode"`
+		WritebackMode       string `json:"writeback_mode"`
+		AcquisitionProvider string `json:"acquisition_provider"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
@@ -2060,6 +2080,18 @@ func TestHealthReport(t *testing.T) {
 	}
 	if got.Counts.LibraryTracks != 12 || got.Counts.Playlists != 1 {
 		t.Fatalf("counts = %#v, want 12 tracks and 1 playlist", got.Counts)
+	}
+	if got.Counts.AcquisitionQueued != 1 || got.Counts.AcquisitionClaimed != 0 {
+		t.Fatalf("acquisition counts = %#v, want one queued request", got.Counts)
+	}
+	if got.Counts.MusicBrainzBacklog != 3 || got.Counts.FingerprintCandidates != 2 {
+		t.Fatalf("enrichment counts = %#v, want the metadata stats", got.Counts)
+	}
+	if got.Counts.ResolverBacklog != got.Counts.ReviewQueue {
+		t.Fatalf("resolver backlog = %d, review queue = %d, want the same value", got.Counts.ResolverBacklog, got.Counts.ReviewQueue)
+	}
+	if got.AcquisitionProvider != "available" {
+		t.Fatalf("acquisition provider = %q, want available", got.AcquisitionProvider)
 	}
 	if len(got.ConnectorHealth) != 1 || got.ConnectorHealth[0].Status != connectors.HealthOK {
 		t.Fatalf("connector health = %#v, want one healthy row", got.ConnectorHealth)
@@ -2084,6 +2116,42 @@ func TestHealthReport(t *testing.T) {
 	if degraded.Status != "degraded" || degraded.Database != "unavailable" {
 		t.Fatalf("degraded status = %q database = %q, want degraded and unavailable", degraded.Status, degraded.Database)
 	}
+}
+
+func TestHealthReportAcquisitionDisabled(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	repo := acquisition.Repo{DB: db}
+	if err := repo.SetEnabled(context.Background(), false); err != nil {
+		t.Fatalf("SetEnabled() error = %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 13, Now: time.Now, DB: pingerStub{}, Acquisition: repo, AcquisitionSwitch: repo}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/health", nil))
+
+	var got struct {
+		Status              string `json:"status"`
+		AcquisitionEnabled  bool   `json:"acquisition_enabled"`
+		AcquisitionProvider string `json:"acquisition_provider"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if got.AcquisitionEnabled || got.AcquisitionProvider != "disabled" || got.Status != "ok" {
+		t.Fatalf("health = %#v, want a disabled but healthy provider", got)
+	}
+}
+
+type metadataStatsStub struct {
+	stats metadata.Stats
+	err   error
+}
+
+func (s metadataStatsStub) Stats(context.Context) (metadata.Stats, error) {
+	return s.stats, s.err
 }
 
 type healthStub struct {

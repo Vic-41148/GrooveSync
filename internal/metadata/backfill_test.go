@@ -307,6 +307,34 @@ func (s stubFingerprintLookup) LookupFingerprint(context.Context, Fingerprint) (
 	return s.matches, s.err
 }
 
+func TestStatsCountsEnrichmentBacklogs(t *testing.T) {
+	t.Parallel()
+
+	db := openMetadataDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "isrc-only", "", "ISRC-1", 180000)
+	seedTrack(t, db, "mbid-only", "mbid-1", "", 180000)
+	seedTrack(t, db, "complete", "mbid-2", "ISRC-2", 180000)
+	seedTrack(t, db, "fingerprint", "", "", 180000)
+	seedRendition(t, db, "fingerprint", "Artist/Album/01 Song.flac")
+	seedTrack(t, db, "cached", "", "", 180000)
+	seedRendition(t, db, "cached", "Artist/Album/02 Song.flac")
+	if _, err := db.Exec(`
+INSERT INTO fingerprint (path, value, duration, mbid, score, checked_at)
+VALUES ('Artist/Album/02 Song.flac', 'FP', 180, NULL, 0, '2026-01-01T00:00:00Z')
+`); err != nil {
+		t.Fatalf("insert fingerprint: %v", err)
+	}
+
+	stats, err := Backfill{DB: db}.Stats(ctx)
+	if err != nil {
+		t.Fatalf("Stats() error = %v", err)
+	}
+	if stats != (Stats{MusicBrainz: 2, Fingerprint: 1}) {
+		t.Fatalf("stats = %#v, want two identifier lookups and one fingerprint candidate", stats)
+	}
+}
+
 func openMetadataDB(t *testing.T) *sql.DB {
 	t.Helper()
 

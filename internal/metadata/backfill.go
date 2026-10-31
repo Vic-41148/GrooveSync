@@ -21,6 +21,40 @@ type BackfillResult struct {
 	Missing int `json:"missing"`
 }
 
+// Stats reports how many tracks are waiting for enrichment.
+type Stats struct {
+	MusicBrainz int `json:"musicbrainz_backlog"`
+	Fingerprint int `json:"fingerprint_candidates"`
+}
+
+// Stats counts the tracks a future backfill pass would inspect.
+func (b Backfill) Stats(ctx context.Context) (Stats, error) {
+	if b.DB == nil {
+		return Stats{}, errors.New("metadata: database is required")
+	}
+	var stats Stats
+	if err := b.DB.QueryRowContext(ctx, `
+SELECT COUNT(*)
+FROM track
+WHERE ((mbid IS NULL OR mbid = '') AND isrc IS NOT NULL AND isrc <> '')
+   OR ((isrc IS NULL OR isrc = '') AND mbid IS NOT NULL AND mbid <> '')
+`).Scan(&stats.MusicBrainz); err != nil {
+		return Stats{}, fmt.Errorf("metadata: count musicbrainz backlog: %w", err)
+	}
+	if err := b.DB.QueryRowContext(ctx, `
+SELECT COUNT(DISTINCT t.canonical_id)
+FROM track t
+JOIN rendition r ON r.canonical_id = t.canonical_id AND r.kind = 'file'
+LEFT JOIN fingerprint f ON f.path = r.path_or_uri
+WHERE (t.mbid IS NULL OR t.mbid = '')
+  AND (t.isrc IS NULL OR t.isrc = '')
+  AND f.path IS NULL
+`).Scan(&stats.Fingerprint); err != nil {
+		return Stats{}, fmt.Errorf("metadata: count fingerprint candidates: %w", err)
+	}
+	return stats, nil
+}
+
 // Fingerprinter computes a Chromaprint fingerprint for a file.
 type Fingerprinter interface {
 	Fingerprint(context.Context, string) (Fingerprint, error)

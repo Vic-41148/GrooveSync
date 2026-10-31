@@ -55,6 +55,7 @@ type Deps struct {
 	Library            LibraryLister
 	LibraryHashes      LibraryHasher
 	Enrich             MetadataEnricher
+	EnrichStats        MetadataStats
 	SpotifyImport      SpotifyLikeImport
 	SpotifyPlaylists   SpotifyPlaylistImport
 	YouTubeImport      YouTubeLikeImport
@@ -167,6 +168,11 @@ type LibraryHasher interface {
 // MetadataEnricher fills missing identifiers from an upstream database.
 type MetadataEnricher interface {
 	Run(context.Context, int) (metadata.BackfillResult, error)
+}
+
+// MetadataStats reports the enrichment queues a health panel shows.
+type MetadataStats interface {
+	Stats(context.Context) (metadata.Stats, error)
 }
 
 // HealthChecker reports whether an external service is usable.
@@ -370,6 +376,37 @@ func (d Deps) handleHealthReport(w http.ResponseWriter, r *http.Request) {
 			status = "degraded"
 		} else {
 			counts["review_queue"] = len(items)
+			counts["resolver_backlog"] = len(items)
+		}
+	}
+	if d.EnrichStats != nil {
+		stats, err := d.EnrichStats.Stats(ctx)
+		if err != nil {
+			counts["musicbrainz_backlog"] = "unavailable"
+			counts["fingerprint_candidates"] = "unavailable"
+			status = "degraded"
+		} else {
+			counts["musicbrainz_backlog"] = stats.MusicBrainz
+			counts["fingerprint_candidates"] = stats.Fingerprint
+		}
+	}
+	if d.Acquisition != nil {
+		open, err := d.Acquisition.List(ctx, acquisition.StateQueued, acquisition.StateClaimed)
+		if err != nil {
+			counts["acquisition_queued"] = "unavailable"
+			counts["acquisition_claimed"] = "unavailable"
+			status = "degraded"
+		} else {
+			queued, claimed := 0, 0
+			for _, request := range open {
+				if request.State == acquisition.StateClaimed {
+					claimed++
+				} else {
+					queued++
+				}
+			}
+			counts["acquisition_queued"] = queued
+			counts["acquisition_claimed"] = claimed
 		}
 	}
 	if d.Library != nil {
@@ -404,14 +441,23 @@ func (d Deps) handleHealthReport(w http.ResponseWriter, r *http.Request) {
 		enabled, err := d.AcquisitionSwitch.Enabled(ctx)
 		if err != nil {
 			payload["acquisition_enabled"] = "unavailable"
+			payload["acquisition_provider"] = "unavailable"
 			status = "degraded"
 		} else {
 			payload["acquisition_enabled"] = enabled
+			payload["acquisition_provider"] = acquisitionProvider(enabled)
 		}
 	}
 
 	payload["status"] = status
 	writeJSON(w, http.StatusOK, payload, 0)
+}
+
+func acquisitionProvider(enabled bool) string {
+	if enabled {
+		return "available"
+	}
+	return "disabled"
 }
 
 func (d Deps) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
