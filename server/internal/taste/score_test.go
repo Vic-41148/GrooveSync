@@ -4,6 +4,7 @@
 package taste
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -98,6 +99,18 @@ func TestAllowedSource(t *testing.T) {
 	for _, src := range []Source{SourceLocal, SourceMusicBrainz, SourceListenBrainz, SourceNavidrome, SourceYouTube} {
 		if !AllowedSource(src) {
 			t.Fatalf("AllowedSource(%q) = false, want true", src)
+		}
+	}
+}
+
+
+func TestNoSpotifyFieldInContributions(t *testing.T) {
+	t.Parallel()
+	ev := Event{TrackID: "t1", Source: "spotify", Type: "play", Value: 1, At: time.Now()}
+	res := Score([]Event{ev}, Config{})
+	for _, c := range res.Contributions {
+		if strings.Contains(strings.ToLower(c.Name), "spotify") {
+			t.Fatalf("spotify field leaked into contribution: %+v", c)
 		}
 	}
 }
