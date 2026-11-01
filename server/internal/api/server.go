@@ -456,11 +456,17 @@ func (d Deps) handleHealthReport(w http.ResponseWriter, r *http.Request) {
 			status = "degraded"
 		} else {
 			payload["connector_health"] = states
+			lastSuccessful := map[string]string{}
 			for _, state := range states {
 				if state.Status != connectors.HealthOK {
 					status = "degraded"
+					continue
+				}
+				if !state.CheckedAt.IsZero() {
+					lastSuccessful[state.Provider] = state.CheckedAt.UTC().Format(time.RFC3339)
 				}
 			}
+			payload["last_successful_sync"] = lastSuccessful
 		}
 	}
 
