@@ -27,16 +27,16 @@ type Rendition struct {
 
 // Track is one canonical track with its renditions.
 type Track struct {
-	CanonicalID      string      `json:"canonical_id"`
-	Title            string      `json:"title"`
-	Artist           string      `json:"artist"`
-	Album            string      `json:"album,omitempty"`
-	DurationMs       int         `json:"duration_ms"`
-	MBID             string      `json:"mbid,omitempty"`
-	ISRC             string      `json:"isrc,omitempty"`
-	ReplayGainTrack  *float64    `json:"replay_gain_track_db,omitempty"`
-	ReplayGainAlbum  *float64    `json:"replay_gain_album_db,omitempty"`
-	Renditions       []Rendition `json:"renditions"`
+	CanonicalID     string      `json:"canonical_id"`
+	Title           string      `json:"title"`
+	Artist          string      `json:"artist"`
+	Album           string      `json:"album,omitempty"`
+	DurationMs      int         `json:"duration_ms"`
+	MBID            string      `json:"mbid,omitempty"`
+	ISRC            string      `json:"isrc,omitempty"`
+	ReplayGainTrack *float64    `json:"replay_gain_track_db,omitempty"`
+	ReplayGainAlbum *float64    `json:"replay_gain_album_db,omitempty"`
+	Renditions      []Rendition `json:"renditions"`
 }
 
 // Contribution is a single observed path that contributed the content behind
