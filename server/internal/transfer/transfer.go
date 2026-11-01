@@ -48,6 +48,7 @@ type Planner struct {
 	DB      *sql.DB
 	Devices DeviceSource
 	Now     func() time.Time
+	OnWiFi  bool
 }
 
 type target struct {
@@ -88,6 +89,10 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 
 	plan := Plan{DeviceID: deviceID, Downloads: []File{}, Deletes: []File{}, Warnings: []string{}}
 	if device.SyncMode == devices.ModeOff || policy.Scope == devices.ScopeOff {
+		return plan, nil
+	}
+	if policy.NetworkRule == devices.NetworkWiFi && !p.OnWiFi {
+		plan.Warnings = append(plan.Warnings, "network rule requires Wi-Fi")
 		return plan, nil
 	}
 

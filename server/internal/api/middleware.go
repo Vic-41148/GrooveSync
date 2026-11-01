@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -141,12 +142,52 @@ func (s *statusRecorder) Flush() {
 // withAuth enforces bearer token authentication for /sync/v1/* endpoints.
 // A missing AdminToken leaves the API open, which config.CheckExposure only
 // permits on a loopback bind.
+// authLimiter is a small in-memory fixed-window limiter keyed by client IP.
+type authLimiter struct {
+	mu      sync.Mutex
+	counts  map[string]int
+	resetAt map[string]time.Time
+	limit   int
+	window  time.Duration
+}
+
+func newAuthLimiter(limit int, window time.Duration) *authLimiter {
+	return &authLimiter{counts: map[string]int{}, resetAt: map[string]time.Time{}, limit: limit, window: window}
+}
+
+func (l *authLimiter) allow(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	now := time.Now()
+	if t, ok := l.resetAt[key]; !ok || now.After(t) {
+		l.counts[key] = 0
+		l.resetAt[key] = now.Add(l.window)
+	}
+	if l.counts[key] >= l.limit {
+		return false
+	}
+	l.counts[key]++
+	return true
+}
+
 func withAuth(d DepsGetter, next http.Handler) http.Handler {
+	regLimiter := newAuthLimiter(20, time.Minute)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Only protect API paths under /sync/v1/
 		if !strings.HasPrefix(r.URL.Path, "/sync/v1/") {
 			next.ServeHTTP(w, r)
 			return
+		}
+
+		ip := r.RemoteAddr
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			ip = strings.Split(fwd, ",")[0]
+		}
+		if r.Method == http.MethodPost && r.URL.Path == "/sync/v1/devices" {
+			if !regLimiter.allow("reg:" + ip) {
+				writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limited"}, 0)
+				return
+			}
 		}
 
 		// If no admin token is configured, treat the API as permissive. This
