@@ -185,6 +185,19 @@ func (l Log) ScoreTracks(cfg Config, asOf time.Time) []TrackScore {
 	return out
 }
 
+// ScoreTracksColdStart applies ColdStartScore for tracks with no recorded history.
+func (l Log) ScoreTracksColdStart(cfg Config, asOf time.Time, library map[string]Metadata) []TrackScore {
+	out := l.ScoreTracks(cfg, asOf)
+	for i := range out {
+		if out[i].Score == 0 {
+			if meta, ok := library[out[i].CanonicalID]; ok {
+				out[i].Score = ColdStartScore(Metadata{Title: meta.Title, Artist: meta.Artist, Album: meta.Album, Tags: meta.Tags}, meta)
+			}
+		}
+	}
+	return out
+}
+
 func MergeLogs(a, b Log) Log {
 	merged := make([]EventRecord, 0, len(a.entries)+len(b.entries))
 	seen := make(map[string]EventRecord, len(a.entries)+len(b.entries))
