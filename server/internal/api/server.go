@@ -340,6 +340,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/library/hash", d.handleLibraryHash)
 	mux.HandleFunc("POST /sync/v1/library/enrich", d.handleLibraryEnrich)
 	mux.HandleFunc("GET /sync/v1/library", d.handleLibrary)
+	mux.HandleFunc("GET /sync/v1/why/{id}", d.handleWhy)
 	mux.HandleFunc("GET /sync/v1/library/files/{hash}", d.handleLibraryFile)
 	mux.HandleFunc("PUT /sync/v1/library/uploads/{hash}", d.handleLibraryUpload)
 	mux.HandleFunc("GET /sync/v1/library/uploads/{hash}", d.handleLibraryUploadStatus)
@@ -2437,6 +2438,15 @@ func parseContentRange(header string) (int64, int64, int64, error) {
 		return 0, 0, 0, errors.New("invalid byte range")
 	}
 	return start, end, total, nil
+}
+
+func (d Deps) handleWhy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	writeJSON(w, http.StatusOK, map[string]any{
+		"track":          id,
+		"contributions":  []map[string]any{},
+		"manual_override": nil,
+	}, 0)
 }
 
 func (d Deps) handleLibrary(w http.ResponseWriter, r *http.Request) {
