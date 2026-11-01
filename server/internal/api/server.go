@@ -27,6 +27,7 @@ import (
 	"github.com/Vic-41148/groovesync/server/internal/devices"
 	"github.com/Vic-41148/groovesync/server/internal/library"
 	"github.com/Vic-41148/groovesync/server/internal/metadata"
+	"github.com/Vic-41148/groovesync/server/internal/ntfy"
 	"github.com/Vic-41148/groovesync/server/internal/navidrome"
 	"github.com/Vic-41148/groovesync/server/internal/taste"
 	"github.com/Vic-41148/groovesync/server/internal/transfer"
@@ -65,6 +66,7 @@ type Deps struct {
 	Mix                MixSource
 	Acquisition        AcquisitionQueue
 	AcquisitionSwitch  AcquisitionSwitch
+	Ntfy              ntfy.Publisher
 	LibrarySync        LibraryMirror
 	Library            LibraryLister
 	LibraryHashes      LibraryHasher
