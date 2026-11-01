@@ -78,8 +78,16 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 		return Plan{}, err
 	}
 
+	// An external device owns its folder: whole-folder scope, no affinity
+	// rules, no automatic deletions, no eviction suggestions.
+	policy := device.Policy
+	if device.SyncMode == devices.ModeExternal {
+		policy.Scope = devices.ScopeEverything
+		policy.MirrorDeletions = false
+	}
+
 	plan := Plan{DeviceID: deviceID, Downloads: []File{}, Deletes: []File{}, Warnings: []string{}}
-	if device.SyncMode == devices.ModeOff || device.Policy.Scope == devices.ScopeOff {
+	if device.SyncMode == devices.ModeOff || policy.Scope == devices.ScopeOff {
 		return plan, nil
 	}
 
@@ -91,7 +99,7 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
-	targets, err := p.targets(ctx, device.Policy)
+	targets, err := p.targets(ctx, policy)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -113,7 +121,7 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 	var downloadBytes int64
 	capped := false
 	for _, target := range targets {
-		choice, ok := choose(renditions[target.CanonicalID], device.Policy.Quality)
+		choice, ok := choose(renditions[target.CanonicalID], policy.Quality)
 		if !ok {
 			continue
 		}
@@ -125,7 +133,7 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 			plan.Unchanged++
 			continue
 		}
-		if device.Policy.StorageCapBytes > 0 && used+choice.SizeBytes > device.Policy.StorageCapBytes {
+		if policy.StorageCapBytes > 0 && used+choice.SizeBytes > policy.StorageCapBytes {
 			capped = true
 			continue
 		}
@@ -143,16 +151,20 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 	}
 	plan.DownloadBytes = downloadBytes
 
-	evictions, err := p.evictions(ctx, holdings, renditions, device.Policy.StorageCapBytes, used)
-	if err != nil {
-		return Plan{}, err
-	}
-	plan.Evictions = evictions
-	if len(evictions) > 0 {
-		plan.Warnings = append(plan.Warnings, "storage cap exceeded; eviction suggestions follow")
+	if device.SyncMode != devices.ModeExternal {
+		evictions, err := p.evictions(ctx, holdings, renditions, policy.StorageCapBytes, used)
+		if err != nil {
+			return Plan{}, err
+		}
+		plan.Evictions = evictions
+		if len(evictions) > 0 {
+			plan.Warnings = append(plan.Warnings, "storage cap exceeded; eviction suggestions follow")
+		}
+	} else {
+		plan.Evictions = []File{}
 	}
 
-	if device.Policy.MirrorDeletions {
+	if policy.MirrorDeletions {
 		for _, holding := range holdings {
 			if inScope[holding.CanonicalID] {
 				continue

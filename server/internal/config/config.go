@@ -148,6 +148,8 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 				cfg.IgnoreGlobs = append(cfg.IgnoreGlobs, pattern)
 			}
 		}
+	} else {
+		cfg.IgnoreGlobs = append(cfg.IgnoreGlobs, ".stfolder", ".stversions", ".syncthing.*.tmp")
 	}
 
 	fs := flag.NewFlagSet("syncd", flag.ContinueOnError)

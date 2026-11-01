@@ -341,8 +341,8 @@ func TestLoadParsesIgnoreGlobs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load() defaults error = %v", err)
 	}
-	if len(cfg.IgnoreGlobs) != 0 {
-		t.Fatalf("IgnoreGlobs = %#v, want none by default", cfg.IgnoreGlobs)
+	if len(cfg.IgnoreGlobs) != 3 || cfg.IgnoreGlobs[0] != ".stfolder" || cfg.IgnoreGlobs[1] != ".stversions" || cfg.IgnoreGlobs[2] != ".syncthing.*.tmp" {
+		t.Fatalf("IgnoreGlobs = %#v, want the default Syncthing patterns", cfg.IgnoreGlobs)
 	}
 }
 

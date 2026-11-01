@@ -2842,3 +2842,102 @@ func TestHandleMetaSetsCacheControl(t *testing.T) {
 		t.Fatalf("Cache-Control = %q, want %q", got, "public, max-age=60")
 	}
 }
+func TestEventListPaged(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('t', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	// Seed 3 events with distinct HLCs
+	baseTime := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	events := []taste.EventRecord{
+		{ID: "e1", DeviceID: "p", CanonicalID: "t", Type: taste.EventLike, Value: 1, HLC: taste.HLC{Wall: baseTime, Counter: 1, Node: "p"}},
+		{ID: "e2", DeviceID: "p", CanonicalID: "t", Type: taste.EventLike, Value: 1, HLC: taste.HLC{Wall: baseTime.Add(time.Minute), Counter: 1, Node: "p"}},
+		{ID: "e3", DeviceID: "p", CanonicalID: "t", Type: taste.EventLike, Value: 1, HLC: taste.HLC{Wall: baseTime.Add(2 * time.Minute), Counter: 1, Node: "p"}},
+	}
+
+	store := taste.NewStore(db)
+	if _, err := store.Append(ctx, events); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 8, Now: func() time.Time { return baseTime }, EventLog: store})
+
+	// 1. Page with limit=1
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/events?limit=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp1 struct {
+		Events  []taste.EventRecord `json:"events"`
+		Next    string              `json:"next"`
+		HasMore bool                `json:"has_more"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp1); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp1.Events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(resp1.Events))
+	}
+	if resp1.Events[0].ID != "e1" {
+		t.Fatalf("want e1, got %s", resp1.Events[0].ID)
+	}
+	if !resp1.HasMore {
+		t.Fatalf("want has_more=true")
+	}
+	if resp1.Next == "" {
+		t.Fatalf("want next cursor")
+	}
+
+	// 2. Page 2 with next cursor
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/events?since="+resp1.Next+"&limit=1", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp2 struct {
+		Events  []taste.EventRecord `json:"events"`
+		Next    string              `json:"next"`
+		HasMore bool                `json:"has_more"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp2); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp2.Events) != 1 {
+		t.Fatalf("want 1 event, got %d", len(resp2.Events))
+	}
+	if resp2.Events[0].ID != "e2" {
+		t.Fatalf("want e2, got %s", resp2.Events[0].ID)
+	}
+	if !resp2.HasMore {
+		t.Fatalf("want has_more=true")
+	}
+
+	// 3. Limit clamping (limit=1000 -> 500)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/events?limit=1000", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp3 struct {
+		Events []taste.EventRecord `json:"events"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp3); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp3.Events) > 500 {
+		t.Fatalf("limit was not clamped to 500, got %d", len(resp3.Events))
+	}
+
+	// 4. Malformed since
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/events?since=invalid", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400 for malformed since, got %d", rec.Code)
+	}
+}

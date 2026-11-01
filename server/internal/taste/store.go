@@ -124,3 +124,45 @@ FROM event
 	}
 	return NewLog(out...).Entries(), nil
 }
+
+// ListPage returns a slice of events after since in clock order,
+// the next cursor (the last HLC formatted), and has_more.
+func (s *Store) ListPage(ctx context.Context, since HLC, limit int) ([]EventRecord, string, bool, error) {
+	if s.db == nil {
+		return nil, "", false, errors.New("taste: database is required")
+	}
+
+	all, err := s.List(ctx)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	// Since List() returns events ordered by clock, we can just find the first one after 'since'.
+	startIdx := -1
+	for i, e := range all {
+		if e.HLC.After(since) {
+			startIdx = i
+			break
+		}
+	}
+
+	if startIdx == -1 {
+		return nil, "", false, nil
+	}
+
+	filtered := all[startIdx:]
+
+	hasMore := len(filtered) > limit
+	take := limit
+	if !hasMore {
+		take = len(filtered)
+	}
+
+	page := filtered[:take]
+	next := ""
+	if len(page) > 0 {
+		next = page[len(page)-1].HLC.Format()
+	}
+
+	return page, next, hasMore, nil
+}

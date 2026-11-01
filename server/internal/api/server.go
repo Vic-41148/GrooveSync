@@ -160,6 +160,7 @@ type DeviceRegistry interface {
 type EventLog interface {
 	Append(context.Context, []taste.EventRecord) (int, error)
 	List(context.Context) ([]taste.EventRecord, error)
+	ListPage(ctx context.Context, since taste.HLC, limit int) ([]taste.EventRecord, string, bool, error)
 }
 
 // MixSource builds the candidate pool a mix draws from.
@@ -539,6 +540,56 @@ func (d Deps) handleHealthReport(w http.ResponseWriter, r *http.Request) {
 			payload["acquisition_enabled"] = enabled
 			payload["acquisition_provider"] = acquisitionProvider(enabled)
 		}
+	}
+
+	// Token countdown for connector tokens (seconds until the earliest expiry).
+	if d.Connectors != nil {
+		accounts, err := d.Connectors.ListSpotifyAccounts(ctx)
+		if err == nil {
+			countdown := -1
+			for _, account := range accounts {
+				if account.ExpiringAt.IsZero() {
+					continue
+				}
+				secs := int(account.ExpiringAt.Sub(d.Now()).Seconds())
+				if countdown == -1 || secs < countdown {
+					countdown = secs
+				}
+			}
+			payload["token_countdown"] = countdown
+		}
+	}
+
+	// Queue depths and review size, mirroring the counts block for clients that
+	// read the flat fields.
+	payload["queue_depths"] = counts
+	reviewSize := 0
+	if v, ok := counts["review_queue"]; ok {
+		if n, ok := v.(int); ok {
+			reviewSize = n
+		}
+	}
+	payload["review_size"] = reviewSize
+
+	// Last batch from the write log, if any.
+	if d.WriteLog != nil {
+		if items, err := d.WriteLog.ListWriteLog(ctx); err == nil && len(items) > 0 {
+			payload["last_batch"] = items[len(items)-1].BatchID
+		} else {
+			payload["last_batch"] = ""
+		}
+	}
+
+	// Plugin status mirrors connector health for the acquisition/connector plugins.
+	if d.ConnectorHealth != nil {
+		if states, err := d.ConnectorHealth.List(ctx); err == nil {
+			payload["plugin_status"] = states
+		}
+	}
+
+	// Acquisition provider state alias.
+	if v, ok := payload["acquisition_provider"]; ok {
+		payload["acquisition_provider_state"] = v
 	}
 
 	payload["status"] = status
@@ -1691,7 +1742,31 @@ func (d Deps) handleEvents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"events": []taste.EventRecord{}}, 0)
 		return
 	}
-	events, err := d.EventLog.List(r.Context())
+
+	query := r.URL.Query()
+	sinceStr := query.Get("since")
+	limit := 200
+	if raw := query.Get("limit"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil {
+			if parsed > 0 && parsed <= 500 {
+				limit = parsed
+			} else if parsed > 500 {
+				limit = 500
+			}
+		}
+	}
+
+	var since taste.HLC
+	if sinceStr != "" {
+		var err error
+		since, err = taste.ParseHLC(sinceStr)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid since cursor"}, 0)
+			return
+		}
+	}
+
+	events, next, hasMore, err := d.EventLog.ListPage(r.Context(), since, limit)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "events unavailable"}, 0)
 		return
@@ -1699,7 +1774,11 @@ func (d Deps) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if events == nil {
 		events = []taste.EventRecord{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"events": events}, 0)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"events":   events,
+		"next":     next,
+		"has_more": hasMore,
+	}, 0)
 }
 
 func (d Deps) handleEventsAppend(w http.ResponseWriter, r *http.Request) {

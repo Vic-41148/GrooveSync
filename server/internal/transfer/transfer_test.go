@@ -431,3 +431,33 @@ VALUES (?, 'phone', ?, ?, 1, ?)
 		t.Fatalf("insert event %s: %v", id, err)
 	}
 }
+
+func TestPlanExternalModeRules(t *testing.T) {
+	t.Parallel()
+
+	db := openTransferDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-1", "Song")
+	seedRendition(t, db, "track-1", testHash("1"), "Music/Artist/Song.flac", "flac", 100)
+	seedTrack(t, db, "track-2", "Other")
+	seedRendition(t, db, "track-2", testHash("2"), "Music/Other.flac", "flac", 50)
+
+	repo := seedDevice(t, db, devices.Device{ID: "ext", Name: "External", SyncMode: devices.ModeExternal})
+	if err := repo.ReportHoldings(ctx, "ext", []devices.Holding{{CanonicalID: "track-1", Hash: testHash("1")}}); err != nil {
+		t.Fatalf("ReportHoldings() error = %v", err)
+	}
+
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "ext")
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(plan.Deletes) != 0 {
+		t.Fatalf("deletes = %#v, want none in external mode", plan.Deletes)
+	}
+	if len(plan.Evictions) != 0 {
+		t.Fatalf("evictions = %#v, want none in external mode", plan.Evictions)
+	}
+	if len(plan.Downloads) != 1 || plan.Downloads[0].CanonicalID != "track-2" {
+		t.Fatalf("downloads = %#v, want the missing track downloaded", plan.Downloads)
+	}
+}
