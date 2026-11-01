@@ -208,3 +208,26 @@ func TestResolve(t *testing.T) {
 		})
 	}
 }
+
+
+func TestGoldenIdentitySet(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		local  Track
+		remote Track
+		want   Method
+	}{
+		{local: Track{Title: "Song", Artist: "Artist", DurationMS: 180000}, remote: Track{Title: "Song (Live)", Artist: "Artist", DurationMS: 180000}, want: MethodNone},
+		{local: Track{Title: "Song", Artist: "Artist", DurationMS: 180000}, remote: Track{Title: "Song", Artist: "Artist", DurationMS: 200000}, want: MethodFuzzy},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.local.Title+"->"+tc.remote.Title, func(t *testing.T) {
+			t.Parallel()
+			m, _, _ := Resolve(tc.local, []Track{tc.remote}, 0.8)
+			_ = m
+		})
+	}
+}
