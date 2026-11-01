@@ -701,6 +701,9 @@ func (d Deps) handleReviewQueueResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.publish("review", map[string]any{"id": id, "resolved": true})
+	if d.Ntfy != nil {
+		_ = d.Ntfy.Publish(r.Context(), "groovesync-review", "review resolved")
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -1805,6 +1808,9 @@ func (d Deps) handleEventsAppend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.publish("events", map[string]any{"stored": stored})
+	if d.Ntfy != nil && stored > 0 {
+		_ = d.Ntfy.Publish(r.Context(), "groovesync-events", "events appended")
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"stored": stored}, 0)
 }
 
