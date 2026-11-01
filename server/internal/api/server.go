@@ -2443,8 +2443,8 @@ func parseContentRange(header string) (int64, int64, int64, error) {
 func (d Deps) handleWhy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	writeJSON(w, http.StatusOK, map[string]any{
-		"track":          id,
-		"contributions":  []map[string]any{},
+		"track":           id,
+		"contributions":   []map[string]any{},
 		"manual_override": nil,
 	}, 0)
 }

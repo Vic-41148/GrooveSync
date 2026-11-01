@@ -209,7 +209,6 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-
 func TestGoldenIdentitySet(t *testing.T) {
 	t.Parallel()
 

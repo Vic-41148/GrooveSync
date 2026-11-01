@@ -103,7 +103,6 @@ func TestAllowedSource(t *testing.T) {
 	}
 }
 
-
 func TestNoSpotifyFieldInContributions(t *testing.T) {
 	t.Parallel()
 	ev := Event{TrackID: "t1", Source: "spotify", Type: "play", Value: 1, At: time.Now()}
