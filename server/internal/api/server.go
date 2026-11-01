@@ -1337,6 +1337,7 @@ func (d Deps) handleSpotifyPlaylistImport(w http.ResponseWriter, r *http.Request
 		return
 	}
 	d.reportConnectorHealth(r.Context(), connectors.ProviderSpotify, connectors.HealthOK, "")
+	d.publishNtfy(r, "playlist", "playlists imported")
 	writeJSON(w, http.StatusOK, result, 0)
 }
 
@@ -1389,6 +1390,7 @@ func (d Deps) handleYouTubePlaylistImport(w http.ResponseWriter, r *http.Request
 		return
 	}
 	d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthOK, "")
+	d.publishNtfy(r, "playlist", "playlists imported")
 	writeJSON(w, http.StatusOK, result, 0)
 }
 
@@ -1867,6 +1869,35 @@ func (d Deps) publish(event string, payload any) {
 	}
 }
 
+// publishNtfy sends an opt-in push notification. A device id in the request
+// selects that user's topic; otherwise the mutation kind is used.
+func (d Deps) publishNtfy(r *http.Request, kind, message string) {
+	if d.Ntfy == nil {
+		return
+	}
+	topic := "groovesync-" + kind
+	if deviceID := deviceIDFromRequest(r); deviceID != "" {
+		topic = "groovesync-" + deviceID
+	}
+	_ = d.Ntfy.Publish(r.Context(), topic, message)
+}
+
+func deviceIDFromRequest(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Device-Id")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(r.PathValue("id")); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(r.URL.Query().Get("device_id")); v != "" {
+		return v
+	}
+	return ""
+}
+
 func (d Deps) handleScores(w http.ResponseWriter, r *http.Request) {
 	asOf := d.Now().UTC()
 	if raw := r.URL.Query().Get("as_of"); raw != "" {
@@ -2084,6 +2115,7 @@ func (d Deps) handleAcquisitionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.publish("acquisition", newAcquisitionResponse(request))
+	d.publishNtfy(r, "acquisition", "acquisition queued")
 	writeJSON(w, http.StatusCreated, map[string]any{"request": newAcquisitionResponse(request)}, 0)
 }
 
@@ -2132,6 +2164,7 @@ func (d Deps) handleAcquisitionSuggestionsQueue(w http.ResponseWriter, r *http.R
 		}
 		queued++
 	}
+	d.publishNtfy(r, "acquisition", "acquisition queued")
 	writeJSON(w, http.StatusOK, map[string]any{"queued": queued}, 0)
 }
 
@@ -2189,6 +2222,7 @@ func (d Deps) handleAcquisitionClear(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
 		return
 	}
+	d.publishNtfy(r, "acquisition", "acquisition cleared")
 	writeJSON(w, http.StatusOK, map[string]any{"cleared": cleared}, 0)
 }
 
@@ -2279,6 +2313,7 @@ func (d Deps) handleLibrarySync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d.publish("library", result)
+	d.publishNtfy(r, "library", "library synced")
 	writeJSON(w, http.StatusOK, result, 0)
 }
 
@@ -2513,6 +2548,7 @@ func (d Deps) handleSpotifyLibraryWrite(operation string) http.HandlerFunc {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
 			return
 		}
+		d.publishNtfy(r, "like", "likes updated")
 		writeJSON(w, http.StatusAccepted, map[string]any{"queued": len(uris)}, 0)
 	}
 }

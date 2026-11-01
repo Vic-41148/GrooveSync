@@ -27,6 +27,7 @@ import (
 	"github.com/Vic-41148/groovesync/server/internal/logging"
 	"github.com/Vic-41148/groovesync/server/internal/metadata"
 	"github.com/Vic-41148/groovesync/server/internal/navidrome"
+	"github.com/Vic-41148/groovesync/server/internal/ntfy"
 	"github.com/Vic-41148/groovesync/server/internal/store"
 	"github.com/Vic-41148/groovesync/server/internal/taste"
 	"github.com/Vic-41148/groovesync/server/internal/transfer"
@@ -184,6 +185,11 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		features = append(features, "listenbrainz")
 	}
 
+	var ntfyPublisher ntfy.Publisher
+	if cfg.NtfyURL != "" {
+		ntfyPublisher = ntfy.HTTPPublisher{BaseURL: cfg.NtfyURL}
+	}
+
 	stream := api.NewEventStream()
 	h := api.New(api.Deps{
 		Logger:             logger,
@@ -204,6 +210,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Devices:            deviceRepo,
 		EventLog:           eventStore,
 		EventStream:        stream,
+		Ntfy:               ntfyPublisher,
 		Mix:                eventStore,
 		Acquisition:        acquisitionRepo,
 		AcquisitionSwitch:  acquisitionRepo,
