@@ -1,4 +1,4 @@
-plugins { kotlin("multiplatform") }
+plugins { kotlin("multiplatform") version "2.3.21" }
 kotlin {
     jvm()
     sourceSets {

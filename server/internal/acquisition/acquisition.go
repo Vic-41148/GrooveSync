@@ -100,6 +100,14 @@ func (r Repo) Create(ctx context.Context, canonicalID, query string) (Request, e
 		return Request{}, fmt.Errorf("acquisition: load track %s: %w", canonicalID, err)
 	}
 
+	var held int
+	if err := r.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM rendition WHERE canonical_id = ? AND kind = 'file'`, canonicalID).Scan(&held); err != nil {
+		return Request{}, fmt.Errorf("acquisition: load holdings %s: %w", canonicalID, err)
+	}
+	if held > 0 {
+		return Request{}, fmt.Errorf("%w: track %s is already held locally", ErrInvalidRequest, canonicalID)
+	}
+
 	id, err := r.newID()
 	if err != nil {
 		return Request{}, err
