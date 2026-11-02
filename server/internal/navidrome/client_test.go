@@ -4,6 +4,9 @@
 package navidrome
 
 import (
+	"path/filepath"
+	"os"
+	"encoding/json"
 	"context"
 	"errors"
 	"fmt"
@@ -226,5 +229,37 @@ func TestOpenSubsonicExtensions(t *testing.T) {
 	want := []string{"formPost", "playbackReport"}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("extensions = %#v, want %#v", got, want)
+	}
+}
+
+func TestOpenSubsonicExtensionsFixture(t *testing.T) {
+	t.Parallel()
+
+	data, err := os.ReadFile(filepath.Join("testdata", "opensubsonic-extensions.golden.json"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	var page struct {
+		Response struct {
+			Extensions []struct {
+				Name string `json:"name"`
+			} `json:"openSubsonicExtensions"`
+		} `json:"subsonic-response"`
+	}
+	if err := json.Unmarshal(data, &page); err != nil {
+		t.Fatalf("decode fixture: %v", err)
+	}
+	got := make([]string, 0, len(page.Response.Extensions))
+	for _, ext := range page.Response.Extensions {
+		got = append(got, ext.Name)
+	}
+	want := []string{"transcodeOffset", "formPost", "songLyrics", "indexBasedQueue", "transcoding", "playbackReport", "topSongsByArtistId"}
+	if len(got) != len(want) {
+		t.Fatalf("extensions = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("extensions = %#v, want %#v", got, want)
+		}
 	}
 }
