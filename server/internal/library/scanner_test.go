@@ -8,6 +8,8 @@ package library
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -105,4 +107,87 @@ func FuzzReadTagLib(f *testing.F) {
 		}
 		_, _ = readTagLib(path)
 	})
+}
+
+func TestScannerReadsSyntheticSineWav(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	audio := filepath.Join(root, "sine.wav")
+	if err := writeSyntheticSineWav(audio, 44100, 1); err != nil {
+		t.Fatalf("write wav: %v", err)
+	}
+
+	db := openScannerDB(t)
+	scanner := Scanner{DB: db, Root: root, StabilityInterval: time.Millisecond}
+	count, err := scanner.Scan(context.Background())
+	if err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("scanned = %d, want 1", count)
+	}
+	var duration int
+	if err := db.QueryRowContext(context.Background(), `SELECT duration_ms FROM track`).Scan(&duration); err != nil {
+		t.Fatalf("query track: %v", err)
+	}
+	if duration < 900 || duration > 1100 {
+		t.Fatalf("duration = %d ms, want about 1000", duration)
+	}
+}
+
+func writeSyntheticSineWav(path string, sampleRate, seconds int) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	numSamples := sampleRate * seconds
+	dataSize := numSamples * 2
+	riffSize := 36 + dataSize
+	if err := binary.Write(f, binary.LittleEndian, []byte("RIFF")); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint32(riffSize)); err != nil {
+		return err
+	}
+	if _, err := f.Write([]byte("WAVEfmt ")); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint32(16)); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint16(1)); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint16(1)); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint32(sampleRate)); err != nil {
+		return err
+	}
+	byteRate := uint32(sampleRate * 2)
+	if err := binary.Write(f, binary.LittleEndian, byteRate); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint16(2)); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint16(16)); err != nil {
+		return err
+	}
+	if _, err := f.Write([]byte("data")); err != nil {
+		return err
+	}
+	if err := binary.Write(f, binary.LittleEndian, uint32(dataSize)); err != nil {
+		return err
+	}
+	for i := 0; i < numSamples; i++ {
+		value := int16(32767 * math.Sin(2*math.Pi*440*float64(i)/float64(sampleRate)))
+		if err := binary.Write(f, binary.LittleEndian, value); err != nil {
+			return err
+		}
+	}
+	return nil
 }
