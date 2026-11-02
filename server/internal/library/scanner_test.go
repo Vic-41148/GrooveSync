@@ -95,3 +95,14 @@ func TestScannerSkipsInvalidFiles(t *testing.T) {
 		t.Fatalf("scanned = %d, want 1", count)
 	}
 }
+
+func FuzzReadTagLib(f *testing.F) {
+	f.Add([]byte("RIFF....WAVEfmt "))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		path := filepath.Join(t.TempDir(), "fuzz.bin")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, _ = readTagLib(path)
+	})
+}
