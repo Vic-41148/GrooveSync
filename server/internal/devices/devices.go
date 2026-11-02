@@ -502,8 +502,28 @@ VALUES (?, ?, ?, ?)
 
 	stamp := now.Format(time.RFC3339Nano)
 	for _, holding := range cleaned {
-		if _, err := stmt.ExecContext(ctx, deviceID, holding.CanonicalID, holding.Hash, stamp); err != nil {
-			return fmt.Errorf("devices: store holding %s for %s: %w", holding.CanonicalID, deviceID, err)
+		canonicalID := holding.CanonicalID
+		var existing string
+		err := tx.QueryRowContext(ctx, `
+SELECT canonical_id FROM rendition
+WHERE kind = 'file' AND lower(sha256) = ?
+ORDER BY id ASC LIMIT 1
+`, holding.Hash).Scan(&existing)
+		if err == nil && existing != "" {
+			canonicalID = existing
+		} else if !errors.Is(err, sql.ErrNoRows) && err != nil {
+			return fmt.Errorf("devices: resolve holding %s: %w", holding.Hash, err)
+		} else {
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO track (canonical_id, title, artist)
+VALUES (?, 'Unknown', 'Unknown')
+ON CONFLICT(canonical_id) DO NOTHING
+`, canonicalID); err != nil {
+				return fmt.Errorf("devices: create holding track %s: %w", canonicalID, err)
+			}
+		}
+		if _, err := stmt.ExecContext(ctx, deviceID, canonicalID, holding.Hash, stamp); err != nil {
+			return fmt.Errorf("devices: store holding %s for %s: %w", canonicalID, deviceID, err)
 		}
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE device SET last_seen = ? WHERE id = ?`, stamp, deviceID); err != nil {
