@@ -118,6 +118,13 @@ fun main(args: Array<String>) {
             val state = runner(f).state()
             println(SyncdApi(state.serverUrls, state.token, state.deviceId).health())
         }
+        "diagnostics" -> {
+            val state = StateStore(File(dataDir(f), "state.json")).load()
+            val api = SyncdApi(state.serverUrls, state.token, state.deviceId)
+            val out = File(f["out"] ?: "diagnostics.json")
+            out.writeText(DiagnosticsExporter(api).export())
+            println("wrote ${out.absolutePath}")
+        }
         else -> usage()
     }
 }
