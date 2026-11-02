@@ -1,0 +1,17 @@
+services:
+  navidrome:
+    image: deluan/navidrome:0.64.2
+    user: "1000:1000"
+    ports:
+      - "127.0.0.1:4533:4533"
+    volumes:
+      - ./data/navidrome:/data
+      - ./music:/music:ro
+    environment:
+      ND_MUSICFOLDER: /music
+      ND_DATAFOLDER: /data
+      ND_LOGLEVEL: info
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
