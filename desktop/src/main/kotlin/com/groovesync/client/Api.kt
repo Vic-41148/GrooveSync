@@ -188,7 +188,8 @@ class SyncdApi(
         return destination
     }
 
-    fun review(): String = requireOk(call("GET", "/sync/v1/review"), "review").text()
+    fun review(limit: Int = 100, offset: Int = 0): String =
+        requireOk(call("GET", "/sync/v1/review?limit=$limit&offset=$offset"), "review").text()
 
     fun health(): String = requireOk(call("GET", "/sync/v1/health"), "health").text()
 

@@ -2776,7 +2776,7 @@ func seedReviewQueueItemAPI(t *testing.T, db *sql.DB) int64 {
 
 type reviewQueueStub struct{}
 
-func (reviewQueueStub) ListReviewQueue(context.Context) ([]writeback.ReviewItem, error) {
+func (reviewQueueStub) ListReviewQueue(context.Context, int, int) ([]writeback.ReviewItem, error) {
 	return nil, nil
 }
 

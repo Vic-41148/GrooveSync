@@ -30,7 +30,7 @@ type ReviewQueueStore interface {
 	AddReviewQueueItem(context.Context, ReviewItem) (int64, error)
 	DeleteReviewQueueItem(context.Context, int64) error
 	ResolveReviewQueueItem(context.Context, int64) error
-	ListReviewQueue(context.Context) ([]ReviewItem, error)
+	ListReviewQueue(context.Context, int, int) ([]ReviewItem, error)
 }
 
 // WriteLogLister returns recorded write transitions.
@@ -525,13 +525,21 @@ ON CONFLICT(service, service_id) DO UPDATE SET
 	return nil
 }
 
-// ListReviewQueue returns all review items in creation order.
-func (r *Repo) ListReviewQueue(ctx context.Context) ([]ReviewItem, error) {
+// ListReviewQueue returns review items in creation order. A non-positive limit
+// returns every item; offset is applied after ordering.
+func (r *Repo) ListReviewQueue(ctx context.Context, limit, offset int) ([]ReviewItem, error) {
+	if limit <= 0 {
+		limit = -1
+	}
+	if offset < 0 {
+		offset = 0
+	}
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, canonical_id, service, service_id, reason, method, confidence, created_at
 FROM review_queue
 ORDER BY id ASC
-`)
+LIMIT ? OFFSET ?
+`, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("writeback: list review queue: %w", err)
 	}

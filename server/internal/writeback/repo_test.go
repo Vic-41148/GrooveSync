@@ -255,7 +255,7 @@ func TestRepoReviewQueue(t *testing.T) {
 		t.Fatalf("AddReviewQueueItem() id = %d, want positive", id)
 	}
 
-	items, err := repo.ListReviewQueue(ctx)
+	items, err := repo.ListReviewQueue(ctx, 0, 0)
 	if err != nil {
 		t.Fatalf("ListReviewQueue() error = %v", err)
 	}
@@ -377,4 +377,44 @@ func openRepoDB(t *testing.T) *sql.DB {
 		t.Fatalf("store.Open: %v", err)
 	}
 	return db
+}
+
+func TestRepoReviewQueuePagination(t *testing.T) {
+	t.Parallel()
+
+	db := openRepoDB(t)
+	defer db.Close()
+
+	repo := NewRepo(db)
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := repo.AddReviewQueueItem(ctx, ReviewItem{CanonicalID: "track-1", Provider: "spotify", ServiceID: "svc", Reason: "low confidence"}); err != nil {
+			t.Fatalf("AddReviewQueueItem() error = %v", err)
+		}
+	}
+
+	items, err := repo.ListReviewQueue(ctx, 2, 0)
+	if err != nil {
+		t.Fatalf("ListReviewQueue() error = %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("first page = %d, want 2", len(items))
+	}
+	items, err = repo.ListReviewQueue(ctx, 2, 2)
+	if err != nil {
+		t.Fatalf("ListReviewQueue() error = %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("second page = %d, want 1", len(items))
+	}
+	items, err = repo.ListReviewQueue(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("ListReviewQueue() error = %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("unpaged = %d, want 3", len(items))
+	}
 }

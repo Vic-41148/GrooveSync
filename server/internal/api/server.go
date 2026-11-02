@@ -106,7 +106,7 @@ type Pinger interface {
 
 // ReviewQueueLister returns the current low-confidence matches.
 type ReviewQueueLister interface {
-	ListReviewQueue(context.Context) ([]writeback.ReviewItem, error)
+	ListReviewQueue(context.Context, int, int) ([]writeback.ReviewItem, error)
 }
 
 // ReviewQueueActions mutates the review queue.
@@ -472,7 +472,7 @@ func (d Deps) handleHealthReport(w http.ResponseWriter, r *http.Request) {
 
 	counts := map[string]any{}
 	if d.ReviewQueue != nil {
-		items, err := d.ReviewQueue.ListReviewQueue(ctx)
+		items, err := d.ReviewQueue.ListReviewQueue(ctx, 0, 0)
 		if err != nil {
 			counts["review_queue"] = "unavailable"
 			status = "degraded"
@@ -614,15 +614,36 @@ func acquisitionProvider(enabled bool) string {
 
 func (d Deps) handleReviewQueue(w http.ResponseWriter, r *http.Request) {
 	if d.ReviewQueue == nil {
-		writeJSON(w, http.StatusOK, map[string]any{"items": []writeback.ReviewItem{}}, 0)
+		writeJSON(w, http.StatusOK, map[string]any{"items": []writeback.ReviewItem{}, "limit": 0, "offset": 0}, 0)
 		return
 	}
-	items, err := d.ReviewQueue.ListReviewQueue(r.Context())
+	limit := 100
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"}, 0)
+			return
+		}
+		if n > 500 {
+			n = 500
+		}
+		limit = n
+	}
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid offset"}, 0)
+			return
+		}
+		offset = n
+	}
+	items, err := d.ReviewQueue.ListReviewQueue(r.Context(), limit, offset)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "review queue unavailable"}, 0)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items}, 0)
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "limit": limit, "offset": offset}, 0)
 }
 
 func (d Deps) handleReviewQueueCreate(w http.ResponseWriter, r *http.Request) {

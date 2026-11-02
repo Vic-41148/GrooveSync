@@ -112,7 +112,9 @@ fun main(args: Array<String>) {
         "status" -> println(runner(f).state())
         "review" -> {
             val state = runner(f).state()
-            println(SyncdApi(state.serverUrls, state.token, state.deviceId).review())
+            val limit = f["limit"]?.toIntOrNull() ?: 100
+            val offset = f["offset"]?.toIntOrNull() ?: 0
+            println(SyncdApi(state.serverUrls, state.token, state.deviceId).review(limit, offset))
         }
         "health" -> {
             val state = runner(f).state()
