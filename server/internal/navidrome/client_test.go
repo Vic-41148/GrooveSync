@@ -203,3 +203,28 @@ func TestClientRejectsHTTPError(t *testing.T) {
 		t.Fatal("Ping() error = nil, want failure")
 	}
 }
+
+func TestOpenSubsonicExtensions(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/rest/getOpenSubsonicExtensions.view" {
+			t.Errorf("path = %q, want /rest/getOpenSubsonicExtensions.view", r.URL.Path)
+		}
+		fmt.Fprint(w, `{"subsonic-response":{"status":"ok","openSubsonicExtensions":[{"name":"formPost"},{"name":"playbackReport"}]}}`)
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL, "vic", "secret")
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	got, err := client.OpenSubsonicExtensions(context.Background())
+	if err != nil {
+		t.Fatalf("OpenSubsonicExtensions() error = %v", err)
+	}
+	want := []string{"formPost", "playbackReport"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("extensions = %#v, want %#v", got, want)
+	}
+}

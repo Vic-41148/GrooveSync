@@ -101,6 +101,31 @@ func (c *Client) Health(ctx context.Context) error {
 	return c.Ping(ctx)
 }
 
+// OpenSubsonicExtensions returns the extension names the server advertises.
+func (c *Client) OpenSubsonicExtensions(ctx context.Context) ([]string, error) {
+	payload, err := c.get(ctx, "getOpenSubsonicExtensions", nil)
+	if err != nil {
+		return nil, err
+	}
+	var page struct {
+		Response struct {
+			Extensions []struct {
+				Name string `json:"name"`
+			} `json:"openSubsonicExtensions"`
+		} `json:"subsonic-response"`
+	}
+	if err := json.Unmarshal(payload, &page); err != nil {
+		return nil, fmt.Errorf("navidrome: decode open subsonic extensions: %w", err)
+	}
+	names := make([]string, 0, len(page.Response.Extensions))
+	for _, ext := range page.Response.Extensions {
+		if strings.TrimSpace(ext.Name) != "" {
+			names = append(names, ext.Name)
+		}
+	}
+	return names, nil
+}
+
 // Albums lists every album in name order, paging until the server runs out.
 func (c *Client) Albums(ctx context.Context) ([]Album, error) {
 	var out []Album
