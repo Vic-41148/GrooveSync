@@ -8,9 +8,8 @@ on:
   pull_request:
 
 jobs:
-  test:
+  go:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
@@ -21,10 +20,57 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: ~/.local/go/bin/go build ./...
+        run: make build
 
       - name: Vet
-        run: ~/.local/go/bin/go vet ./...
+        run: make vet
 
       - name: Test
-        run: ~/.local/go/bin/go test ./...
+        run: make test
+
+      - name: Check licenses
+        run: make check-licenses
+
+  kotlin:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Set up JDK
+        uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+
+      - name: Build and test common
+        run: ./gradlew :common:build :common:jvmTest
+
+      - name: Build and test desktop
+        run: ./gradlew :desktop:build :desktop:test
+
+      - name: Build Android
+        run: ./gradlew :android:assembleDebug
+
+  alignment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: 16 KB page alignment
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' so; do
+            found=1
+            if ! readelf -lW "$so" | awk '/LOAD/ {print $NF}' | grep -Eq '^0x[0-9a-fA-F]*[048cC]000$'; then
+              echo "::error::$so is not 16 KB page aligned"
+              readelf -lW "$so"
+              exit 1
+            fi
+          done < <(find . -name '*.so' -print0)
+          if [ "$found" = 0 ]; then
+            echo "no native libraries to check"
+          fi
