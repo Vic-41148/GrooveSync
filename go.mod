@@ -3,13 +3,13 @@ module github.com/Vic-41148/groovesync
 go 1.27
 
 require (
+	github.com/fsnotify/fsnotify v1.10.1
 	github.com/pressly/goose/v3 v3.29.0
 	modernc.org/sqlite v1.61.0
 )
 
 require (
 	github.com/dustin/go-humanize v1.1.0 // indirect
-	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mfridman/interpolate v0.0.2 // indirect
