@@ -24,6 +24,24 @@ import (
 #include <string.h>
 #include <taglib/tag_c.h>
 
+static char *scan_replay_gain(TagLib_File *file) {
+    char **keys = taglib_property_keys(file);
+    if (keys == NULL) return NULL;
+    char *out = NULL;
+    for (int i = 0; keys[i] != NULL; i++) {
+        if (strcasestr(keys[i], "REPLAYGAIN") != NULL && strcasestr(keys[i], "GAIN") != NULL) {
+            char **values = taglib_property_get(file, keys[i]);
+            if (values != NULL && values[0] != NULL) {
+                out = strdup(values[0]);
+            }
+            if (values != NULL) taglib_property_free(values);
+            break;
+        }
+    }
+    taglib_property_free(keys);
+    return out;
+}
+
 static int has_embedded_art(TagLib_File *file) {
     char **keys = taglib_property_keys(file);
     if (keys == NULL) return 0;
@@ -49,6 +67,8 @@ type ScannedTags struct {
 	Album       string
 	DurationMS  int
 	EmbeddedArt bool
+	FolderArt   string
+	ReplayGain  string
 }
 
 // Scanner walks a filesystem root and indexes audio files by content hash,
@@ -81,6 +101,9 @@ func (s Scanner) Scan(ctx context.Context) (int, error) {
 			return nil
 		}
 		if !info.Mode().IsRegular() {
+			return nil
+		}
+		if strings.EqualFold(filepath.Ext(path), ".cue") {
 			return nil
 		}
 
@@ -144,6 +167,11 @@ func readTagLib(path string) (ScannedTags, error) {
 		tags.DurationMS = int(C.taglib_audioproperties_length(props)) * 1000
 	}
 	tags.EmbeddedArt = C.has_embedded_art(file) != 0
+	tags.FolderArt = folderArtPath(path)
+	if rg := C.scan_replay_gain(file); rg != nil {
+		tags.ReplayGain = C.GoString(rg)
+		C.free(unsafe.Pointer(rg))
+	}
 	return tags, nil
 }
 
@@ -170,4 +198,15 @@ func splitScannedArtists(value string) string {
 		out = append(out, part)
 	}
 	return strings.Join(out, ", ")
+}
+
+func folderArtPath(audioPath string) string {
+	dir := filepath.Dir(audioPath)
+	for _, name := range []string{"cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "folder.png"} {
+		candidate := filepath.Join(dir, name)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+	}
+	return ""
 }
