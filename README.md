@@ -76,6 +76,23 @@ start without `SYNCD_ADMIN_TOKEN`. The example publishes only to the host
 loopback. Publishing a LAN address is safe only with the token set and the
 instance behind a VPN.
 
+## Desktop client setup
+
+The desktop client lives in `desktop/` and is built with Gradle.
+
+```sh
+./gradlew :desktop:build :desktop:test
+```
+
+Run the CLI from the compiled classes or a distribution built with Gradle:
+
+```sh
+./gradlew :desktop:installDist
+./desktop/build/install/groovesync-client/bin/groovesync-client status --data DIR
+```
+
+Pinned tool and dependency versions are recorded in `docs/pins.md` (local-only).
+
 ## License
 
 This project is licensed under the GNU Affero General Public License v3 or later (AGPL-3.0-or-later). See LICENSE for the full text. By contributing, you agree to sign-off your commits using the Developer Certificate of Origin (DCO). For details on contribution and DCO sign-off see CONTRIBUTING.md.
