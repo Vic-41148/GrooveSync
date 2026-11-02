@@ -52,6 +52,7 @@ func (i YouTubeImporter) ImportLikes(ctx context.Context, opts ImportOptions) (I
 	if err != nil {
 		return ImportResult{}, err
 	}
+	tracks = ytmusic.PreferredAudioTracks(tracks)
 	pool, err := SpotifyImporter{DB: i.DB}.localCandidates(ctx)
 	if err != nil {
 		return ImportResult{}, err
@@ -130,6 +131,7 @@ func (i YouTubeImporter) ImportPlaylists(ctx context.Context, opts PlaylistImpor
 		if err != nil {
 			return result, err
 		}
+		tracks = ytmusic.PreferredAudioTracks(tracks)
 		ids := make([]string, len(tracks))
 		for idx, track := range tracks {
 			if track.VideoID == "" {

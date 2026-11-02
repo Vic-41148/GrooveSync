@@ -26,6 +26,37 @@ type Track struct {
 	Artists    []string `json:"artists"`
 	Album      string   `json:"album,omitempty"`
 	DurationMS int      `json:"duration_ms"`
+	Kind       string   `json:"kind,omitempty"`
+	VideoType  string   `json:"videoType,omitempty"`
+}
+
+// IsAudioTrack reports whether the item is the audio track rather than a
+// music video or an upload. Unknown kinds default to audio so a sidecar that
+// does not classify items keeps the current behaviour.
+func (t Track) IsAudioTrack() bool {
+	kind := strings.ToLower(strings.TrimSpace(t.Kind))
+	if kind == "" {
+		kind = strings.ToLower(strings.TrimSpace(t.VideoType))
+	}
+	if kind == "" {
+		return true
+	}
+	return kind == "audio" || kind == "song" || strings.Contains(kind, "audio")
+}
+
+// PreferredAudioTracks keeps audio tracks when the sidecar distinguishes them
+// and otherwise returns the original list unchanged.
+func PreferredAudioTracks(tracks []Track) []Track {
+	var audio []Track
+	for _, track := range tracks {
+		if track.IsAudioTrack() {
+			audio = append(audio, track)
+		}
+	}
+	if len(audio) == 0 {
+		return tracks
+	}
+	return audio
 }
 
 // Playlist is one library playlist as the sidecar reports it.
