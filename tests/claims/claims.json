@@ -1,0 +1,859 @@
+{
+  "version": 1,
+  "claims": [
+    {
+      "id": "f-cross-baseline",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "A Baseline Profile is generated and shipped.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "absent:baseline-prof.txt",
+        "nodep:androidx.benchmark",
+        "lacks:.github/workflows/ci.yml::baseline"
+      ],
+      "note": "No Baseline Profile file, no benchmark module and no CI step."
+    },
+    {
+      "id": "f-cross-changelog",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "CHANGELOG generated from Conventional Commits.",
+      "status": "false",
+      "severity": "S3",
+      "evidence": [
+        "absent:CHANGELOG.md"
+      ],
+      "note": "No changelog file and no release tooling that would generate one."
+    },
+    {
+      "id": "f-cross-compose-name",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "compose.yml runs Navidrome plus syncd.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "contains:docker-compose.yml::navidrome",
+        "lacks:docker-compose.yml::syncd",
+        "absent:compose.yml"
+      ],
+      "note": "The file is docker-compose.yml and it defines Navidrome only."
+    },
+    {
+      "id": "f-cross-coverage",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "Patch-coverage gate of 80% on sync, parsers, migrations and affinity.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "lacks:.github/workflows/ci.yml::coverage",
+        "lacks:Makefile::coverage"
+      ],
+      "note": "No coverage flag, profile or threshold anywhere in CI or the Makefile."
+    },
+    {
+      "id": "f-cross-gitleaks",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "gitleaks runs in CI and in a local pre-commit hook.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "absent:.gitleaks.toml",
+        "lacks:.github/workflows/ci.yml::gitleaks"
+      ],
+      "note": "No config, no workflow step, no pre-commit file."
+    },
+    {
+      "id": "f-cross-golden-identity",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "Golden identity set from the owner runs on every resolver change.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "contains:server/internal/identity/identity_test.go::func TestGoldenIdentitySet(t *testing.T)",
+        "contains:server/internal/identity/identity_test.go::_ = m"
+      ],
+      "note": "The test has two synthetic cases and discards the result. It cannot fail on a resolver regression."
+    },
+    {
+      "id": "f-cross-lint",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "golangci-lint, actionlint, zizmor and hadolint run in CI.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "lacks:.github/workflows/ci.yml::golangci-lint",
+        "lacks:.github/workflows/ci.yml::actionlint",
+        "lacks:.github/workflows/ci.yml::zizmor",
+        "lacks:.github/workflows/ci.yml::hadolint"
+      ],
+      "note": "The file itself says ci.yml runs build, vet and test only. .golangci.yml enables gofmt and govet."
+    },
+    {
+      "id": "f-cross-monitoring",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "Backups use restic and monitoring uses Uptime Kuma plus ntfy.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "lacks:docker-compose.yml::uptime-kuma",
+        "lacks:docker-compose.yml::restic",
+        "absent:ops"
+      ],
+      "note": "No ops directory, backup job or monitoring config exists in the repository."
+    },
+    {
+      "id": "f-cross-property",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "Property tests cover merge idempotence and order independence.",
+      "status": "overstated",
+      "severity": "S2",
+      "evidence": [
+        "contains:server/internal/identity/prop_test.go::for i := 0; i < 1000; i++",
+        "contains:server/internal/identity/prop_test.go::_ = b"
+      ],
+      "note": "The loop rebuilds the same two constants 1000 times and never calls Resolve or Merge."
+    },
+    {
+      "id": "f-cross-rapid",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "Property tests use the rapid library.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "lacks:go.mod::rapid"
+      ],
+      "note": "rapid is not a dependency. The only property test is a fixed loop."
+    },
+    {
+      "id": "f-cross-simulation",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "A simulation harness runs 200 seeds per PR and 10,000 nightly.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "absent:tests/simulation",
+        "lacks:.github/workflows/nightly.yml::simulation"
+      ],
+      "note": "nightly.yml runs go test ./... only. No replica, partition or clock-jump harness exists."
+    },
+    {
+      "id": "f-cross-xclient",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "X-Client-* headers and 426 responses are implemented.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "nosource:X-Client",
+        "lacks:.github/workflows/ci.yml::426"
+      ],
+      "note": "No server code emits or reads the headers, and no handler returns 426."
+    },
+    {
+      "id": "f-phase0-adr-gate",
+      "doc": "docs/todo/phase-0.md",
+      "phase": "0",
+      "claim": "Gate G3 is closed and ADR-0002 is accepted without conditions.",
+      "status": "unverifiable",
+      "severity": "S2",
+      "evidence": [],
+      "note": "ADR-0002 is marked Accepted (conditional) and the phase file says owner sign-off is pending. Sign-off is not observable in the repository."
+    },
+    {
+      "id": "f-phase1-contract",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "TestNavidromeContract validates every response against the vendored OpenAPI and records goldens.",
+      "status": "overstated",
+      "severity": "S2",
+      "evidence": [
+        "contains:server/internal/navidrome/contract_test.go::client.Albums(ctx)",
+        "lacks:server/internal/navidrome/contract_test.go::getAlbumList2",
+        "lacks:server/internal/navidrome/contract_test.go::opensubsonic-openapi.json"
+      ],
+      "note": "The test calls Ping and Albums, then stops. The OpenAPI file is never read by the test."
+    },
+    {
+      "id": "f-phase1-fuzz-excluded",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "FuzzReadTagLib exercises the tag parser in the default test run.",
+      "status": "overstated",
+      "severity": "S2",
+      "evidence": [
+        "contains:server/internal/library/scanner_test.go:://go:build cgo",
+        "contains:server/internal/library/scanner_test.go::func FuzzReadTagLib"
+      ],
+      "note": "The fuzz target sits in a cgo-only file, so CGO_ENABLED=0 make test never compiles it."
+    },
+    {
+      "id": "f-phase1-scanner-cgo",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "The native scanner uses go-taglib.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "contains:server/internal/library/scanner.go::#cgo LDFLAGS: -ltag_c",
+        "contains:server/internal/library/scanner.go:://go:build cgo",
+        "lacks:go.mod::go-taglib"
+      ],
+      "note": "The scanner calls the C API directly through cgo and links libtag_c. No Go wrapper is used."
+    },
+    {
+      "id": "f-phase1-scanner-default-build",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "The native scanner is part of the default build and test run.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "contains:Makefile::CGO_ENABLED=0 $(GO) build ./...",
+        "contains:Makefile::CGO_ENABLED=0 $(GO) test ./..."
+      ],
+      "note": "Both default targets disable cgo, which excludes scanner.go and scanner_test.go."
+    },
+    {
+      "id": "f-phase1-status-stale",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "The status header says the native scanner is still a gap.",
+      "status": "stale",
+      "severity": "S3",
+      "evidence": [
+        "contains:server/internal/library/scanner.go:://go:build cgo",
+        "contains:Makefile::build-cgo"
+      ],
+      "note": "A scanner exists behind the cgo tag. The real gap is that the default build does not compile it."
+    },
+    {
+      "id": "f-phase2-live-contract",
+      "doc": "docs/todo/phase-2.md",
+      "phase": "2",
+      "claim": "Weekly live contract tests cover Spotify and YouTube.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "lacks:.github/workflows/contract.yml::spotify",
+        "lacks:.github/workflows/contract.yml::youtube",
+        "lacks:.github/workflows/nightly.yml::spotify"
+      ],
+      "note": "The only scheduled contract job is the Navidrome test."
+    },
+    {
+      "id": "f-phase2-shadow",
+      "doc": "docs/todo/phase-2.md",
+      "phase": "2",
+      "claim": "Two weeks of shadow plans were reviewed before live was enabled.",
+      "status": "unverifiable",
+      "severity": "S1",
+      "evidence": [],
+      "note": "A two-week human run cannot be reconstructed from the tree. owner-choices.md says live Spotify tests are deferred and no run is recorded."
+    },
+    {
+      "id": "f-phase2-status-stale",
+      "doc": "docs/todo/phase-2.md",
+      "phase": "2",
+      "claim": "The status header says the Spotify authorization flow and encrypted storage do not exist.",
+      "status": "stale",
+      "severity": "S3",
+      "evidence": [
+        "file:server/internal/connectors/crypto.go",
+        "test:TestTokenEncryptionRoundtrip",
+        "file:server/internal/api/spotify_pkce_test.go"
+      ],
+      "note": "PKCE endpoints and AES-GCM token storage exist and are tested. The live owner test is still missing."
+    },
+    {
+      "id": "f-phase3-backtest-real",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "Backtests were run against real listening history.",
+      "status": "unverifiable",
+      "severity": "S2",
+      "evidence": [],
+      "note": "Backtest helpers exist. No real history, dataset or recorded result is in the repository."
+    },
+    {
+      "id": "f-phase3-coldstart-unwired",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "ColdStartScore is wired into the HTTP scoring path.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "contains:server/internal/api/server.go::ScoreTracks(taste.DefaultConfig(), asOf)",
+        "lacks:server/internal/api/server.go::ScoreTracksColdStart"
+      ],
+      "note": "The function and its wrapper exist, but handleScores calls ScoreTracks only. The cold-start wrapper has no caller outside tests."
+    },
+    {
+      "id": "f-phase3-exclusion-weak",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "TestNoSpotifyFieldInContributions fails if any Spotify-sourced field reaches the score.",
+      "status": "overstated",
+      "severity": "S2",
+      "evidence": [
+        "contains:server/internal/taste/score_test.go::strings.Contains(strings.ToLower(c.Name), \"spotify\")"
+      ],
+      "note": "The test only inspects contribution names. A Spotify value in the score or in another field would pass."
+    },
+    {
+      "id": "f-phase3-override",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "A manual override is stored per track, always wins and survives re-sync.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "contains:server/internal/store/migrations/0022_track_override.sql::CREATE TABLE IF NOT EXISTS track_override",
+        "nosource:track_override"
+      ],
+      "note": "Only the migration exists. No Go code reads or writes the table."
+    },
+    {
+      "id": "f-phase3-why-stub",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "The why view is built from real contributions and every score can be explained.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "contains:server/internal/api/server.go::\"contributions\":   []map[string]any{}",
+        "contains:server/internal/api/server.go::\"manual_override\": nil"
+      ],
+      "note": "handleWhy returns an empty contributions slice and a nil override for every track."
+    },
+    {
+      "id": "f-phase4-android-fake",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "The Android client lists and searches a 50k-track library.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "contains:android/src/main/java/com/groovesync/android/MainActivity.kt::(1..50_000).map { \"Track $it\" }"
+      ],
+      "note": "The library screen renders a hardcoded list of strings. There is no database, network call or real track model."
+    },
+    {
+      "id": "f-phase4-ci-lint",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "CI runs lint, unit, emulator smoke and Macrobenchmark.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "lacks:.github/workflows/ci.yml::lint",
+        "lacks:.github/workflows/ci.yml::emulator",
+        "lacks:.github/workflows/ci.yml::macrobenchmark"
+      ],
+      "note": "ci.yml builds and unit-tests the modules and checks page alignment. It runs no linter, emulator or benchmark."
+    },
+    {
+      "id": "f-phase4-desktop-cli",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "A desktop application with a UI exists.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "contains:desktop/src/main/kotlin/com/groovesync/client/Main.kt::--mode app|external|off",
+        "lacks:desktop/src/main/kotlin/com/groovesync/client/Main.kt::javax.swing"
+      ],
+      "note": "The desktop module is a command-line client. It has no window, tray or Compose UI."
+    },
+    {
+      "id": "f-phase4-hlc-shared-file",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "Go and the client pass the same HLC golden vector file.",
+      "status": "overstated",
+      "severity": "S2",
+      "evidence": [
+        "contains:common/src/commonTest/kotlin/com/groovesync/common/hlc/HlcVectorTest.kt::val cases = listOf(",
+        "lacks:common/src/commonTest/kotlin/com/groovesync/common/hlc/HlcVectorTest.kt::hlc_vectors.json",
+        "lacks:settings.gradle.kts::include(\":spec\")"
+      ],
+      "note": "The Go test loads spec/hlc_vectors.json. The Kotlin test hardcodes two vectors and spec is not a Gradle module."
+    },
+    {
+      "id": "f-phase4-macrobenchmark",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "Cold start and jank budgets run in Macrobenchmark and CI.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "nodep:androidx.benchmark",
+        "absent:benchmark",
+        "lacks:.github/workflows/ci.yml::macrobenchmark"
+      ],
+      "note": "The P50, P90 and jank numbers live in a local spike document. No Macrobenchmark module or CI gate exists."
+    },
+    {
+      "id": "f-phase4-media3",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "Media3 MediaLibraryService feeds the UI, notification and lock screen.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "nodep:androidx.media3",
+        "nokotlin:MediaLibraryService"
+      ],
+      "note": "No Media3 dependency and no service class in any Kotlin source set."
+    },
+    {
+      "id": "f-phase4-room",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "Room was chosen and the metadata mirror is implemented.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "nodep:androidx.room",
+        "nodep:sqldelight"
+      ],
+      "note": "Neither Room nor SQLDelight is declared. The db package contains plain data classes only."
+    },
+    {
+      "id": "f-phase4-status-stale",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "The status header says there is no Android or desktop app source.",
+      "status": "stale",
+      "severity": "S3",
+      "evidence": [
+        "file:android/src/main/java/com/groovesync/android/MainActivity.kt",
+        "file:desktop/src/main/kotlin/com/groovesync/client/Main.kt",
+        "contains:android/src/main/java/com/groovesync/android/MainActivity.kt::class MainActivity"
+      ],
+      "note": "Both app modules have source. They are a smoke screen and a CLI, but the header is out of date."
+    },
+    {
+      "id": "f-phase5-worker-exists",
+      "doc": "docs/todo/phase-5.md",
+      "phase": "5",
+      "claim": "The status header says there is no worker, no provider and no second repo.",
+      "status": "stale",
+      "severity": "S2",
+      "evidence": [
+        "file:server/internal/acquisition/worker.go",
+        "test:TestWorkerCompletesQueuedRequest",
+        "nosource:acquisition.Worker"
+      ],
+      "note": "The core worker exists and is tested but is never wired into syncd. The separate provisioner repo also exists."
+    },
+    {
+      "id": "f-phase6-packages",
+      "doc": "docs/todo/phase-6.md",
+      "phase": "6",
+      "claim": "AppImage, Flatpak, PKGBUILD, deb, rpm and Fastlane metadata are shipped.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "absent:PKGBUILD",
+        "absent:packaging/flatpak/org.groovesync.GrooveSync.yml",
+        "absent:fastlane"
+      ],
+      "note": "No packaging directory, manifest or store metadata exists."
+    },
+    {
+      "id": "f-phase6-privacy",
+      "doc": "docs/todo/phase-6.md",
+      "phase": "6",
+      "claim": "Privacy policy and terms are written.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "absent:PRIVACY.md",
+        "absent:TERMS.md"
+      ],
+      "note": "Neither document exists. AI-POLICY.md exists and is the only published policy."
+    },
+    {
+      "id": "f-phase6-release-please",
+      "doc": "docs/todo/phase-6.md",
+      "phase": "6",
+      "claim": "release-please drives the version scheme and changelog.",
+      "status": "false",
+      "severity": "S2",
+      "evidence": [
+        "absent:release-please-config.json",
+        "absent:.release-please-manifest.json",
+        "lacks:.github/workflows/ci.yml::release-please"
+      ],
+      "note": "No release-please config, manifest or workflow step."
+    },
+    {
+      "id": "f-phase6-sbom",
+      "doc": "docs/todo/phase-6.md",
+      "phase": "6",
+      "claim": "The release produces an SBOM with syft and provenance with actions/attest.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "lacks:.github/workflows/release.yml::syft",
+        "lacks:.github/workflows/release.yml::actions/attest",
+        "lacks:.github/workflows/release.yml::attestation"
+      ],
+      "note": "release.yml builds the Go packages and checks licences, then stops."
+    },
+    {
+      "id": "f-phase6-signing",
+      "doc": "docs/todo/phase-6.md",
+      "phase": "6",
+      "claim": "Android release signing, keystores and rotation are set up.",
+      "status": "false",
+      "severity": "S1",
+      "evidence": [
+        "lacks:android/build.gradle.kts::signingConfig",
+        "absent:keystore.properties"
+      ],
+      "note": "The Android build has no signing config. Only the debug build is produced."
+    },
+    {
+      "id": "v-16kb",
+      "doc": "docs/todo/phase-6.md",
+      "phase": "6",
+      "claim": "CI checks 16 KB page alignment of native libraries.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:.github/workflows/ci.yml::16 KB page alignment",
+        "contains:.github/workflows/ci.yml::readelf -lW"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-acquisition-api",
+      "doc": "docs/todo/phase-5.md",
+      "phase": "5",
+      "claim": "The core acquisition request API, kill switch and daily cap exist and are tested.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "test:TestCreate",
+        "test:TestKillSwitch",
+        "test:TestCreateDailyCap"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-android-screenshot",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "A Roborazzi screenshot test exists for the Android home screen.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:android/src/androidTest/java/com/groovesync/android/ScreenshotTest.kt::fun homeScreenshot()"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-ci-kotlin",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "CI builds and unit-tests the common and desktop Kotlin modules.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:.github/workflows/ci.yml:::common:jvmTest",
+        "contains:.github/workflows/ci.yml:::desktop:test"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-contract-job",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "A scheduled Navidrome contract job exists.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "workflow:contract.yml",
+        "contains:.github/workflows/contract.yml::-tags=contract"
+      ],
+      "note": "The job is real. Its coverage is narrower than the doc claims."
+    },
+    {
+      "id": "v-dependabot",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "Dependabot is configured with a 14-day cooldown.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:.github/dependabot.yml::cooldown",
+        "contains:.github/dependabot.yml::default-days: 14"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-desktop-cli",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "The desktop module has a CLI sync path with liked-track protection.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:desktop/src/main/kotlin/com/groovesync/client/Main.kt",
+        "contains:desktop/src/test/kotlin/com/groovesync/client/SyncRunnerTest.kt::fun protectsLikedTracks()"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-disconnect-purge",
+      "doc": "docs/todo/phase-2.md",
+      "phase": "2",
+      "claim": "Spotify disconnect purges derived data.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "test:TestSpotifyRepoDisconnectPurgesDerivedData"
+      ],
+      "note": "This is a unit test, not the five-day live test the phase file describes."
+    },
+    {
+      "id": "v-docker-compose",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "The Navidrome compose file drops capabilities and runs as a normal user.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:docker-compose.yml::cap_drop",
+        "contains:docker-compose.yml::user: \"1000:1000\""
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-hash-stability",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "A file must be stable before it is hashed.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:server/internal/library/hashes.go",
+        "test:TestHashFileStabilityWindow"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-hlc-vectors-go",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "The Go HLC implementation loads the shared vector file.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:spec/hlc_vectors.json",
+        "test:TestVectors",
+        "contains:server/internal/hlc/hlc_test.go::LoadVectors"
+      ],
+      "note": "The Kotlin side does not load the same file."
+    },
+    {
+      "id": "v-license-check",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "make check-licenses runs in CI.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:.github/workflows/ci.yml::make check-licenses",
+        "file:scripts/check-licenses.sh"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-maestro",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "Five Maestro flows exist.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:.maestro/home.yaml",
+        "file:.maestro/likes.yaml",
+        "file:.maestro/review.yaml",
+        "file:.maestro/library.yaml",
+        "file:.maestro/health.yaml"
+      ],
+      "note": "The flows target the smoke-screen app, so they do not prove the product UI works."
+    },
+    {
+      "id": "v-opensubsonic-client",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "A thin OpenSubsonic client exists with JVM tests.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:common/src/jvmMain/kotlin/com/groovesync/common/net/OpenSubsonicClient.kt",
+        "contains:common/src/jvmTest/kotlin/com/groovesync/common/net/OpenSubsonicClientTest.kt::@Test"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-plugin-isolation",
+      "doc": "docs/todo/phase-5.md",
+      "phase": "5",
+      "claim": "Core contains no extraction code and does not depend on the plugin.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "test:TestCoreContainsNoExtractionCode",
+        "test:TestCoreDoesNotDependOnPlugin"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-rebuild",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "The database can be rebuilt from the folder and rebuild plus upload is safe.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:server/internal/library/rebuild.go",
+        "test:TestRebuildFromFolder",
+        "test:TestRebuildThenUploadRecordsBothPaths",
+        "test:TestConcurrentRebuildAndUpload"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-review-pagination",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "The review queue supports limit and offset.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "test:TestRepoReviewQueuePagination"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-scoring",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "Scoring keeps contributions sorted and has a cold-start path.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "test:TestScoreKeepsContributionsSorted",
+        "test:TestColdStartScore"
+      ],
+      "note": "The HTTP why view that should expose these contributions is a stub."
+    },
+    {
+      "id": "v-security-md",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "SECURITY.md exists with a private disclosure route and a threat model.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:SECURITY.md"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-spdx",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "Go sources carry SPDX headers.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:server/internal/api/server.go::SPDX-License-Identifier: AGPL-3.0-or-later"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-spotify-pkce",
+      "doc": "docs/todo/phase-2.md",
+      "phase": "2",
+      "claim": "The Spotify PKCE start and complete endpoints are implemented and tested.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "test:TestHandleSpotifyStartAuthCreatesState",
+        "test:TestHandleSpotifyCompleteAuthExchangesAndUpserts",
+        "file:server/internal/api/spotify_pkce_test.go"
+      ],
+      "note": "The live owner test is still open."
+    },
+    {
+      "id": "v-sync-download",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "Range download of a cached rendition is implemented and tested.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:server/internal/library/files.go",
+        "test:TestLibraryFileDownloadCachedRendition"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-sync-upload",
+      "doc": "docs/todo/phase-4.md",
+      "phase": "4",
+      "claim": "Resumable content-addressed upload is implemented and tested.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:server/internal/library/uploads.go",
+        "test:TestUploadStoreResumesChunks",
+        "test:TestLibraryUploadCachedKind"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-token-encryption",
+      "doc": "docs/todo/phase-2.md",
+      "phase": "2",
+      "claim": "Connector tokens are encrypted with AES-GCM and the round trip is tested.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:server/internal/connectors/crypto.go",
+        "contains:server/internal/connectors/crypto.go::cipher.NewGCM",
+        "test:TestTokenEncryptionRoundtrip"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-watcher",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "The folder watcher uses fsnotify and stops on context cancellation.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:server/internal/library/watcher.go::fsnotify",
+        "test:TestWatcherStopsOnContextCancel"
+      ],
+      "note": ""
+    }
+  ]
+}
