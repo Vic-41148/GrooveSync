@@ -46,7 +46,7 @@ type Song struct {
 	Suffix          string `json:"suffix"`
 	SizeBytes       int64  `json:"size"`
 	MusicBrainzID   string `json:"musicBrainzId"`
-	ISRC            string `json:"isrc"`
+	ISRC            any    `json:"isrc"`
 }
 
 // APIError is a Subsonic error response.

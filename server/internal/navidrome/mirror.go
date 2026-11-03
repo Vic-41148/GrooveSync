@@ -181,7 +181,7 @@ func (m Mirror) upsertSong(ctx context.Context, song Song) (bool, error) {
 		if _, err := tx.ExecContext(ctx, `
 INSERT INTO track (canonical_id, mbid, isrc, title, artist, album, duration_ms)
 VALUES (?, ?, ?, ?, ?, ?, ?)
-`, canonicalID, nullText(song.MusicBrainzID), nullText(song.ISRC), song.Title, song.Artist, nullText(song.Album), song.DurationSeconds*1000); err != nil {
+`, canonicalID, nullText(song.MusicBrainzID), nullText(isrcString(song.ISRC)), song.Title, song.Artist, nullText(song.Album), song.DurationSeconds*1000); err != nil {
 			return false, fmt.Errorf("navidrome: insert track %s: %w", song.ID, err)
 		}
 	} else if _, err := tx.ExecContext(ctx, `
@@ -190,7 +190,7 @@ SET mbid = COALESCE(NULLIF(?, ''), mbid),
     isrc = COALESCE(NULLIF(?, ''), isrc),
     title = ?, artist = ?, album = ?, duration_ms = ?
 WHERE canonical_id = ?
-`, song.MusicBrainzID, song.ISRC, song.Title, song.Artist, nullText(song.Album), song.DurationSeconds*1000, canonicalID); err != nil {
+`, song.MusicBrainzID, isrcString(song.ISRC), song.Title, song.Artist, nullText(song.Album), song.DurationSeconds*1000, canonicalID); err != nil {
 		return false, fmt.Errorf("navidrome: update track %s: %w", song.ID, err)
 	}
 
@@ -316,4 +316,18 @@ func nullText(value string) any {
 		return nil
 	}
 	return value
+}
+
+func isrcString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case []any:
+		if len(v) > 0 {
+			if s, ok := v[0].(string); ok {
+				return s
+			}
+		}
+	}
+	return ""
 }
