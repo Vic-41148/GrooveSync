@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"strings"
 	"sync"
@@ -231,14 +232,17 @@ func withAuth(d DepsGetter, next http.Handler) http.Handler {
 		// Device token validation: attempt to find device id from header or
 		// path parameter "id". The devices registry may implement VerifyToken
 		// (devices.Repo does) which we call via an ad-hoc interface.
-		deviceID := r.Header.Get("X-Device-Id")
+		deviceID := strings.TrimSpace(r.Header.Get("X-Device-Id"))
 		if deviceID == "" {
-			if pv := r.PathValue; pv != nil {
-				deviceID = pv("id")
-			} else {
-				// Fallback to searching common path key names.
-				deviceID = r.URL.Query().Get("device_id")
-			}
+			deviceID = strings.TrimSpace(r.PathValue("id"))
+		}
+		if deviceID == "" {
+			// The middleware runs before ServeMux fills path values, so parse
+			// the documented device route directly.
+			deviceID = deviceIDFromPath(r.URL.EscapedPath())
+		}
+		if deviceID == "" {
+			deviceID = strings.TrimSpace(r.URL.Query().Get("device_id"))
 		}
 		if deviceID == "" {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "device id required"}, 0)
@@ -266,6 +270,24 @@ func withAuth(d DepsGetter, next http.Handler) http.Handler {
 
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"}, 0)
 	})
+}
+
+// deviceIDFromPath returns the id in /sync/v1/devices/{id}/... so a device
+// token works without a separate header.
+func deviceIDFromPath(path string) string {
+	const prefix = "/sync/v1/devices/"
+	if !strings.HasPrefix(path, prefix) {
+		return ""
+	}
+	id := strings.TrimPrefix(path, prefix)
+	if index := strings.IndexByte(id, '/'); index >= 0 {
+		id = id[:index]
+	}
+	decoded, err := url.PathUnescape(id)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(decoded)
 }
 
 // DepsGetter abstracts accessors used by the middleware so we don't need to
@@ -315,7 +337,6 @@ func (a depsAdapter) Devices() interface{} {
 func subtleConstantTimeCompare(a, b []byte) int {
 	return subtle.ConstantTimeCompare(a, b)
 }
-
 
 // clientIP returns the caller's IP. X-Forwarded-For is only trusted when the
 // direct peer is loopback, so a remote caller cannot spoof its address.

@@ -13,7 +13,8 @@ import (
 )
 
 type mockDevices struct {
-	ok bool
+	ok       bool
+	expectID string
 }
 
 func (m mockDevices) List(ctx context.Context) ([]devices.Device, error) { return nil, nil }
@@ -35,6 +36,9 @@ func (m mockDevices) ReportHoldings(ctx context.Context, id string, h []devices.
 
 // Provide VerifyToken to satisfy middleware ad-hoc interface.
 func (m mockDevices) VerifyToken(ctx context.Context, id, token string) (bool, error) {
+	if m.expectID != "" && id != m.expectID {
+		return false, nil
+	}
 	return m.ok, nil
 }
 
@@ -61,7 +65,7 @@ func TestAdminTokenAllows(t *testing.T) {
 }
 
 func TestDeviceTokenAllows(t *testing.T) {
-	d := Deps{Devices: mockDevices{ok: true}}
+	d := Deps{AdminToken: "admin-secret", Devices: mockDevices{ok: true, expectID: "phone"}}
 	h := New(d)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/plan", nil)
@@ -72,6 +76,60 @@ func TestDeviceTokenAllows(t *testing.T) {
 	// assert we didn't get Unauthorized.
 	if rec.Code == http.StatusUnauthorized {
 		t.Fatalf("status = %d, want not %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestDeviceTokenUsesPathID(t *testing.T) {
+	t.Parallel()
+
+	d := Deps{AdminToken: "admin-secret", Devices: mockDevices{ok: true, expectID: "phone"}}
+	h := New(d)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/plan", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	h.ServeHTTP(rec, req)
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("status = %d, want the path id to authenticate the device", rec.Code)
+	}
+}
+
+func TestDeviceTokenRejectsOtherPathID(t *testing.T) {
+	t.Parallel()
+
+	d := Deps{AdminToken: "admin-secret", Devices: mockDevices{ok: true, expectID: "phone"}}
+	h := New(d)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sync/v1/devices/other/plan", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestDeviceIDFromPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		path string
+		want string
+	}{
+		{name: "plan", path: "/sync/v1/devices/phone/plan", want: "phone"},
+		{name: "device", path: "/sync/v1/devices/phone", want: "phone"},
+		{name: "nested", path: "/sync/v1/devices/phone/holdings/list", want: "phone"},
+		{name: "escaped", path: "/sync/v1/devices/phone%2Ftablet/plan", want: "phone/tablet"},
+		{name: "collection", path: "/sync/v1/devices", want: ""},
+		{name: "empty", path: "/sync/v1/devices/", want: ""},
+		{name: "other route", path: "/sync/v1/library/files/abc", want: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := deviceIDFromPath(tc.path); got != tc.want {
+				t.Fatalf("deviceIDFromPath(%q) = %q, want %q", tc.path, got, tc.want)
+			}
+		})
 	}
 }
 
