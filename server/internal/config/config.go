@@ -61,7 +61,8 @@ type Config struct {
 	LibrarySyncInterval time.Duration
 	// MusicRoot resolves relative paths reported by Navidrome.
 	MusicRoot string
-	// UploadDir receives files contributed by devices. Empty disables uploads.
+	// UploadDir receives files contributed by devices and cached downloads.
+	// Empty disables uploads.
 	UploadDir string
 	// AllowedCIDRs is a comma-separated list of client IP ranges that may reach
 	// the API. Empty allows all clients.
@@ -145,10 +146,6 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		hashLimit = 25
 	}
 	cfg.HashLimit = hashLimit
-	if cfg.UploadDir == "" && cfg.MusicRoot != "" {
-		cfg.UploadDir = filepath.Join(cfg.MusicRoot, "Incoming")
-	}
-
 	if raw := strings.TrimSpace(getenv("SYNCD_IGNORE_GLOBS")); raw != "" {
 		for _, part := range strings.Split(raw, ",") {
 			if pattern := strings.TrimSpace(part); pattern != "" {
@@ -177,11 +174,18 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 	fs.DurationVar(&cfg.EnrichInterval, "enrich-interval", cfg.EnrichInterval, "how often to backfill metadata, zero to disable")
 	fs.IntVar(&cfg.EnrichLimit, "enrich-limit", cfg.EnrichLimit, "tracks to backfill per pass")
 	fs.StringVar(&cfg.MusicRoot, "music-root", cfg.MusicRoot, "root folder that resolves relative library paths")
-	fs.StringVar(&cfg.UploadDir, "upload-dir", cfg.UploadDir, "folder that receives uploaded files, empty to disable")
+	fs.StringVar(&cfg.UploadDir, "upload-dir", cfg.UploadDir, "folder that receives uploaded files, outside the music root")
 	fs.DurationVar(&cfg.HashInterval, "hash-interval", cfg.HashInterval, "how often to hash library files, zero to disable")
 	fs.IntVar(&cfg.HashLimit, "hash-limit", cfg.HashLimit, "files to hash per pass")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
+	}
+
+	// Derive the upload folder from the final database path, so -db is
+	// honoured and uploads never land inside the music root. Navidrome scans
+	// that tree and would index a cached rendition as a second track.
+	if cfg.UploadDir == "" && cfg.MusicRoot != "" {
+		cfg.UploadDir = filepath.Join(filepath.Dir(cfg.DBPath), "incoming")
 	}
 
 	cfg.LogLevel = strings.ToLower(strings.TrimSpace(cfg.LogLevel))

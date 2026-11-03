@@ -53,6 +53,28 @@ func TestUploadStoreResumesChunks(t *testing.T) {
 	}
 }
 
+func TestUploadStoreUsesAbsoluteRoot(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+
+	content := []byte("relative upload")
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	store := NewUploadStore("incoming")
+
+	status, err := store.Put(hash, "song.flac", bytes.NewReader(content), 0, int64(len(content)-1), int64(len(content)))
+	if err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	want := filepath.Join(root, "incoming", hash+".flac")
+	if status.Path != want {
+		t.Fatalf("stored path = %q, want %q", status.Path, want)
+	}
+	if !filepath.IsAbs(status.Path) {
+		t.Fatalf("stored path = %q, want an absolute path", status.Path)
+	}
+}
+
 func TestUploadStoreRejectsBadChunks(t *testing.T) {
 	t.Parallel()
 

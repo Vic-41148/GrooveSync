@@ -43,9 +43,16 @@ type UploadStore struct {
 	mu sync.Mutex
 }
 
-// NewUploadStore creates a store rooted at dir.
+// NewUploadStore creates a store rooted at dir. The root is made absolute so
+// stored renditions resolve from any working directory.
 func NewUploadStore(dir string) *UploadStore {
-	return &UploadStore{Dir: strings.TrimSpace(dir)}
+	dir = strings.TrimSpace(dir)
+	if dir != "" {
+		if abs, err := filepath.Abs(dir); err == nil {
+			dir = abs
+		}
+	}
+	return &UploadStore{Dir: dir}
 }
 
 // Put writes one chunk at its declared offset. The final chunk is verified

@@ -280,20 +280,39 @@ func TestLoadParsesAcoustIDSettings(t *testing.T) {
 	}
 }
 
-func TestLoadParsesUploadDir(t *testing.T) {
+func TestLoadResolvesUploadDir(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := Load(func(key string) string {
-		if key == "SYNCD_MUSIC_ROOT" {
+		switch key {
+		case "SYNCD_MUSIC_ROOT":
 			return "/srv/music"
+		case "SYNCD_DB":
+			return "/var/lib/syncd/syncd.db"
 		}
 		return ""
 	}, nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("Load() error = %v", err)
 	}
-	if cfg.UploadDir != filepath.Join("/srv/music", "Incoming") {
-		t.Fatalf("UploadDir = %q, want the music root's Incoming folder", cfg.UploadDir)
+	if want := "/var/lib/syncd/incoming"; cfg.UploadDir != want {
+		t.Fatalf("UploadDir = %q, want %q", cfg.UploadDir, want)
+	}
+	if filepath.Dir(cfg.UploadDir) == cfg.MusicRoot {
+		t.Fatalf("UploadDir = %q, must not be inside the music root %q", cfg.UploadDir, cfg.MusicRoot)
+	}
+
+	cfg, err = Load(func(key string) string {
+		if key == "SYNCD_MUSIC_ROOT" {
+			return "/srv/music"
+		}
+		return ""
+	}, []string{"-db", "/var/lib/syncd/flags.db"}, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("Load() flags error = %v", err)
+	}
+	if want := "/var/lib/syncd/incoming"; cfg.UploadDir != want {
+		t.Fatalf("UploadDir = %q, want %q from the final -db path", cfg.UploadDir, want)
 	}
 
 	cfg, err = Load(func(key string) string {
@@ -301,14 +320,14 @@ func TestLoadParsesUploadDir(t *testing.T) {
 		case "SYNCD_MUSIC_ROOT":
 			return "/srv/music"
 		case "SYNCD_UPLOAD_DIR":
-			return "/var/lib/syncd/incoming"
+			return "/mnt/cache/groovesync"
 		}
 		return ""
 	}, nil, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("Load() explicit error = %v", err)
 	}
-	if cfg.UploadDir != "/var/lib/syncd/incoming" {
+	if cfg.UploadDir != "/mnt/cache/groovesync" {
 		t.Fatalf("UploadDir = %q, want the environment override", cfg.UploadDir)
 	}
 
