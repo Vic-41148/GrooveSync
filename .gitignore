@@ -56,3 +56,11 @@ Thumbs.db
 *.zip
 *.tar.gz
 *.log
+
+# Phase 0 local research artifacts -----------------------------------------
+temp/
+.ytm-env
+browser.json
+oauth.json
+*.pem
+*.key
