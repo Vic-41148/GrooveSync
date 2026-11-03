@@ -58,6 +58,7 @@ type target struct {
 
 type rendition struct {
 	CanonicalID string
+	Kind        string
 	Hash        string
 	Path        string
 	SizeBytes   int64
@@ -402,9 +403,9 @@ func (p Planner) affinityTracks(ctx context.Context, threshold float64) ([]targe
 
 func (p Planner) renditions(ctx context.Context) (map[string][]rendition, error) {
 	rows, err := p.DB.QueryContext(ctx, `
-SELECT canonical_id, lower(sha256), path_or_uri, size_bytes, COALESCE(codec, '')
+SELECT canonical_id, kind, lower(sha256), path_or_uri, size_bytes, COALESCE(codec, '')
 FROM rendition
-WHERE kind = 'file' AND sha256 IS NOT NULL AND sha256 <> ''
+WHERE kind IN ('file', 'cached') AND sha256 IS NOT NULL AND sha256 <> ''
 ORDER BY id ASC
 `)
 	if err != nil {
@@ -415,7 +416,7 @@ ORDER BY id ASC
 	out := make(map[string][]rendition)
 	for rows.Next() {
 		var item rendition
-		if err := rows.Scan(&item.CanonicalID, &item.Hash, &item.Path, &item.SizeBytes, &item.Codec); err != nil {
+		if err := rows.Scan(&item.CanonicalID, &item.Kind, &item.Hash, &item.Path, &item.SizeBytes, &item.Codec); err != nil {
 			return nil, fmt.Errorf("transfer: scan rendition: %w", err)
 		}
 		out[item.CanonicalID] = append(out[item.CanonicalID], item)
@@ -440,6 +441,14 @@ func choose(items []rendition, quality devices.Quality) (rendition, bool) {
 }
 
 func preferred(candidate, current rendition, quality devices.Quality) bool {
+	// A local file, especially a lossless one, ranks above a cached
+	// (downloaded) rendition regardless of the quality setting.
+	if candidate.Kind == "file" && current.Kind == "cached" && lossless(candidate.Codec) {
+		return true
+	}
+	if current.Kind == "file" && candidate.Kind == "cached" && lossless(current.Codec) {
+		return false
+	}
 	switch quality {
 	case devices.QualityDataSaver:
 		if candidate.SizeBytes == current.SizeBytes {

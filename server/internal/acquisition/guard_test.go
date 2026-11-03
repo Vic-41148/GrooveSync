@@ -51,3 +51,19 @@ func TestCoreContainsNoExtractionCode(t *testing.T) {
 		t.Fatalf("walk repo: %v", err)
 	}
 }
+
+func TestCoreDoesNotDependOnPlugin(t *testing.T) {
+	t.Parallel()
+
+	root, err := filepath.Abs("../../..")
+	if err != nil {
+		t.Fatalf("resolve repo root: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		t.Fatalf("read go.mod: %v", err)
+	}
+	if strings.Contains(strings.ToLower(string(data)), "provisioner") {
+		t.Fatal("core go.mod must not depend on the acquisition plugin")
+	}
+}

@@ -35,6 +35,10 @@ const DefaultDailyCap = 20
 // enabledKey is where the worker kill switch lives.
 const enabledKey = "acquisition.enabled"
 
+// autoAcquireKey stores the opt-in auto-acquire flag. A missing setting means
+// off, so acquisition never starts on its own.
+const autoAcquireKey = "acquisition.auto_acquire"
+
 // Request is one queued download of a canonical track.
 type Request struct {
 	ID          string
@@ -323,6 +327,68 @@ DELETE FROM acquisition_request WHERE state IN (?, ?)
 		return fmt.Errorf("acquisition: commit switch tx: %w", err)
 	}
 	return nil
+}
+
+// AutoAcquireEnabled reports whether affinity-driven acquisition is on. It is
+// off by default and must be opted in explicitly.
+func (r Repo) AutoAcquireEnabled(ctx context.Context) (bool, error) {
+	if r.DB == nil {
+		return false, errors.New("acquisition: database is required")
+	}
+	var value string
+	err := r.DB.QueryRowContext(ctx, `SELECT value FROM setting WHERE key = ?`, autoAcquireKey).Scan(&value)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("acquisition: load auto-acquire: %w", err)
+	}
+	return value == "true", nil
+}
+
+// SetAutoAcquire stores the opt-in auto-acquire flag.
+func (r Repo) SetAutoAcquire(ctx context.Context, enabled bool) error {
+	if r.DB == nil {
+		return errors.New("acquisition: database is required")
+	}
+	value := "false"
+	if enabled {
+		value = "true"
+	}
+	_, err := r.DB.ExecContext(ctx, `
+INSERT INTO setting (key, value, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+`, autoAcquireKey, value, stamp(r.now()))
+	if err != nil {
+		return fmt.Errorf("acquisition: store auto-acquire: %w", err)
+	}
+	return nil
+}
+
+// AutoAcquire queues requests for high-affinity tracks without a local file when
+// the opt-in flag is set. It never runs by default.
+func (r Repo) AutoAcquire(ctx context.Context, scores []Score, threshold float64, limit int) ([]Request, error) {
+	enabled, err := r.AutoAcquireEnabled(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !enabled {
+		return nil, nil
+	}
+	suggestions, err := r.Suggest(ctx, scores, threshold, limit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Request, 0, len(suggestions))
+	for _, suggestion := range suggestions {
+		request, err := r.Create(ctx, suggestion.CanonicalID, suggestion.Query)
+		if err != nil {
+			continue
+		}
+		out = append(out, request)
+	}
+	return out, nil
 }
 
 // Score is one track affinity value, supplied by the caller so a suggestion

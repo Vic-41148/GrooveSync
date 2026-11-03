@@ -32,12 +32,29 @@ type Ingestor struct {
 // need to record a different source (for example the Rebuilder marking
 // filesystem contributions as 'sync'), use IngestWithSource.
 func (i Ingestor) Ingest(ctx context.Context, canonicalID, path, hash, name string) (string, error) {
-	return i.IngestWithSource(ctx, canonicalID, path, hash, name, "upload")
+	return i.ingest(ctx, canonicalID, path, hash, name, "upload", "file")
 }
 
 // IngestWithSource is like Ingest but allows specifying the content_path
 // source column (e.g. 'upload' or 'sync').
 func (i Ingestor) IngestWithSource(ctx context.Context, canonicalID, path, hash, name, source string) (string, error) {
+	return i.ingest(ctx, canonicalID, path, hash, name, source, "file")
+}
+
+// IngestWithKind is like IngestWithSource but also allows recording the
+// rendition kind, so a downloaded file can be stored as a 'cached' rendition
+// instead of a local 'file'.
+func (i Ingestor) IngestWithKind(ctx context.Context, canonicalID, path, hash, name, source, kind string) (string, error) {
+	if kind != "file" && kind != "cached" {
+		return "", errors.New("library: rendition kind must be file or cached")
+	}
+	if kind == "" {
+		kind = "file"
+	}
+	return i.ingest(ctx, canonicalID, path, hash, name, source, kind)
+}
+
+func (i Ingestor) ingest(ctx context.Context, canonicalID, path, hash, name, source, kind string) (string, error) {
 	if i.DB == nil {
 		return "", errors.New("library: database is required")
 	}
@@ -88,11 +105,11 @@ func (i Ingestor) IngestWithSource(ctx context.Context, canonicalID, path, hash,
 
 	if _, err := tx.ExecContext(ctx, `
 INSERT INTO rendition (canonical_id, kind, path_or_uri, sha256, codec, size_bytes)
-SELECT ?, 'file', ?, ?, ?, ?
+SELECT ?, ?, ?, ?, ?, ?
 WHERE NOT EXISTS (
-    SELECT 1 FROM rendition WHERE kind = 'file' AND lower(sha256) = ?
+    SELECT 1 FROM rendition WHERE kind = ? AND lower(sha256) = ?
 )
-`, canonicalID, path, hash, codecOf(path), info.Size(), hash); err != nil {
+`, canonicalID, kind, path, hash, codecOf(path), info.Size(), kind, hash); err != nil {
 		return "", fmt.Errorf("library: insert rendition %s: %w", hash, err)
 	}
 
@@ -101,7 +118,7 @@ WHERE NOT EXISTS (
 	// an existing row) and record the path in content_path. This preserves a
 	// single stored content while tracking multiple contribution paths.
 	var renditionID int64
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM rendition WHERE kind = 'file' AND lower(sha256) = ? ORDER BY id ASC LIMIT 1`, hash).Scan(&renditionID); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM rendition WHERE kind = ? AND lower(sha256) = ? ORDER BY id ASC LIMIT 1`, kind, hash).Scan(&renditionID); err != nil {
 		return "", fmt.Errorf("library: find rendition id %s: %w", hash, err)
 	}
 	if _, err := tx.ExecContext(ctx, `
@@ -122,7 +139,7 @@ func trackHolding(ctx context.Context, tx *sql.Tx, hash string) (string, error) 
 	var canonicalID string
 	err := tx.QueryRowContext(ctx, `
 SELECT canonical_id FROM rendition
-WHERE kind = 'file' AND lower(sha256) = ?
+WHERE lower(sha256) = ?
 ORDER BY id ASC LIMIT 1
 `, hash).Scan(&canonicalID)
 	switch {
