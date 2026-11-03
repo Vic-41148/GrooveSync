@@ -205,6 +205,110 @@ func TestLibraryFileDownload(t *testing.T) {
 	}
 }
 
+func TestLibraryFileDownloadCachedRendition(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	root := t.TempDir()
+	content := []byte("cached audio bytes")
+	if err := os.WriteFile(filepath.Join(root, "cached.opus"), content, 0o644); err != nil {
+		t.Fatalf("write cached file: %v", err)
+	}
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	if _, err := db.Exec(`INSERT INTO track (canonical_id, title, artist) VALUES ('track-1', 'Song', 'Artist')`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO rendition (canonical_id, kind, path_or_uri, sha256) VALUES ('track-1', 'cached', 'cached.opus', ?)`, hash); err != nil {
+		t.Fatalf("insert rendition: %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now, LibraryFiles: library.FileStore{DB: db, Root: root}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library/files/"+hash, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), content) {
+		t.Fatalf("body = %q, want the cached content", rec.Body.String())
+	}
+}
+
+func TestLibraryUploadCachedKind(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	dir := t.TempDir()
+	content := []byte("cached upload bytes")
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	if _, err := db.Exec(`INSERT INTO track (canonical_id, title, artist) VALUES ('track-1', 'Song', 'Artist')`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	h := New(Deps{
+		Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now,
+		LibraryUploads: library.NewUploadStore(dir),
+		LibraryIngest:  library.Ingestor{DB: db},
+		LibraryFiles:   library.FileStore{DB: db, Root: dir},
+	})
+
+	req := httptest.NewRequest(http.MethodPut, "/sync/v1/library/uploads/"+hash+"?name=song.opus&track=track-1&kind=cached", bytes.NewReader(content))
+	req.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(content)-1, len(content)))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	var kind, canonicalID string
+	if err := db.QueryRow(`SELECT kind, canonical_id FROM rendition WHERE lower(sha256) = ?`, hash).Scan(&kind, &canonicalID); err != nil {
+		t.Fatalf("load rendition: %v", err)
+	}
+	if kind != "cached" || canonicalID != "track-1" {
+		t.Fatalf("rendition = %q %q, want cached track-1", kind, canonicalID)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library/files/"+hash, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !bytes.Equal(rec.Body.Bytes(), content) {
+		t.Fatalf("download body differs from the cached upload")
+	}
+}
+
+func TestLibraryUploadRejectsUnknownKind(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	dir := t.TempDir()
+	content := []byte("audio bytes")
+	sum := sha256.Sum256(content)
+	hash := hex.EncodeToString(sum[:])
+	h := New(Deps{
+		Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now,
+		LibraryUploads: library.NewUploadStore(dir),
+		LibraryIngest:  library.Ingestor{DB: db},
+	})
+
+	req := httptest.NewRequest(http.MethodPut, "/sync/v1/library/uploads/"+hash+"?name=song.flac&kind=sidecar", bytes.NewReader(content))
+	req.Header.Set("Content-Range", fmt.Sprintf("bytes 0-%d/%d", len(content)-1, len(content)))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, hash+".part")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("part file exists after a rejected kind: %v", err)
+	}
+}
+
 func TestLibraryUploadRoundTrip(t *testing.T) {
 	t.Parallel()
 

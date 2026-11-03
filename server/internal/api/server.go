@@ -89,7 +89,7 @@ type Deps struct {
 	// AdminToken is an optional bearer token that grants administrative
 	// privileges for device management and connector actions. When empty the
 	// middleware remains permissive for tests that don't configure auth.
-	AdminToken    string
+	AdminToken   string
 	AllowedCIDRs string
 	// Spotify client credentials used when the server performs token exchanges.
 	// These are read from environment in the main binary and injected here.
@@ -175,6 +175,9 @@ type MixSource interface {
 type AcquisitionQueue interface {
 	Create(context.Context, string, string) (acquisition.Request, error)
 	List(context.Context, ...acquisition.State) ([]acquisition.Request, error)
+	Claim(context.Context, string) error
+	Complete(context.Context, string) error
+	Fail(context.Context, string, string) (acquisition.State, error)
 	Clear(context.Context) (int, error)
 	Suggest(context.Context, []acquisition.Score, float64, int) ([]acquisition.Suggestion, error)
 }
@@ -221,6 +224,7 @@ type LibraryUploads interface {
 // LibraryIngestor records a completed upload as a library rendition.
 type LibraryIngestor interface {
 	Ingest(context.Context, string, string, string, string) (string, error)
+	IngestWithKind(context.Context, string, string, string, string, string, string) (string, error)
 }
 
 // MetadataEnricher fills missing identifiers from an upstream database.
@@ -335,6 +339,9 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/acquisition/suggestions", d.handleAcquisitionSuggestions)
 	mux.HandleFunc("POST /sync/v1/acquisition/suggestions", d.handleAcquisitionSuggestionsQueue)
 	mux.HandleFunc("DELETE /sync/v1/acquisition", d.handleAcquisitionClear)
+	mux.HandleFunc("POST /sync/v1/acquisition/{id}/claim", d.handleAcquisitionClaim)
+	mux.HandleFunc("POST /sync/v1/acquisition/{id}/complete", d.handleAcquisitionComplete)
+	mux.HandleFunc("POST /sync/v1/acquisition/{id}/fail", d.handleAcquisitionFail)
 	mux.HandleFunc("GET /sync/v1/settings", d.handleSettings)
 	mux.HandleFunc("PATCH /sync/v1/settings", d.handleSettingsUpdate)
 	mux.HandleFunc("POST /sync/v1/library/sync", d.handleLibrarySync)
@@ -2254,6 +2261,96 @@ func (d Deps) handleAcquisitionClear(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"cleared": cleared}, 0)
 }
 
+// handleAcquisitionClaim lets an external worker take one queued request. The
+// claim is conditional on the request still being queued, so two workers cannot
+// download the same track.
+func (d Deps) handleAcquisitionClaim(w http.ResponseWriter, r *http.Request) {
+	if d.Acquisition == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	if d.AcquisitionSwitch != nil {
+		enabled, err := d.AcquisitionSwitch.Enabled(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
+			return
+		}
+		if !enabled {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "acquisition disabled"}, 0)
+			return
+		}
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	if err := d.Acquisition.Claim(r.Context(), id); err != nil {
+		writeAcquisitionError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleAcquisitionComplete(w http.ResponseWriter, r *http.Request) {
+	if d.Acquisition == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	if err := d.Acquisition.Complete(r.Context(), id); err != nil {
+		writeAcquisitionError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) handleAcquisitionFail(w http.ResponseWriter, r *http.Request) {
+	if d.Acquisition == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	var req struct {
+		Error string `json:"error"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	message := strings.TrimSpace(req.Error)
+	if len(message) > 1024 {
+		message = message[:1024]
+	}
+	state, err := d.Acquisition.Fail(r.Context(), id, message)
+	if err != nil {
+		writeAcquisitionError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"state": string(state)}, 0)
+}
+
+func writeAcquisitionError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, acquisition.ErrRequestNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "request not found"}, 0)
+	case errors.Is(err, acquisition.ErrStateConflict):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "state conflict"}, 0)
+	case errors.Is(err, acquisition.ErrDisabled):
+		writeJSON(w, http.StatusConflict, map[string]string{"error": "acquisition disabled"}, 0)
+	default:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
+	}
+}
+
 func validAcquisitionState(state acquisition.State) bool {
 	switch state {
 	case acquisition.StateQueued, acquisition.StateClaimed, acquisition.StateDone, acquisition.StateFailed:
@@ -2421,6 +2518,14 @@ func (d Deps) handleLibraryUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "uploads unavailable"}, 0)
 		return
 	}
+	kind := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("kind")))
+	if kind == "" {
+		kind = "file"
+	}
+	if kind != "file" && kind != "cached" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid kind"}, 0)
+		return
+	}
 	start, end, total, err := parseContentRange(r.Header.Get("Content-Range"))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid content range"}, 0)
@@ -2446,7 +2551,7 @@ func (d Deps) handleLibraryUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if status.Complete {
-		if _, err := d.LibraryIngest.Ingest(r.Context(), r.URL.Query().Get("track"), status.Path, status.Hash, r.URL.Query().Get("name")); err != nil {
+		if _, err := d.LibraryIngest.IngestWithKind(r.Context(), r.URL.Query().Get("track"), status.Path, status.Hash, r.URL.Query().Get("name"), "upload", kind); err != nil {
 			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "upload indexing failed"}, 0)
 			return
 		}

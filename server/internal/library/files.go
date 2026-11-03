@@ -52,8 +52,8 @@ func (s FileStore) Open(ctx context.Context, hash string) (Content, error) {
 	err = s.DB.QueryRowContext(ctx, `
 SELECT path_or_uri
 FROM rendition
-WHERE kind = 'file' AND lower(sha256) = ?
-ORDER BY id ASC
+WHERE kind IN ('file', 'cached') AND lower(sha256) = ?
+ORDER BY CASE kind WHEN 'file' THEN 0 ELSE 1 END, id ASC
 LIMIT 1
 `, hash).Scan(&path)
 	if errors.Is(err, sql.ErrNoRows) {

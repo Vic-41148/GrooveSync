@@ -41,6 +41,29 @@ func TestPlanDownloadsMissingFiles(t *testing.T) {
 	}
 }
 
+func TestPlanIncludesCachedRendition(t *testing.T) {
+	t.Parallel()
+
+	db := openTransferDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-1", "Song")
+	if _, err := db.Exec(`
+INSERT INTO rendition (canonical_id, kind, path_or_uri, sha256, codec, size_bytes)
+VALUES ('track-1', 'cached', 'Music/Incoming/song.opus', ?, 'opus', 90)
+`, testHash("cached")); err != nil {
+		t.Fatalf("insert cached rendition: %v", err)
+	}
+	repo := seedDevice(t, db, devices.Device{ID: "phone", Name: "Phone"})
+
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(plan.Downloads) != 1 || plan.Downloads[0].Hash != testHash("cached") {
+		t.Fatalf("downloads = %#v, want the cached rendition", plan.Downloads)
+	}
+}
+
 func TestPlanSkipsHeldFiles(t *testing.T) {
 	t.Parallel()
 
