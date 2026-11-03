@@ -63,6 +63,9 @@ type Config struct {
 	MusicRoot string
 	// UploadDir receives files contributed by devices. Empty disables uploads.
 	UploadDir string
+	// AllowedCIDRs is a comma-separated list of client IP ranges that may reach
+	// the API. Empty allows all clients.
+	AllowedCIDRs string
 	// IgnoreGlobs adds library paths the mirror must never index.
 	IgnoreGlobs []string
 	// HashInterval is zero when content hashing only runs on request.
@@ -98,6 +101,7 @@ func Load(getenv func(string) string, args []string, stderr io.Writer) (Config, 
 		FPCalcPath:        envOr(getenv, "SYNCD_FPCALC", DefaultFPCalcPath),
 		MusicRoot:         envOr(getenv, "SYNCD_MUSIC_ROOT", ""),
 		UploadDir:         envOr(getenv, "SYNCD_UPLOAD_DIR", ""),
+		AllowedCIDRs:      envOr(getenv, "SYNCD_ALLOW_CIDRS", "100.64.0.0/10,127.0.0.0/8,::1/128"),
 		YTMusicURL:        envOr(getenv, "SYNCD_YTMUSIC_URL", ""),
 		ReleasesURL:       envOr(getenv, "SYNCD_RELEASES_URL", "https://github.com/Vic-41148/groovesync/releases"),
 		SourceURL:         envOr(getenv, "SYNCD_SOURCE_URL", "https://github.com/Vic-41148/groovesync"),

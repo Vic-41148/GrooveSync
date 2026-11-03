@@ -9,6 +9,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"log/slog"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"strings"
@@ -179,13 +180,17 @@ func withAuth(d DepsGetter, next http.Handler) http.Handler {
 			return
 		}
 
-		ip := r.RemoteAddr
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			ip = strings.Split(fwd, ",")[0]
-		}
+		ip := clientIP(r)
 		if r.Method == http.MethodPost && r.URL.Path == "/sync/v1/devices" {
 			if !regLimiter.allow("reg:" + ip) {
 				writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "rate limited"}, 0)
+				return
+			}
+		}
+
+		if d != nil && strings.TrimSpace(d.AllowedCIDRs()) != "" {
+			if !allowedIP(d.AllowedCIDRs(), ip) {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "client not allowed"}, 0)
 				return
 			}
 		}
@@ -267,6 +272,7 @@ func withAuth(d DepsGetter, next http.Handler) http.Handler {
 // change the original Deps type in many places when testing.
 type DepsGetter interface {
 	AdminToken() string
+	AllowedCIDRs() string
 	Devices() interface{}
 }
 
@@ -279,6 +285,16 @@ func (a depsAdapter) AdminToken() string {
 	}
 	if dd, ok := a.d.(*Deps); ok {
 		return dd.AdminToken
+	}
+	return ""
+}
+
+func (a depsAdapter) AllowedCIDRs() string {
+	if dd, ok := a.d.(Deps); ok {
+		return dd.AllowedCIDRs
+	}
+	if dd, ok := a.d.(*Deps); ok {
+		return dd.AllowedCIDRs
 	}
 	return ""
 }
@@ -298,4 +314,55 @@ func (a depsAdapter) Devices() interface{} {
 // here to keep the middleware easily testable.
 func subtleConstantTimeCompare(a, b []byte) int {
 	return subtle.ConstantTimeCompare(a, b)
+}
+
+
+// clientIP returns the caller's IP. X-Forwarded-For is only trusted when the
+// direct peer is loopback, so a remote caller cannot spoof its address.
+func clientIP(r *http.Request) string {
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if isLoopbackIPString(host) {
+		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
+			first := strings.TrimSpace(strings.Split(fwd, ",")[0])
+			if first != "" {
+				host = first
+			}
+		}
+	}
+	return host
+}
+
+func isLoopbackIPString(value string) bool {
+	ip := net.ParseIP(strings.TrimSpace(value))
+	return ip != nil && ip.IsLoopback()
+}
+
+func allowedIP(list string, ip string) bool {
+	parsed := net.ParseIP(strings.TrimSpace(ip))
+	if parsed == nil {
+		return false
+	}
+	for _, part := range strings.Split(list, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if strings.Contains(part, "/") {
+			_, cidr, err := net.ParseCIDR(part)
+			if err != nil {
+				continue
+			}
+			if cidr.Contains(parsed) {
+				return true
+			}
+		} else {
+			if allowed := net.ParseIP(part); allowed != nil && allowed.Equal(parsed) {
+				return true
+			}
+		}
+	}
+	return false
 }

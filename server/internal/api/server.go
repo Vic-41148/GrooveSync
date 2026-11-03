@@ -89,7 +89,8 @@ type Deps struct {
 	// AdminToken is an optional bearer token that grants administrative
 	// privileges for device management and connector actions. When empty the
 	// middleware remains permissive for tests that don't configure auth.
-	AdminToken string
+	AdminToken    string
+	AllowedCIDRs string
 	// Spotify client credentials used when the server performs token exchanges.
 	// These are read from environment in the main binary and injected here.
 	SpotifyClientID     string

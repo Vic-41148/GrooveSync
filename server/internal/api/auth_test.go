@@ -115,3 +115,28 @@ func TestMissingTokenRejected(t *testing.T) {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
+
+func TestClientIPTrustsForwardedForOnlyFromLoopback(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Forwarded-For", "10.0.0.1, 10.0.0.2")
+	if got := clientIP(req); got != "10.0.0.1" {
+		t.Fatalf("clientIP() = %q, want 10.0.0.1", got)
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil)
+	req2.RemoteAddr = "192.0.2.1:1234"
+	req2.Header.Set("X-Forwarded-For", "10.0.0.1")
+	if got := clientIP(req2); got != "192.0.2.1" {
+		t.Fatalf("clientIP() = %q, want 192.0.2.1", got)
+	}
+}
+
+func TestAllowedIP(t *testing.T) {
+	if !allowedIP("100.64.0.0/10,127.0.0.0/8", "100.65.1.2") {
+		t.Fatal("expected tailnet IP to be allowed")
+	}
+	if allowedIP("100.64.0.0/10,127.0.0.0/8", "203.0.113.9") {
+		t.Fatal("expected public IP to be denied")
+	}
+}

@@ -53,6 +53,9 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 	}
 
 	logger := logging.New(cfg.LogLevel)
+	if adminToken == "" {
+		logger.Warn("SYNCD_ADMIN_TOKEN is unset; API is unauthenticated and must not be exposed via a proxy or Tailscale serve")
+	}
 	db, err := store.Open(parent, cfg.DBPath)
 	if err != nil {
 		return err
@@ -242,6 +245,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Transfer:                 transfer.Planner{DB: db, Devices: deviceRepo},
 		Rollout:                  queueRepo,
 		AdminToken:               adminToken,
+		AllowedCIDRs:             cfg.AllowedCIDRs,
 		SpotifyClientID:          strings.TrimSpace(getenv("SYNCD_SPOTIFY_CLIENT_ID")),
 		SpotifyClientSecret:      strings.TrimSpace(getenv("SYNCD_SPOTIFY_CLIENT_SECRET")),
 		SpotifyReturnToWhitelist: strings.TrimSpace(getenv("SYNCD_SPOTIFY_RETURN_TO_WHITELIST")),
