@@ -15,6 +15,7 @@ import (
 type mockDevices struct {
 	ok       bool
 	expectID string
+	err      error
 }
 
 func (m mockDevices) List(ctx context.Context) ([]devices.Device, error) { return nil, nil }
@@ -36,6 +37,9 @@ func (m mockDevices) ReportHoldings(ctx context.Context, id string, h []devices.
 
 // Provide VerifyToken to satisfy middleware ad-hoc interface.
 func (m mockDevices) VerifyToken(ctx context.Context, id, token string) (bool, error) {
+	if m.err != nil {
+		return false, m.err
+	}
 	if m.expectID != "" && id != m.expectID {
 		return false, nil
 	}
@@ -100,6 +104,20 @@ func TestDeviceTokenRejectsOtherPathID(t *testing.T) {
 	h := New(d)
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/sync/v1/devices/other/plan", nil)
+	req.Header.Set("Authorization", "Bearer tok")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestDeviceTokenUnknownDeviceIsUnauthorized(t *testing.T) {
+	t.Parallel()
+
+	d := Deps{AdminToken: "admin-secret", Devices: mockDevices{err: devices.ErrDeviceNotFound}}
+	h := New(d)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sync/v1/devices/missing/plan", nil)
 	req.Header.Set("Authorization", "Bearer tok")
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {

@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/Vic-41148/groovesync/server/internal/devices"
 )
 
 type contextKey int
@@ -259,6 +262,10 @@ func withAuth(d DepsGetter, next http.Handler) http.Handler {
 		}); ok {
 			ok, err := verifier.VerifyToken(r.Context(), deviceID, token)
 			if err != nil {
+				if errors.Is(err, devices.ErrDeviceNotFound) {
+					writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid token"}, 0)
+					return
+				}
 				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "device verification failed"}, 0)
 				return
 			}
