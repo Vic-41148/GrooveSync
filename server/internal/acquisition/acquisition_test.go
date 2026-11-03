@@ -335,3 +335,21 @@ func openAcquisitionDB(t *testing.T) *sql.DB {
 	t.Cleanup(func() { db.Close() })
 	return db
 }
+
+func TestCreateDailyCap(t *testing.T) {
+	t.Parallel()
+
+	db := openAcquisitionDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	repo := Repo{DB: db, Now: func() time.Time { return now }, NewID: fixedID("req-1"), DailyCap: 1}
+
+	if _, err := repo.Create(ctx, "track-1", "Song Artist"); err != nil {
+		t.Fatalf("Create() first error = %v", err)
+	}
+	// second track needed; reuse same track but held? track-1 now has no file, but request exists; Create allows new request for same track? It checks held file only, so allowed until cap.
+	repo2 := Repo{DB: db, Now: func() time.Time { return now }, NewID: fixedID("req-2"), DailyCap: 1}
+	if _, err := repo2.Create(ctx, "track-1", "Song Artist"); !errors.Is(err, ErrDailyCap) {
+		t.Fatalf("Create() second error = %v, want ErrDailyCap", err)
+	}
+}

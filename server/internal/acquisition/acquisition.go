@@ -29,6 +29,9 @@ const (
 // DefaultMaxAttempts is how many worker tries a request gets before it fails.
 const DefaultMaxAttempts = 5
 
+// DefaultDailyCap is how many acquisition requests may be created per day.
+const DefaultDailyCap = 20
+
 // enabledKey is where the worker kill switch lives.
 const enabledKey = "acquisition.enabled"
 
@@ -56,12 +59,16 @@ var ErrStateConflict = errors.New("acquisition: state conflict")
 // ErrDisabled reports a request made while the worker is switched off.
 var ErrDisabled = errors.New("acquisition: provider disabled")
 
+// ErrDailyCap reports a request made after the daily acquisition cap.
+var ErrDailyCap = errors.New("acquisition: daily cap reached")
+
 // Repo persists acquisition requests.
 type Repo struct {
 	DB       *sql.DB
 	Now      func() time.Time
 	NewID    func() (string, error)
 	MaxTries int
+	DailyCap int
 }
 
 // Create records a request for the worker. Queries carry MusicBrainz metadata,
@@ -106,6 +113,18 @@ func (r Repo) Create(ctx context.Context, canonicalID, query string) (Request, e
 	}
 	if held > 0 {
 		return Request{}, fmt.Errorf("%w: track %s is already held locally", ErrInvalidRequest, canonicalID)
+	}
+
+	cap := r.dailyCap()
+	if cap > 0 {
+		start := r.now().UTC().Truncate(24 * time.Hour)
+		var count int
+		if err := r.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM acquisition_request WHERE created_at >= ?`, stamp(start)).Scan(&count); err != nil {
+			return Request{}, fmt.Errorf("acquisition: count daily requests: %w", err)
+		}
+		if count >= cap {
+			return Request{}, ErrDailyCap
+		}
 	}
 
 	id, err := r.newID()
@@ -405,6 +424,13 @@ func (r Repo) maxTries() int {
 		return r.MaxTries
 	}
 	return DefaultMaxAttempts
+}
+
+func (r Repo) dailyCap() int {
+	if r.DailyCap > 0 {
+		return r.DailyCap
+	}
+	return DefaultDailyCap
 }
 
 func (r Repo) newID() (string, error) {
