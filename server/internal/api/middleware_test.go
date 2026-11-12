@@ -6,6 +6,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -110,5 +111,126 @@ func TestRequestIDFromMissingContext(t *testing.T) {
 
 	if got := requestIDFrom(context.Background()); got != "" {
 		t.Fatalf("requestIDFrom(background) = %q, want empty string", got)
+	}
+}
+
+type compatDeps struct {
+	proto    int
+	minBuild map[string]int
+}
+
+func (c compatDeps) AdminToken() string       { return "" }
+func (c compatDeps) AllowedCIDRs() string     { return "" }
+func (c compatDeps) Devices() interface{}     { return nil }
+func (c compatDeps) Proto() int               { return c.proto }
+func (c compatDeps) MinBuild() map[string]int { return c.minBuild }
+
+func TestWithCompatibility(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		header     string
+		wantStatus int
+	}{
+		{name: "missing header", header: "", wantStatus: http.StatusOK},
+		{name: "current proto", header: "3", wantStatus: http.StatusOK},
+		{name: "oldest accepted", header: "2", wantStatus: http.StatusOK},
+		{name: "too old", header: "1", wantStatus: http.StatusUpgradeRequired},
+		{name: "invalid", header: "abc", wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := withCompatibility(compatDeps{proto: 3}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil)
+			if tc.header != "" {
+				req.Header.Set("X-Client-Proto", tc.header)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+			if got := rec.Header().Get("X-Server-Proto"); got != "3" {
+				t.Fatalf("X-Server-Proto = %q, want 3", got)
+			}
+			if tc.wantStatus == http.StatusUpgradeRequired {
+				var body struct {
+					ProtoMin int `json:"proto_min"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+					t.Fatalf("decode body: %v", err)
+				}
+				if body.ProtoMin != 2 {
+					t.Fatalf("proto_min = %d, want 2", body.ProtoMin)
+				}
+			}
+		})
+	}
+}
+
+func TestWithCompatibilitySkipsNonAPIPaths(t *testing.T) {
+	t.Parallel()
+
+	h := withCompatibility(compatDeps{proto: 3}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	req.Header.Set("X-Client-Proto", "1")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+}
+
+func TestWithCompatibilityEnforcesMinBuild(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		platform   string
+		build      string
+		wantStatus int
+	}{
+		{name: "at minimum", platform: "android", build: "100", wantStatus: http.StatusOK},
+		{name: "below minimum", platform: "android", build: "99", wantStatus: http.StatusUpgradeRequired},
+		{name: "unknown platform", platform: "windows", build: "1", wantStatus: http.StatusOK},
+		{name: "missing platform", platform: "", build: "1", wantStatus: http.StatusOK},
+		{name: "invalid build", platform: "android", build: "abc", wantStatus: http.StatusBadRequest},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := withCompatibility(compatDeps{
+				proto:    3,
+				minBuild: map[string]int{"android": 100},
+			}, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			}))
+			req := httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil)
+			req.Header.Set("X-Client-Proto", "3")
+			if tc.platform != "" {
+				req.Header.Set("X-Client-Platform", tc.platform)
+			}
+			if tc.build != "" {
+				req.Header.Set("X-Client-Build", tc.build)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+		})
 	}
 }

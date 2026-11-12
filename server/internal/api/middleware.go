@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -297,12 +298,72 @@ func deviceIDFromPath(path string) string {
 	return strings.TrimSpace(decoded)
 }
 
+// withCompatibility rejects a client whose protocol is older than the server
+// still accepts. A client that sends no header is treated as unknown and is
+// left to the routes, so existing clients keep working.
+func withCompatibility(d DepsGetter, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverProto := 0
+		if d != nil {
+			serverProto = d.Proto()
+		}
+		if serverProto > 0 {
+			w.Header().Set("X-Server-Proto", strconv.Itoa(serverProto))
+		}
+		if serverProto <= 0 || !strings.HasPrefix(r.URL.Path, "/sync/v1/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		raw := strings.TrimSpace(r.Header.Get("X-Client-Proto"))
+		if raw == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		clientProto, err := strconv.Atoi(raw)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid X-Client-Proto"}, 0)
+			return
+		}
+		minimum := protoMin(serverProto)
+		if clientProto < minimum {
+			writeJSON(w, http.StatusUpgradeRequired, map[string]any{
+				"error":     "upgrade required",
+				"proto":     serverProto,
+				"proto_min": minimum,
+			}, 0)
+			return
+		}
+
+		platform := strings.TrimSpace(r.Header.Get("X-Client-Platform"))
+		buildRaw := strings.TrimSpace(r.Header.Get("X-Client-Build"))
+		if platform != "" && buildRaw != "" {
+			build, err := strconv.Atoi(buildRaw)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid X-Client-Build"}, 0)
+				return
+			}
+			if minimum := d.MinBuild()[platform]; minimum > 0 && build < minimum {
+				writeJSON(w, http.StatusUpgradeRequired, map[string]any{
+					"error":     "upgrade required",
+					"min_build": minimum,
+					"platform":  platform,
+				}, 0)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // DepsGetter abstracts accessors used by the middleware so we don't need to
 // change the original Deps type in many places when testing.
 type DepsGetter interface {
 	AdminToken() string
 	AllowedCIDRs() string
 	Devices() interface{}
+	Proto() int
+	MinBuild() map[string]int
 }
 
 // helper adapters for the real Deps
@@ -334,6 +395,26 @@ func (a depsAdapter) Devices() interface{} {
 	}
 	if dd, ok := a.d.(*Deps); ok {
 		return dd.Devices
+	}
+	return nil
+}
+
+func (a depsAdapter) Proto() int {
+	if dd, ok := a.d.(Deps); ok {
+		return dd.Proto
+	}
+	if dd, ok := a.d.(*Deps); ok {
+		return dd.Proto
+	}
+	return 0
+}
+
+func (a depsAdapter) MinBuild() map[string]int {
+	if dd, ok := a.d.(Deps); ok {
+		return dd.MinBuild
+	}
+	if dd, ok := a.d.(*Deps); ok {
+		return dd.MinBuild
 	}
 	return nil
 }

@@ -365,7 +365,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/library/uploads/{hash}", d.handleLibraryUploadStatus)
 
 	var h http.Handler = mux
-	// Wrap auth first so handlers see an authenticated request context.
+	h = withCompatibility(depsAdapter{d}, h)
+	// Wrap auth next so handlers see an authenticated request context.
 	h = withAuth(depsAdapter{d}, h)
 	h = withLogging(d.Logger, h)
 	h = withRecovery(d.Logger, h)

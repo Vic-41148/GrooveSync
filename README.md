@@ -63,15 +63,15 @@ The rules:
 - `proto` changes only on a breaking wire change. Additive fields and new
   features do not bump it.
 - A client older than `proto_min` gets `426 Upgrade Required` and keeps local
-  playback working. Header enforcement and the 426 response are not implemented
-  yet; today the server returns the handshake and the routes it has.
+  playback working. The server reads `X-Client-Proto`, `X-Client-Platform` and
+  `X-Client-Build` and enforces `proto_min` and `min_build`.
 - A client newer than the server is read-only until the server is updated.
 - The server is updated first. A client must tolerate a server one protocol
   behind.
 
-The planned client handshake sends `X-Client-Proto`, `X-Client-Build` and
-`X-Client-Platform`. Until that lands, `/sync/v1/meta` is the only source of
-compatibility data.
+The client sends those headers on every `/sync/v1` request. Requests without
+them are accepted for backwards compatibility, and every response carries
+`X-Server-Proto`.
 
 ## Docker
 
