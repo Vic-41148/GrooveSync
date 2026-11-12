@@ -59,6 +59,8 @@ Thumbs.db
 *.log
 
 # Phase 0 local research artifacts -----------------------------------------
+spikes/
+session-ses_*.md
 temp/
 .ytm-env
 browser.json
