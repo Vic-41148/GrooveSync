@@ -31,3 +31,10 @@ helper handles both.
 Run `make check-licenses` before opening a PR to ensure third-party licenses
 conform to the project's allowed list. A documented exception exists for
 modernc.org/mathutil.
+
+Flaky tests are treated as defects. PR gates never retry automatically: a red
+run stays red until someone reruns it after understanding the failure. An
+end-to-end run gets at most one retry, and the retry is logged with the failing
+job and the reason. A test that flakes twice within 14 days is quarantined,
+skipped behind an explicit guard and tracked in `docs/todo/`, until the
+underlying defect is fixed.
