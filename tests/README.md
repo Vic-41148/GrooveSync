@@ -78,7 +78,7 @@ The separator is `::`. If the token itself starts with `//`, write a doubled
 colon before it:
 
 ```text
-contains:server/internal/library/scanner.go:://go:build cgo
+contains:server/internal/library/taglib_cgo.go:://go:build cgo
 ```
 
 `test:` only matches Go tests. For Kotlin use:
