@@ -1,7 +1,7 @@
 GO ?= ~/.local/go/bin/go
 BASE ?= origin/main
 
-.PHONY: build vet test tidy check-licenses patch-coverage install-hooks
+.PHONY: build vet test tidy check-licenses patch-coverage install-hooks backup
 
 build:
 	CGO_ENABLED=0 $(GO) build ./...
@@ -32,3 +32,6 @@ patch-coverage:
 
 install-hooks:
 	@install -m 0755 scripts/pre-commit .git/hooks/pre-commit
+
+backup:
+	@./scripts/backup.sh

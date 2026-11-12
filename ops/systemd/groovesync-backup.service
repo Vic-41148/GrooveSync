@@ -1,0 +1,11 @@
+[Unit]
+Description=GrooveSync restic backup
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+User=groovesync
+WorkingDirectory=/opt/groovesync
+EnvironmentFile=/etc/groovesync/backup.env
+ExecStart=/opt/groovesync/scripts/backup.sh

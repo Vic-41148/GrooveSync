@@ -117,6 +117,14 @@ docker compose up -d --build
 music folder read-only at `/music`, reaches Navidrome at `http://navidrome:4533`
 and publishes only to loopback.
 
+## Backups
+
+`scripts/backup.sh` snapshots the Navidrome data directory, the syncd database
+and the compose inputs into a restic repository, then prunes and checks it. Set
+`RESTIC_REPOSITORY` and `RESTIC_PASSWORD_FILE` first and run `make backup`.
+`ops/systemd/` carries a daily timer. Restore and upgrade order live in the
+local ops notes.
+
 ## Desktop client setup
 
 The desktop client lives in `desktop/` and is built with Gradle.
