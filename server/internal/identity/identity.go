@@ -37,7 +37,7 @@ type Match struct {
 // NormalizeTitle lower-cases a title and removes a trailing remaster suffix.
 // Live and acoustic markers are preserved because they identify another recording.
 func NormalizeTitle(raw string) string {
-	s := normalizeSpace(strings.ToLower(raw))
+	s := strings.TrimRight(normalizeSpace(strings.ToLower(raw)), ".!?")
 	for {
 		trimmed := s
 		if trimmed == "" {

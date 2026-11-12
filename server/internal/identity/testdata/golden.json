@@ -1,0 +1,185 @@
+{
+  "version": 1,
+  "threshold": 0.8,
+  "cases": [
+    {
+      "name": "shared isrc wins over different titles",
+      "local": {"isrc": "US-AAA-26-00001", "title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"isrc": "us-aaa-26-00001", "title": "Song (Remastered 2011)", "artist": "Artist", "duration_ms": 181000}
+      ],
+      "want_index": 0,
+      "want_method": "isrc",
+      "want_review": false
+    },
+    {
+      "name": "shared mbid wins over different titles",
+      "local": {"mbid": "11111111-1111-1111-1111-111111111111", "title": "Song", "artist": "Artist"},
+      "candidates": [
+        {"mbid": "11111111-1111-1111-1111-111111111111", "title": "Another Title", "artist": "Other"}
+      ],
+      "want_index": 0,
+      "want_method": "mbid",
+      "want_review": false
+    },
+    {
+      "name": "conflicting isrc rejects the pair",
+      "local": {"isrc": "US-AAA-26-00001", "title": "Song", "artist": "Artist"},
+      "candidates": [
+        {"isrc": "US-AAA-26-00002", "title": "Song", "artist": "Artist"}
+      ],
+      "want_index": 0,
+      "want_method": "none",
+      "want_review": true
+    },
+    {
+      "name": "remaster suffix is ignored",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Song (Remastered 2011)", "artist": "Artist", "duration_ms": 182000}
+      ],
+      "want_index": 0,
+      "want_method": "fuzzy",
+      "want_review": false
+    },
+    {
+      "name": "live version stays apart",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Song (Live)", "artist": "Artist", "duration_ms": 180000}
+      ],
+      "want_index": 0,
+      "want_method": "none",
+      "want_review": true
+    },
+    {
+      "name": "acoustic version stays apart",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Song (Acoustic)", "artist": "Artist", "duration_ms": 180000}
+      ],
+      "want_index": 0,
+      "want_method": "none",
+      "want_review": true
+    },
+    {
+      "name": "eight second drift still matches",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Song", "artist": "Artist", "duration_ms": 188000}
+      ],
+      "want_index": 0,
+      "want_method": "fuzzy",
+      "want_review": false
+    },
+    {
+      "name": "twelve second drift needs review",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Song", "artist": "Artist", "duration_ms": 192000}
+      ],
+      "want_index": 0,
+      "want_method": "fuzzy",
+      "want_review": true
+    },
+    {
+      "name": "artist prefix still matches",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Song", "artist": "The Artist", "duration_ms": 181000}
+      ],
+      "want_index": 0,
+      "want_method": "fuzzy",
+      "want_review": false
+    },
+    {
+      "name": "artist mismatch with close duration needs review",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Song", "artist": "Different", "duration_ms": 181000}
+      ],
+      "want_index": 0,
+      "want_method": "fuzzy",
+      "want_review": true
+    },
+    {
+      "name": "artist mismatch without duration needs review",
+      "local": {"title": "Song", "artist": "Artist"},
+      "candidates": [
+        {"title": "Song", "artist": "Different"}
+      ],
+      "want_index": 0,
+      "want_method": "fuzzy",
+      "want_review": true
+    },
+    {
+      "name": "punctuation and case are ignored",
+      "local": {"title": "Song!", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "  song  ", "artist": "artist", "duration_ms": 181000}
+      ],
+      "want_index": 0,
+      "want_method": "fuzzy",
+      "want_review": false
+    },
+    {
+      "name": "best candidate is not the first",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Different", "artist": "Artist", "duration_ms": 180000},
+        {"title": "Song", "artist": "Artist", "duration_ms": 181000}
+      ],
+      "want_index": 1,
+      "want_method": "fuzzy",
+      "want_review": false
+    },
+    {
+      "name": "no candidates needs review",
+      "local": {"title": "Song", "artist": "Artist"},
+      "candidates": [],
+      "want_index": -1,
+      "want_method": "none",
+      "want_review": true
+    },
+    {
+      "name": "bare remaster suffix is ignored",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Song Remastered", "artist": "Artist", "duration_ms": 181000}
+      ],
+      "want_index": 0,
+      "want_method": "fuzzy",
+      "want_review": false
+    },
+    {
+      "name": "feat suffix in the artist still matches",
+      "local": {"title": "Song", "artist": "Artist", "duration_ms": 180000},
+      "candidates": [
+        {"title": "Song", "artist": "Artist feat. Guest", "duration_ms": 181000}
+      ],
+      "want_index": 0,
+      "want_method": "fuzzy",
+      "want_review": false
+    },
+    {
+      "name": "empty title never matches",
+      "local": {"title": "", "artist": "Artist"},
+      "candidates": [
+        {"title": "Song", "artist": "Artist"}
+      ],
+      "want_index": 0,
+      "want_method": "none",
+      "want_review": true
+    },
+    {
+      "name": "conflicting mbid rejects the pair",
+      "local": {"mbid": "11111111-1111-1111-1111-111111111111", "title": "Song", "artist": "Artist"},
+      "candidates": [
+        {"mbid": "22222222-2222-2222-2222-222222222222", "title": "Song", "artist": "Artist"}
+      ],
+      "want_index": 0,
+      "want_method": "none",
+      "want_review": true
+    }
+  ]
+}

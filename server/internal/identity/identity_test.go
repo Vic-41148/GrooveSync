@@ -20,6 +20,8 @@ func TestNormalizeTitle(t *testing.T) {
 		{name: "live is preserved", input: "Song (Live)", want: "song (live)"},
 		{name: "acoustic is preserved", input: "Song (Acoustic)", want: "song (acoustic)"},
 		{name: "spacing and case", input: "  SONG   (Remastered) ", want: "song"},
+		{name: "trailing punctuation", input: "Song!", want: "song"},
+		{name: "question mark", input: "Song?", want: "song"},
 		{name: "live before remaster", input: "Song (Live) (Remastered)", want: "song (live)"},
 		{name: "empty", input: "   ", want: ""},
 	}
