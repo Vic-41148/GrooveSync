@@ -21,6 +21,19 @@ go test -v ./tests/claims
 The claims suite needs no services, no network and no local `docs/` checkout.
 The docs suite needs the local `docs/` checkout and skips without it.
 
+The cross-repo suites live next to the code they pin:
+
+```sh
+go test -tags=contract ./server/internal/contracttest
+```
+
+In the provisioner checkout:
+
+```sh
+go test ./tests/contract
+go test -tags=integration ./tests/integration
+```
+
 ## How it works
 
 `tests/claims/claims.json` is a list of claims. Each claim has an id, the
