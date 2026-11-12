@@ -53,6 +53,45 @@ func TestPhase6NotStartedHasNoTicks(t *testing.T) {
 	}
 }
 
+func TestTodoCheckboxesCiteEvidence(t *testing.T) {
+	root := repoRoot(t)
+	todo := filepath.Join(root, "docs", "todo")
+	if _, err := os.Stat(todo); err != nil {
+		t.Skip("docs/todo is local only and absent from this checkout")
+	}
+
+	entries, err := os.ReadDir(todo)
+	if err != nil {
+		t.Fatalf("read docs/todo: %v", err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "phase-") || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(todo, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		lines := strings.Split(string(data), "\n")
+		for i, line := range lines {
+			if !strings.HasPrefix(strings.TrimSpace(line), "- [x]") {
+				continue
+			}
+			block := []string{line}
+			for j := i + 1; j < len(lines); j++ {
+				if strings.TrimSpace(lines[j]) == "" || !strings.HasPrefix(lines[j], " ") {
+					break
+				}
+				block = append(block, lines[j])
+			}
+			if !strings.Contains(strings.Join(block, "\n"), "`") {
+				t.Errorf("%s:%d has no backticked evidence: %s", name, i+1, strings.TrimSpace(line))
+			}
+		}
+	}
+}
+
 func TestTodoStatusTableMatchesHeaders(t *testing.T) {
 	root := repoRoot(t)
 	todo := filepath.Join(root, "docs", "todo")
