@@ -286,6 +286,19 @@
       "note": ""
     },
     {
+      "id": "v-phase5-provider-state",
+      "doc": "docs/todo/phase-5.md",
+      "phase": "5",
+      "claim": "Core derives acquisition_provider from the kill switch, not from plugin health.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:server/internal/api/server.go::acquisition_provider",
+        "test:TestHealthReportAcquisitionDisabled"
+      ],
+      "note": ""
+    },
+    {
       "id": "v-phase5-worker-removed",
       "doc": "docs/todo/phase-5.md",
       "phase": "5",
