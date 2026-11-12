@@ -6,8 +6,10 @@
 package docs
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -49,6 +51,81 @@ func TestPhase6NotStartedHasNoTicks(t *testing.T) {
 			t.Errorf("phase-6.md:%d ticks an item while the header says not started", i+1)
 		}
 	}
+}
+
+func TestTodoStatusTableMatchesHeaders(t *testing.T) {
+	root := repoRoot(t)
+	todo := filepath.Join(root, "docs", "todo")
+	if _, err := os.Stat(todo); err != nil {
+		t.Skip("docs/todo is local only and absent from this checkout")
+	}
+
+	readme, err := os.ReadFile(filepath.Join(todo, "README.md"))
+	if err != nil {
+		t.Fatalf("read docs/todo/README.md: %v", err)
+	}
+	rows := statusRows(string(readme))
+	if len(rows) == 0 {
+		t.Fatal("docs/todo/README.md has no status rows")
+	}
+
+	for phase := 0; phase <= 6; phase++ {
+		name := fmt.Sprintf("phase-%d.md", phase)
+		data, err := os.ReadFile(filepath.Join(todo, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		row, ok := rows[strconv.Itoa(phase)]
+		if !ok {
+			t.Errorf("%s has no row in docs/todo/README.md", name)
+			continue
+		}
+		header := statusHeader(string(data))
+		if strings.Contains(strings.ToLower(header), "not started") && !strings.Contains(strings.ToLower(row), "not started") {
+			t.Errorf("%s says not started but the README row is %q", name, row)
+		}
+	}
+}
+
+func statusRows(readme string) map[string]string {
+	rows := make(map[string]string)
+	inStatus := false
+	for _, line := range strings.Split(readme, "\n") {
+		if strings.HasPrefix(line, "## ") {
+			inStatus = strings.TrimSpace(line) == "## Status"
+			continue
+		}
+		if !inStatus || !strings.HasPrefix(line, "|") {
+			continue
+		}
+		cells := strings.Split(line, "|")
+		if len(cells) < 3 {
+			continue
+		}
+		phase := strings.TrimSpace(cells[1])
+		if phase == "" || phase == "Phase" || strings.HasPrefix(phase, "---") {
+			continue
+		}
+		rows[phase] = line
+	}
+	return rows
+}
+
+func statusHeader(doc string) string {
+	var lines []string
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(line, "Status:") {
+			lines = append(lines, strings.TrimPrefix(line, "Status:"))
+			continue
+		}
+		if len(lines) > 0 {
+			if strings.TrimSpace(line) == "" {
+				break
+			}
+			lines = append(lines, line)
+		}
+	}
+	return strings.Join(lines, " ")
 }
 
 func TestAuthoredTextHasNoEmDashOrEmoji(t *testing.T) {
