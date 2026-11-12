@@ -125,6 +125,10 @@ and the compose inputs into a restic repository, then prunes and checks it. Set
 `ops/systemd/` carries a daily timer. Restore and upgrade order live in the
 local ops notes.
 
+`docker compose --profile monitoring up -d` adds Uptime Kuma on loopback and
+notify-only Diun. Set `DIUN_NOTIF_NTFY_TOPIC` first. Diun watches containers
+labelled `diun.enable=true` and never updates anything.
+
 ## Desktop client setup
 
 The desktop client lives in `desktop/` and is built with Gradle.

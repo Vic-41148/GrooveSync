@@ -11,6 +11,8 @@ services:
       ND_MUSICFOLDER: /music
       ND_DATAFOLDER: /data
       ND_LOGLEVEL: info
+    labels:
+      diun.enable: "true"
     cap_drop:
       - ALL
     security_opt:
@@ -34,5 +36,42 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  uptime-kuma:
+    image: louislam/uptime-kuma:2.5.9@sha256:e88415a90dd2f7efecdbc18de0490aff292764a3ac471531bf1d0481725591bd
+    profiles:
+      - monitoring
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - uptime-kuma-data:/app/data
+    labels:
+      diun.enable: "true"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
+  diun:
+    image: crazymax/diun:4.33.1@sha256:8cc638b4c54e8a0c47898a51b20dae73037ad43310168b5da543a311dc668f77
+    profiles:
+      - monitoring
+    command: serve
+    environment:
+      DIUN_PROVIDERS_DOCKER: "true"
+      DIUN_PROVIDERS_DOCKER_WATCHBYDEFAULT: "false"
+      DIUN_NOTIF_NTFY_URL: ${DIUN_NOTIF_NTFY_URL:-https://ntfy.sh}
+      DIUN_NOTIF_NTFY_TOPIC: ${DIUN_NOTIF_NTFY_TOPIC:?set DIUN_NOTIF_NTFY_TOPIC}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - diun-data:/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+
 volumes:
   groovesync-data:
+  uptime-kuma-data:
+  diun-data:
