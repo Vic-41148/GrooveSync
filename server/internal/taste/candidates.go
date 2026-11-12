@@ -37,6 +37,15 @@ func (s *Store) MixCandidates(ctx context.Context, asOf time.Time) ([]MixCandida
 	for _, track := range log.ScoreTracks(DefaultConfig(), asOf) {
 		scores[track.CanonicalID] = track.Score
 	}
+	overrides, err := s.ListOverrides(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for id, level := range overrides {
+		if score, ok := OverrideScore(level); ok {
+			scores[id] = score
+		}
+	}
 
 	liked := make(map[string]bool, len(events))
 	services := make(map[string]string, len(events))

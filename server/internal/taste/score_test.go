@@ -105,9 +105,20 @@ func TestAllowedSource(t *testing.T) {
 
 func TestNoSpotifyFieldInContributions(t *testing.T) {
 	t.Parallel()
-	ev := Event{TrackID: "t1", Source: "spotify", Type: "play", Value: 1, At: time.Now()}
-	res := Score([]Event{ev}, Config{})
-	for _, c := range res.Contributions {
+	now := time.Now()
+	spotify := Event{TrackID: "t1", Source: "spotify", Type: EventLike, Value: 1, At: now}
+	local := Event{TrackID: "t1", Source: SourceLocal, Type: EventLike, Value: 1, At: now}
+
+	onlySpotify := Score([]Event{spotify}, DefaultConfig())
+	if onlySpotify.Score != 0 || len(onlySpotify.Contributions) != 0 {
+		t.Fatalf("spotify-only score = %#v, want no contribution", onlySpotify)
+	}
+
+	mixed := Score([]Event{spotify, local}, DefaultConfig())
+	if len(mixed.Contributions) != 1 {
+		t.Fatalf("mixed contributions = %#v, want only the local like", mixed.Contributions)
+	}
+	for _, c := range mixed.Contributions {
 		if strings.Contains(strings.ToLower(c.Name), "spotify") {
 			t.Fatalf("spotify field leaked into contribution: %+v", c)
 		}

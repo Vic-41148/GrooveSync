@@ -146,10 +146,14 @@ func (l Log) Score(cfg Config, asOf time.Time) Result {
 }
 
 // TrackScore is one track's affinity together with the contributions behind it.
+// Score is the effective score after any manual override. DerivedScore is the
+// score the event model produced before the override.
 type TrackScore struct {
-	CanonicalID   string         `json:"canonical_id"`
-	Score         float64        `json:"score"`
-	Contributions []Contribution `json:"contributions"`
+	CanonicalID    string         `json:"canonical_id"`
+	Score          float64        `json:"score"`
+	DerivedScore   float64        `json:"derived_score"`
+	ManualOverride string         `json:"manual_override,omitempty"`
+	Contributions  []Contribution `json:"contributions"`
 }
 
 // ScoreTracks scores each track on its own events, highest first. Events are
@@ -174,27 +178,54 @@ func (l Log) ScoreTracks(cfg Config, asOf time.Time) []TrackScore {
 	out := make([]TrackScore, 0, len(ordered))
 	for _, canonicalID := range ordered {
 		result := ScoreAt(grouped[canonicalID], cfg, asOf)
-		out = append(out, TrackScore{CanonicalID: canonicalID, Score: result.Score, Contributions: result.Contributions})
+		out = append(out, TrackScore{
+			CanonicalID:   canonicalID,
+			Score:         result.Score,
+			DerivedScore:  result.Score,
+			Contributions: result.Contributions,
+		})
 	}
+	sortTrackScores(out)
+	return out
+}
+
+func sortTrackScores(out []TrackScore) {
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Score == out[j].Score {
 			return out[i].CanonicalID < out[j].CanonicalID
 		}
 		return out[i].Score > out[j].Score
 	})
-	return out
 }
 
-// ScoreTracksColdStart applies ColdStartScore for tracks with no recorded history.
+// ScoreTracksColdStart applies ColdStartScore for library tracks with no
+// recorded history. Tracks that only exist locally are added to the result so
+// they rank alongside streaming favourites.
 func (l Log) ScoreTracksColdStart(cfg Config, asOf time.Time, library map[string]Metadata) []TrackScore {
 	out := l.ScoreTracks(cfg, asOf)
+	seen := make(map[string]bool, len(out))
 	for i := range out {
+		seen[out[i].CanonicalID] = true
 		if out[i].Score == 0 {
 			if meta, ok := library[out[i].CanonicalID]; ok {
-				out[i].Score = ColdStartScore(Metadata{Title: meta.Title, Artist: meta.Artist, Album: meta.Album, Tags: meta.Tags}, meta)
+				score := ColdStartScore(meta, meta)
+				out[i].Score = score
+				out[i].DerivedScore = score
 			}
 		}
 	}
+	for id, meta := range library {
+		if seen[id] {
+			continue
+		}
+		score := ColdStartScore(meta, meta)
+		out = append(out, TrackScore{
+			CanonicalID:  id,
+			Score:        score,
+			DerivedScore: score,
+		})
+	}
+	sortTrackScores(out)
 	return out
 }
 

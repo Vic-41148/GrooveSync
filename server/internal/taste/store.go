@@ -125,6 +125,42 @@ FROM event
 	return NewLog(out...).Entries(), nil
 }
 
+// ListByCanonicalID returns the events for one track, in clock order.
+func (s *Store) ListByCanonicalID(ctx context.Context, canonicalID string) ([]EventRecord, error) {
+	if s.db == nil {
+		return nil, errors.New("taste: database is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT event_id, device_id, canonical_id, type, value, hlc_timestamp, source, percent_played, position_ms
+FROM event
+WHERE canonical_id = ?
+`, canonicalID)
+	if err != nil {
+		return nil, fmt.Errorf("taste: list track events: %w", err)
+	}
+	defer rows.Close()
+
+	var out []EventRecord
+	for rows.Next() {
+		var event EventRecord
+		var eventType, clock, source string
+		if err := rows.Scan(&event.ID, &event.DeviceID, &event.CanonicalID, &eventType, &event.Value, &clock, &source, &event.PercentPlayed, &event.PositionMs); err != nil {
+			return nil, fmt.Errorf("taste: scan track event: %w", err)
+		}
+		event.Type = EventType(eventType)
+		event.Source = Source(source)
+		event.HLC, err = ParseHLC(clock)
+		if err != nil {
+			return nil, fmt.Errorf("taste: scan track event %s: %w", event.ID, err)
+		}
+		out = append(out, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("taste: iterate track events: %w", err)
+	}
+	return NewLog(out...).Entries(), nil
+}
+
 // ListPage returns a slice of events after since in clock order,
 // the next cursor (the last HLC formatted), and has_more.
 func (s *Store) ListPage(ctx context.Context, since HLC, limit int) ([]EventRecord, string, bool, error) {

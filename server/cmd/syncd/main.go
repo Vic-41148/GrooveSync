@@ -99,7 +99,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		},
 	}
 
-	features := []string{"meta", "review_queue", "connectors", "spotify_library", "spotify_import", "plan", "write_log", "devices", "events", "score", "mix", "library", "acquisition", "settings"}
+	features := []string{"meta", "review_queue", "connectors", "spotify_library", "spotify_import", "plan", "write_log", "devices", "events", "score", "why", "override", "mix", "library", "acquisition", "settings"}
 	var libraryMirror api.LibraryMirror
 	var navidromeHealth api.HealthChecker
 	if cfg.NavidromeURL != "" {
@@ -213,6 +213,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		Devices:            deviceRepo,
 		EventLog:           eventStore,
 		EventStream:        stream,
+		Overrides:          eventStore,
 		Ntfy:               ntfyPublisher,
 		Mix:                eventStore,
 		Acquisition:        acquisitionRepo,

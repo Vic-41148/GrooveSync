@@ -179,6 +179,41 @@ LIMIT ? OFFSET ?
 	return tracks, nil
 }
 
+// ErrTrackNotFound reports a canonical id that is not in the mirrored library.
+var ErrTrackNotFound = errors.New("library: track not found")
+
+// Get returns one mirrored track with its renditions.
+func (r Repo) Get(ctx context.Context, canonicalID string) (Track, error) {
+	if r.DB == nil {
+		return Track{}, errors.New("library: database is required")
+	}
+	var track Track
+	var mbid, isrc, album sql.NullString
+	err := r.DB.QueryRowContext(ctx, `
+SELECT canonical_id, mbid, isrc, title, artist, album, duration_ms
+FROM track
+WHERE canonical_id = ?
+`, canonicalID).Scan(&track.CanonicalID, &mbid, &isrc, &track.Title, &track.Artist, &album, &track.DurationMs)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Track{}, ErrTrackNotFound
+	}
+	if err != nil {
+		return Track{}, fmt.Errorf("library: load track: %w", err)
+	}
+	track.MBID = mbid.String
+	track.ISRC = isrc.String
+	track.Album = album.String
+	track.Renditions = make([]Rendition, 0)
+	stored, err := r.renditions(ctx, []string{canonicalID})
+	if err != nil {
+		return Track{}, err
+	}
+	if renditions, ok := stored[canonicalID]; ok {
+		track.Renditions = renditions
+	}
+	return track, nil
+}
+
 // Count returns the number of mirrored tracks.
 func (r Repo) Count(ctx context.Context) (int, error) {
 	if r.DB == nil {

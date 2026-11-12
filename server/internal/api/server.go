@@ -63,6 +63,7 @@ type Deps struct {
 	Devices            DeviceRegistry
 	EventLog           EventLog
 	EventStream        EventBroadcaster
+	Overrides          OverrideStore
 	Mix                MixSource
 	Acquisition        AcquisitionQueue
 	AcquisitionSwitch  AcquisitionSwitch
@@ -164,6 +165,14 @@ type EventLog interface {
 	Append(context.Context, []taste.EventRecord) (int, error)
 	List(context.Context) ([]taste.EventRecord, error)
 	ListPage(ctx context.Context, since taste.HLC, limit int) ([]taste.EventRecord, string, bool, error)
+}
+
+// OverrideStore persists the manual affinity level for a track.
+type OverrideStore interface {
+	GetOverride(context.Context, string) (string, bool, error)
+	ListOverrides(context.Context) (map[string]string, error)
+	SetOverride(context.Context, string, string) error
+	DeleteOverride(context.Context, string) error
 }
 
 // MixSource builds the candidate pool a mix draws from.
@@ -349,6 +358,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/library/enrich", d.handleLibraryEnrich)
 	mux.HandleFunc("GET /sync/v1/library", d.handleLibrary)
 	mux.HandleFunc("GET /sync/v1/why/{id}", d.handleWhy)
+	mux.HandleFunc("PUT /sync/v1/why/{id}/override", d.handleWhyOverrideSet)
+	mux.HandleFunc("DELETE /sync/v1/why/{id}/override", d.handleWhyOverrideDelete)
 	mux.HandleFunc("GET /sync/v1/library/files/{hash}", d.handleLibraryFile)
 	mux.HandleFunc("PUT /sync/v1/library/uploads/{hash}", d.handleLibraryUpload)
 	mux.HandleFunc("GET /sync/v1/library/uploads/{hash}", d.handleLibraryUploadStatus)
@@ -1952,11 +1963,54 @@ func (d Deps) handleScores(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "events unavailable"}, 0)
 		return
 	}
-	scores := taste.NewLog(events...).ScoreTracks(taste.DefaultConfig(), asOf)
+	log := taste.NewLog(events...)
+	scores := log.ScoreTracks(taste.DefaultConfig(), asOf)
+	if libraryMeta, err := d.libraryMetadata(r.Context()); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "library unavailable"}, 0)
+		return
+	} else if len(libraryMeta) > 0 {
+		scores = log.ScoreTracksColdStart(taste.DefaultConfig(), asOf, libraryMeta)
+	}
+	if d.Overrides != nil {
+		overrides, err := d.Overrides.ListOverrides(r.Context())
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "overrides unavailable"}, 0)
+			return
+		}
+		taste.ApplyOverrides(scores, overrides)
+	}
 	if scores == nil {
 		scores = []taste.TrackScore{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"as_of": asOf.Format(time.RFC3339Nano), "tracks": scores}, 0)
+}
+
+// libraryMetadata pages the mirrored library into the shape cold-start scoring
+// needs. It returns nil when no library is configured.
+func (d Deps) libraryMetadata(ctx context.Context) (map[string]taste.Metadata, error) {
+	if d.Library == nil {
+		return nil, nil
+	}
+	total, err := d.Library.Count(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]taste.Metadata, total)
+	const page = 500
+	for offset := 0; offset < total; offset += page {
+		tracks, err := d.Library.List(ctx, page, offset)
+		if err != nil {
+			return nil, err
+		}
+		for _, track := range tracks {
+			out[track.CanonicalID] = taste.Metadata{
+				Title:  track.Title,
+				Artist: track.Artist,
+				Album:  track.Album,
+			}
+		}
+	}
+	return out, nil
 }
 
 type mixTrack struct {
@@ -2610,11 +2664,134 @@ func parseContentRange(header string) (int64, int64, int64, error) {
 
 func (d Deps) handleWhy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	writeJSON(w, http.StatusOK, map[string]any{
+	if strings.TrimSpace(id) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "track id is required"}, 0)
+		return
+	}
+
+	events := []taste.EventRecord{}
+	if d.EventLog != nil {
+		if lister, ok := d.EventLog.(interface {
+			ListByCanonicalID(context.Context, string) ([]taste.EventRecord, error)
+		}); ok {
+			stored, err := lister.ListByCanonicalID(r.Context(), id)
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "events unavailable"}, 0)
+				return
+			}
+			events = stored
+		} else {
+			stored, err := d.EventLog.List(r.Context())
+			if err != nil {
+				writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "events unavailable"}, 0)
+				return
+			}
+			for _, event := range stored {
+				if event.CanonicalID == id {
+					events = append(events, event)
+				}
+			}
+		}
+	}
+	if len(events) == 0 && !d.trackExists(r.Context(), id) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "track not found"}, 0)
+		return
+	}
+
+	asOf := d.Now().UTC()
+	result := taste.NewLog(events...).Score(taste.DefaultConfig(), asOf)
+	contributions := result.Contributions
+	if contributions == nil {
+		contributions = []taste.Contribution{}
+	}
+	payload := map[string]any{
 		"track":           id,
-		"contributions":   []map[string]any{},
+		"as_of":           asOf.Format(time.RFC3339Nano),
+		"score":           result.Score,
+		"derived_score":   result.Score,
+		"contributions":   contributions,
 		"manual_override": nil,
+	}
+	if d.Overrides != nil {
+		level, ok, err := d.Overrides.GetOverride(r.Context(), id)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "override unavailable"}, 0)
+			return
+		}
+		if ok {
+			payload["manual_override"] = level
+			if score, ok := taste.OverrideScore(level); ok {
+				payload["score"] = score
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, payload, 0)
+}
+
+func (d Deps) handleWhyOverrideSet(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "track id is required"}, 0)
+		return
+	}
+	var req struct {
+		Value string `json:"value"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	if !taste.ValidOverrideLevel(req.Value) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid override level"}, 0)
+		return
+	}
+	if d.Overrides == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "overrides unavailable"}, 0)
+		return
+	}
+	if !d.trackExists(r.Context(), id) {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "track not found"}, 0)
+		return
+	}
+	if err := d.Overrides.SetOverride(r.Context(), id, req.Value); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "override unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"canonical_id":    id,
+		"manual_override": req.Value,
 	}, 0)
+}
+
+func (d Deps) handleWhyOverrideDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "track id is required"}, 0)
+		return
+	}
+	if d.Overrides == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "overrides unavailable"}, 0)
+		return
+	}
+	if err := d.Overrides.DeleteOverride(r.Context(), id); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "override unavailable"}, 0)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (d Deps) trackExists(ctx context.Context, id string) bool {
+	if d.Library == nil {
+		return false
+	}
+	getter, ok := d.Library.(interface {
+		Get(context.Context, string) (library.Track, error)
+	})
+	if !ok {
+		return false
+	}
+	_, err := getter.Get(ctx, id)
+	return err == nil
 }
 
 func (d Deps) handleLibrary(w http.ResponseWriter, r *http.Request) {

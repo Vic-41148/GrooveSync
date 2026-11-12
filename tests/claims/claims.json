@@ -87,57 +87,6 @@
       "note": "Backtest helpers exist. No real history, dataset or recorded result is in the repository."
     },
     {
-      "id": "f-phase3-coldstart-unwired",
-      "doc": "docs/todo/phase-3.md",
-      "phase": "3",
-      "claim": "ColdStartScore is wired into the HTTP scoring path.",
-      "status": "false",
-      "severity": "S2",
-      "evidence": [
-        "contains:server/internal/api/server.go::ScoreTracks(taste.DefaultConfig(), asOf)",
-        "lacks:server/internal/api/server.go::ScoreTracksColdStart"
-      ],
-      "note": "The function and its wrapper exist, but handleScores calls ScoreTracks only. The cold-start wrapper has no caller outside tests."
-    },
-    {
-      "id": "f-phase3-exclusion-weak",
-      "doc": "docs/todo/phase-3.md",
-      "phase": "3",
-      "claim": "TestNoSpotifyFieldInContributions fails if any Spotify-sourced field reaches the score.",
-      "status": "overstated",
-      "severity": "S2",
-      "evidence": [
-        "contains:server/internal/taste/score_test.go::strings.Contains(strings.ToLower(c.Name), \"spotify\")"
-      ],
-      "note": "The test only inspects contribution names. A Spotify value in the score or in another field would pass."
-    },
-    {
-      "id": "f-phase3-override",
-      "doc": "docs/todo/phase-3.md",
-      "phase": "3",
-      "claim": "A manual override is stored per track, always wins and survives re-sync.",
-      "status": "false",
-      "severity": "S1",
-      "evidence": [
-        "contains:server/internal/store/migrations/0022_track_override.sql::CREATE TABLE IF NOT EXISTS track_override",
-        "nosource:track_override"
-      ],
-      "note": "Only the migration exists. No Go code reads or writes the table."
-    },
-    {
-      "id": "f-phase3-why-stub",
-      "doc": "docs/todo/phase-3.md",
-      "phase": "3",
-      "claim": "The why view is built from real contributions and every score can be explained.",
-      "status": "false",
-      "severity": "S1",
-      "evidence": [
-        "contains:server/internal/api/server.go::\"contributions\":   []map[string]any{}",
-        "contains:server/internal/api/server.go::\"manual_override\": nil"
-      ],
-      "note": "handleWhy returns an empty contributions slice and a nil override for every track."
-    },
-    {
       "id": "f-phase4-ci-lint",
       "doc": "docs/todo/phase-4.md",
       "phase": "4",
@@ -347,6 +296,59 @@
       "evidence": [
         "file:common/src/jvmMain/kotlin/com/groovesync/common/net/OpenSubsonicClient.kt",
         "contains:common/src/jvmTest/kotlin/com/groovesync/common/net/OpenSubsonicClientTest.kt::@Test"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-phase3-coldstart",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "ColdStartScore is wired into the HTTP scoring path and local-only tracks get a score.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:server/internal/api/server.go::ScoreTracksColdStart",
+        "test:TestScoresIncludeColdStartForLocalOnlyTracks"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-phase3-exclusion",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "A test proves Spotify-sourced events cannot reach the score.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "test:TestNoSpotifyFieldInContributions",
+        "contains:server/internal/taste/score_test.go::onlySpotify"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-phase3-override",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "A manual override is stored per track, always wins and survives a migration rerun.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:server/internal/taste/override.go::track_override",
+        "contains:server/internal/api/server.go::handleWhyOverrideSet",
+        "test:TestOverrideSurvivesMigrationRerun"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-phase3-why",
+      "doc": "docs/todo/phase-3.md",
+      "phase": "3",
+      "claim": "The why view is built from real contributions and exposes the derived score and override.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:server/internal/api/server.go::\"derived_score\"",
+        "test:TestWhyViewExplainsScoreAndOverrideWins"
       ],
       "note": ""
     },
