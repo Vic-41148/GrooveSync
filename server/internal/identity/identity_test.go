@@ -209,24 +209,43 @@ func TestResolve(t *testing.T) {
 	}
 }
 
-func TestGoldenIdentitySet(t *testing.T) {
+func TestResolveKeepsLiveApartAndFlagsDurationDrift(t *testing.T) {
 	t.Parallel()
 
 	cases := []struct {
-		local  Track
-		remote Track
-		want   Method
+		name       string
+		local      Track
+		remote     Track
+		wantMethod Method
+		wantReview bool
 	}{
-		{local: Track{Title: "Song", Artist: "Artist", DurationMS: 180000}, remote: Track{Title: "Song (Live)", Artist: "Artist", DurationMS: 180000}, want: MethodNone},
-		{local: Track{Title: "Song", Artist: "Artist", DurationMS: 180000}, remote: Track{Title: "Song", Artist: "Artist", DurationMS: 200000}, want: MethodFuzzy},
+		{
+			name:       "live version is not the studio track",
+			local:      Track{Title: "Song", Artist: "Artist", DurationMS: 180000},
+			remote:     Track{Title: "Song (Live)", Artist: "Artist", DurationMS: 180000},
+			wantMethod: MethodNone,
+			wantReview: true,
+		},
+		{
+			name:       "duration drift stays fuzzy and goes to review",
+			local:      Track{Title: "Song", Artist: "Artist", DurationMS: 180000},
+			remote:     Track{Title: "Song", Artist: "Artist", DurationMS: 200000},
+			wantMethod: MethodFuzzy,
+			wantReview: true,
+		},
 	}
 
 	for _, tc := range cases {
 		tc := tc
-		t.Run(tc.local.Title+"->"+tc.remote.Title, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			m, _, _ := Resolve(tc.local, []Track{tc.remote}, 0.8)
-			_ = m
+			_, match, review := Resolve(tc.local, []Track{tc.remote}, 0.8)
+			if match.Method != tc.wantMethod {
+				t.Fatalf("Method = %q, want %q", match.Method, tc.wantMethod)
+			}
+			if review != tc.wantReview {
+				t.Fatalf("review = %v, want %v", review, tc.wantReview)
+			}
 		})
 	}
 }
