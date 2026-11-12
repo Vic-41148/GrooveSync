@@ -103,6 +103,20 @@ start without `SYNCD_ADMIN_TOKEN`. The example publishes only to the host
 loopback. Publishing a LAN address is safe only with the token set and the
 instance behind a VPN.
 
+`docker-compose.yml` runs Navidrome and `syncd` together. Export the admin token
+and Navidrome credentials first:
+
+```sh
+export SYNCD_ADMIN_TOKEN="$(openssl rand -hex 32)"
+export SYNCD_NAVIDROME_USER=admin
+export SYNCD_NAVIDROME_PASSWORD=changeme
+docker compose up -d --build
+```
+
+`syncd` keeps its database in the `groovesync-data` named volume, mounts the
+music folder read-only at `/music`, reaches Navidrome at `http://navidrome:4533`
+and publishes only to loopback.
+
 ## Desktop client setup
 
 The desktop client lives in `desktop/` and is built with Gradle.

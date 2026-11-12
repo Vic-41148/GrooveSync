@@ -15,3 +15,24 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+
+  syncd:
+    build: .
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - groovesync-data:/data
+      - ./music:/music:ro
+    environment:
+      SYNCD_ADMIN_TOKEN: ${SYNCD_ADMIN_TOKEN:?set SYNCD_ADMIN_TOKEN}
+      SYNCD_MUSIC_ROOT: /music
+      SYNCD_NAVIDROME_URL: http://navidrome:4533
+      SYNCD_NAVIDROME_USER: ${SYNCD_NAVIDROME_USER:-admin}
+      SYNCD_NAVIDROME_PASSWORD: ${SYNCD_NAVIDROME_PASSWORD:-}
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  groovesync-data:
