@@ -32,6 +32,7 @@ secrets.properties
 *.test
 *.out
 coverage.*
+testdata/rapid/
 
 # Gradle / Android -----------------------------------------------------------
 .gradle/

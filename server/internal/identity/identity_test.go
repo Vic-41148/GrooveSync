@@ -23,6 +23,7 @@ func TestNormalizeTitle(t *testing.T) {
 		{name: "trailing punctuation", input: "Song!", want: "song"},
 		{name: "question mark", input: "Song?", want: "song"},
 		{name: "remaster after question mark", input: "Where Is The Love? (Remastered 2011)", want: "where is the love"},
+		{name: "punctuation after a space", input: "A ?", want: "a"},
 		{name: "live before remaster", input: "Song (Live) (Remastered)", want: "song (live)"},
 		{name: "empty", input: "   ", want: ""},
 	}

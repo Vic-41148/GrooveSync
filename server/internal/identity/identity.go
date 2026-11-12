@@ -37,7 +37,7 @@ type Match struct {
 // NormalizeTitle lower-cases a title and removes a trailing remaster suffix.
 // Live and acoustic markers are preserved because they identify another recording.
 func NormalizeTitle(raw string) string {
-	s := strings.TrimRight(normalizeSpace(strings.ToLower(raw)), ".!?")
+	s := trimTitlePunctuation(normalizeSpace(strings.ToLower(raw)))
 	for {
 		trimmed := s
 		if trimmed == "" {
@@ -70,7 +70,7 @@ func NormalizeTitle(raw string) string {
 			}
 		}
 		if !changed {
-			return strings.TrimRight(trimmed, ".!?")
+			return trimTitlePunctuation(trimmed)
 		}
 	}
 }
@@ -167,4 +167,10 @@ func normalizeID(raw string) string {
 
 func normalizeSpace(raw string) string {
 	return strings.Join(strings.Fields(strings.TrimSpace(raw)), " ")
+}
+
+// trimTitlePunctuation drops sentence punctuation from the end of a title and
+// any space the removal exposed.
+func trimTitlePunctuation(s string) string {
+	return strings.TrimSpace(strings.TrimRight(s, ".!?"))
 }

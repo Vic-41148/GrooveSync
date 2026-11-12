@@ -6,6 +6,7 @@ require (
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/pressly/goose/v3 v3.29.0
 	modernc.org/sqlite v1.61.0
+	pgregory.net/rapid v1.3.0
 )
 
 require (

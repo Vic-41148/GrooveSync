@@ -3,16 +3,34 @@
 
 package identity
 
-import "testing"
+import (
+	"strings"
+	"testing"
 
-func TestMergeIdempotenceProperty(t *testing.T) {
+	"pgregory.net/rapid"
+)
+
+func TestNormalizeTitleProperty(t *testing.T) {
 	t.Parallel()
-	for i := 0; i < 1000; i++ {
-		a := Track{Title: "Song", Artist: "Artist", DurationMS: 180000}
-		b := Track{Title: "Song (Remastered)", Artist: "Artist", DurationMS: 181000}
-		if NormalizeTitle(a.Title) != "song" {
-			t.Fatal("normalize failed")
+
+	rapid.Check(t, func(t *rapid.T) {
+		raw := rapid.String().Draw(t, "raw")
+		got := NormalizeTitle(raw)
+
+		if again := NormalizeTitle(got); again != got {
+			t.Fatalf("NormalizeTitle is not idempotent: %q -> %q -> %q", raw, got, again)
 		}
-		_ = b
-	}
+		if got != strings.ToLower(got) {
+			t.Fatalf("NormalizeTitle(%q) = %q, want lower case", raw, got)
+		}
+		if strings.TrimSpace(got) != got {
+			t.Fatalf("NormalizeTitle(%q) = %q, want no edge space", raw, got)
+		}
+		if strings.Contains(got, "  ") {
+			t.Fatalf("NormalizeTitle(%q) = %q, want single spaces", raw, got)
+		}
+		if strings.HasSuffix(got, ".") || strings.HasSuffix(got, "!") || strings.HasSuffix(got, "?") {
+			t.Fatalf("NormalizeTitle(%q) = %q, want no trailing punctuation", raw, got)
+		}
+	})
 }
