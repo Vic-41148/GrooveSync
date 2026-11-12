@@ -138,6 +138,19 @@
       "note": ""
     },
     {
+      "id": "v-fuzz-title-shape",
+      "doc": "docs/todo/cross-cutting.md",
+      "phase": "cross",
+      "claim": "FuzzNormalizeTitle asserts idempotence, lower case and spacing.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:server/internal/identity/fuzz_test.go::idempotent",
+        "contains:server/internal/identity/fuzz_test.go::strings.Contains(got, \"  \")"
+      ],
+      "note": ""
+    },
+    {
       "id": "v-hash-stability",
       "doc": "docs/todo/phase-1.md",
       "phase": "1",
