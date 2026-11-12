@@ -34,6 +34,12 @@ go test ./tests/contract
 go test -tags=integration ./tests/integration
 ```
 
+The packaging suite is expected red until phase 6 is real:
+
+```sh
+go test -tags=release ./tests/packaging
+```
+
 ## How it works
 
 `tests/claims/claims.json` is a list of claims. Each claim has an id, the
