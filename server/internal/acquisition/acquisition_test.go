@@ -353,3 +353,18 @@ func TestCreateDailyCap(t *testing.T) {
 		t.Fatalf("Create() second error = %v, want ErrDailyCap", err)
 	}
 }
+
+func TestCreateRefusesHeldTrack(t *testing.T) {
+	t.Parallel()
+
+	db := openAcquisitionDB(t)
+	ctx := context.Background()
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	if _, err := db.Exec(`INSERT INTO rendition (canonical_id, kind, path_or_uri, health) VALUES ('track-1', 'file', '/music/song.flac', 'ok')`); err != nil {
+		t.Fatalf("insert rendition: %v", err)
+	}
+	repo := Repo{DB: db, Now: func() time.Time { return now }, NewID: fixedID("req-1")}
+	if _, err := repo.Create(ctx, "track-1", "Song Artist"); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("Create() error = %v, want ErrInvalidRequest", err)
+	}
+}

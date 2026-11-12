@@ -101,20 +101,6 @@
       "note": "ci.yml builds and unit-tests the modules and checks page alignment. It runs no linter, emulator or benchmark."
     },
     {
-      "id": "f-phase5-worker-exists",
-      "doc": "docs/todo/phase-5.md",
-      "phase": "5",
-      "claim": "The status header says there is no worker, no provider and no second repo.",
-      "status": "stale",
-      "severity": "S2",
-      "evidence": [
-        "file:server/internal/acquisition/worker.go",
-        "test:TestWorkerCompletesQueuedRequest",
-        "nosource:acquisition.Worker"
-      ],
-      "note": "The core worker exists and is tested but is never wired into syncd. The separate provisioner repo also exists."
-    },
-    {
       "id": "v-16kb",
       "doc": "docs/todo/phase-6.md",
       "phase": "6",
@@ -351,6 +337,18 @@
         "test:TestWhyViewExplainsScoreAndOverrideWins"
       ],
       "note": ""
+    },
+    {
+      "id": "v-phase5-worker-removed",
+      "doc": "docs/todo/phase-5.md",
+      "phase": "5",
+      "claim": "The core has no in-process acquisition worker; the provisioner runs the queue.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "absent:server/internal/acquisition/worker.go"
+      ],
+      "note": "The worker had no production caller and could not be imported by the separate provisioner module."
     },
     {
       "id": "v-plugin-isolation",
