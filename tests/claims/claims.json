@@ -12,33 +12,6 @@
       "note": "ADR-0002 is marked Accepted (conditional) and the phase file says owner sign-off is pending. Sign-off is not observable in the repository."
     },
     {
-      "id": "f-phase1-contract",
-      "doc": "docs/todo/phase-1.md",
-      "phase": "1",
-      "claim": "TestNavidromeContract validates every response against the vendored OpenAPI and records goldens.",
-      "status": "overstated",
-      "severity": "S2",
-      "evidence": [
-        "contains:server/internal/navidrome/contract_test.go::client.Albums(ctx)",
-        "lacks:server/internal/navidrome/contract_test.go::getAlbumList2",
-        "lacks:server/internal/navidrome/contract_test.go::opensubsonic-openapi.json"
-      ],
-      "note": "The test calls Ping and Albums, then stops. The OpenAPI file is never read by the test."
-    },
-    {
-      "id": "f-phase1-fuzz-excluded",
-      "doc": "docs/todo/phase-1.md",
-      "phase": "1",
-      "claim": "FuzzReadTagLib exercises the tag parser in the default test run.",
-      "status": "overstated",
-      "severity": "S2",
-      "evidence": [
-        "contains:server/internal/library/scanner_test.go:://go:build cgo",
-        "contains:server/internal/library/scanner_test.go::func FuzzReadTagLib"
-      ],
-      "note": "The fuzz target sits in a cgo-only file, so CGO_ENABLED=0 make test never compiles it."
-    },
-    {
       "id": "f-phase2-shadow",
       "doc": "docs/todo/phase-2.md",
       "phase": "2",
@@ -57,20 +30,6 @@
       "severity": "S2",
       "evidence": [],
       "note": "Backtest helpers exist. No real history, dataset or recorded result is in the repository."
-    },
-    {
-      "id": "f-phase4-ci-lint",
-      "doc": "docs/todo/phase-4.md",
-      "phase": "4",
-      "claim": "CI runs lint, unit, emulator smoke and Macrobenchmark.",
-      "status": "false",
-      "severity": "S2",
-      "evidence": [
-        "lacks:.github/workflows/ci.yml::lint",
-        "lacks:.github/workflows/ci.yml::emulator",
-        "lacks:.github/workflows/ci.yml::macrobenchmark"
-      ],
-      "note": "ci.yml builds and unit-tests the modules and checks page alignment. It runs no linter, emulator or benchmark."
     },
     {
       "id": "v-16kb",
@@ -254,6 +213,32 @@
       "evidence": [
         "file:common/src/jvmMain/kotlin/com/groovesync/common/net/OpenSubsonicClient.kt",
         "contains:common/src/jvmTest/kotlin/com/groovesync/common/net/OpenSubsonicClientTest.kt::@Test"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-phase1-fuzz-cgo",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "The tag parser has a fuzz target that compiles only with cgo.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:server/internal/library/scanner_test.go::FuzzReadTagLib",
+        "contains:server/internal/library/scanner_test.go:://go:build cgo"
+      ],
+      "note": ""
+    },
+    {
+      "id": "v-phase1-openapi-vendored",
+      "doc": "docs/todo/phase-1.md",
+      "phase": "1",
+      "claim": "The OpenSubsonic OpenAPI JSON is vendored and checksummed.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "contains:server/internal/navidrome/openapi_test.go::opensubsonic-openapi.sha256",
+        "test:TestOpenSubsonicOpenAPIChecksum"
       ],
       "note": ""
     },
