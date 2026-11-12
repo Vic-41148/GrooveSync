@@ -28,6 +28,9 @@ jobs:
       - name: Test
         run: make test
 
+      - name: Contract tests
+        run: go test -tags=contract ./server/internal/contracttest
+
       - name: Check licenses
         run: make check-licenses
 

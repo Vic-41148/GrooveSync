@@ -74,6 +74,21 @@
       "note": ""
     },
     {
+      "id": "v-contract-core",
+      "doc": "docs/todo/phase-5.md",
+      "phase": "5",
+      "claim": "The core half of the provisioner HTTP contract is pinned by tests.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "test:TestCorePluginQueueContract",
+        "test:TestCorePluginClaimContract",
+        "test:TestCorePluginIngestContract",
+        "test:TestMetaHandshake"
+      ],
+      "note": ""
+    },
+    {
       "id": "v-contract-job",
       "doc": "docs/todo/phase-1.md",
       "phase": "1",
