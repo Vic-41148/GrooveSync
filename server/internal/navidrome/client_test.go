@@ -4,14 +4,14 @@
 package navidrome
 
 import (
-	"path/filepath"
-	"os"
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )

@@ -1,6 +1,7 @@
 GO ?= ~/.local/go/bin/go
+BASE ?= origin/main
 
-.PHONY: build vet test tidy check-licenses
+.PHONY: build vet test tidy check-licenses patch-coverage
 
 build:
 	CGO_ENABLED=0 $(GO) build ./...
@@ -25,3 +26,6 @@ tidy:
 
 check-licenses:
 	@bash ./scripts/check-licenses.sh
+
+patch-coverage:
+	@./scripts/patch_coverage.py $(BASE)
