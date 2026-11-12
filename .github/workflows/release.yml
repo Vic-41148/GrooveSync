@@ -2,6 +2,7 @@ name: release
 on:
   push:
     tags: ['v*']
+  workflow_call:
 
 permissions:
   contents: read

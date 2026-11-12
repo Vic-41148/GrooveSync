@@ -38,3 +38,8 @@ end-to-end run gets at most one retry, and the retry is logged with the failing
 job and the reason. A test that flakes twice within 14 days is quarantined,
 skipped behind an explicit guard and tracked in `docs/todo/`, until the
 underlying defect is fixed.
+
+Commit subjects follow Conventional Commits so release-please can build
+`CHANGELOG.md`. Keep the description imperative and in the existing style, for
+example `feat: cache acquired renditions` or `fix: keep the outbox on a
+transport error`. The release workflow only sees commits with a valid prefix.
