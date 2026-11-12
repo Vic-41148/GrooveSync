@@ -1,4 +1,4 @@
-Runbook — reencrypt-tokens
+Runbook - reencrypt-tokens
 
 Purpose
 

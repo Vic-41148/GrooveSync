@@ -33,5 +33,5 @@ Safety
 
 - Always back up your database before running the tool.
 - Prefer the offline transactional mode when possible. The online mode is
-  offered to avoid downtime but may skip rows that changed concurrently — you
+  offered to avoid downtime but may skip rows that changed concurrently - you
   can re-run it until all rows are encrypted.

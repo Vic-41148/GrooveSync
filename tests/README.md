@@ -2,19 +2,24 @@
 
 Executable evidence for the completion claims in the planning documents.
 
-The planning checklists drifted away from the code: phase 6 is fully ticked and
-entirely unbuilt, phase 3 ticks a why view that returns an empty list, and the
-cross-cutting file ticks CI and security jobs that do not exist. This directory
+The planning checklists drifted away from the code: phase 6 was fully ticked and
+entirely unbuilt, phase 3 ticked a why view that returned an empty list, and the
+cross-cutting file ticked CI and security jobs that did not exist. This directory
 makes that class of drift fail a test.
+
+`tests/claims` checks the durable claims. `tests/docs` is a local guard for the
+planning files and project prose; it skips when `docs/todo` is absent.
 
 ## Run
 
 ```sh
 go test ./tests/claims
+go test ./tests/docs
 go test -v ./tests/claims
 ```
 
-The suite needs no services, no network and no local `docs/` checkout.
+The claims suite needs no services, no network and no local `docs/` checkout.
+The docs suite needs the local `docs/` checkout and skips without it.
 
 ## How it works
 
