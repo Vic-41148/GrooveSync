@@ -1840,14 +1840,12 @@ func (d Deps) handleEventsAppend(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "events unavailable"}, 0)
 		return
 	}
-	var req struct {
-		Events []taste.EventRecord `json:"events"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	events, err := taste.DecodeEvents(r.Body)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
 		return
 	}
-	stored, err := d.EventLog.Append(r.Context(), req.Events)
+	stored, err := d.EventLog.Append(r.Context(), events)
 	if err != nil {
 		if errors.Is(err, taste.ErrInvalidEvent) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
