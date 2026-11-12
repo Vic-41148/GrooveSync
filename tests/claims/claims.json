@@ -182,15 +182,16 @@
       "id": "v-hlc-vectors-go",
       "doc": "docs/todo/phase-4.md",
       "phase": "4",
-      "claim": "The Go HLC implementation loads the shared vector file.",
+      "claim": "The Go and Kotlin HLC implementations load the same vector file.",
       "status": "verified",
       "severity": "none",
       "evidence": [
         "file:spec/hlc_vectors.json",
         "test:TestVectors",
-        "contains:server/internal/hlc/hlc_test.go::LoadVectors"
+        "contains:server/internal/hlc/hlc_test.go::LoadVectors",
+        "contains:common/src/jvmTest/kotlin/com/groovesync/common/hlc/HlcVectorTest.kt::spec/hlc_vectors.json"
       ],
-      "note": "The Kotlin side does not load the same file."
+      "note": ""
     },
     {
       "id": "v-license-check",
