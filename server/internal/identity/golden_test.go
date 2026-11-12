@@ -43,20 +43,31 @@ type goldenSet struct {
 func TestGoldenIdentitySet(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile(filepath.Join("testdata", "golden.json"))
-	if err != nil {
-		t.Fatalf("read golden set: %v", err)
-	}
-	var set goldenSet
-	if err := json.Unmarshal(data, &set); err != nil {
-		t.Fatalf("decode golden set: %v", err)
-	}
-	if set.Version != 1 {
-		t.Fatalf("version = %d, want 1", set.Version)
-	}
+	set := loadGoldenSet(t, "golden.json")
 	if len(set.Cases) < 15 {
 		t.Fatalf("cases = %d, want at least 15", len(set.Cases))
 	}
+	runGoldenSet(t, "golden identity", set)
+}
+
+func loadGoldenSet(t *testing.T, name string) goldenSet {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatalf("read %s: %v", name, err)
+	}
+	var set goldenSet
+	if err := json.Unmarshal(data, &set); err != nil {
+		t.Fatalf("decode %s: %v", name, err)
+	}
+	if set.Version != 1 {
+		t.Fatalf("%s version = %d, want 1", name, set.Version)
+	}
+	return set
+}
+
+func runGoldenSet(t *testing.T, label string, set goldenSet) {
+	t.Helper()
 	threshold := set.Threshold
 	if threshold <= 0 {
 		threshold = 0.8
@@ -78,5 +89,5 @@ func TestGoldenIdentitySet(t *testing.T) {
 			passed++
 		})
 	}
-	t.Logf("golden identity match rate: %d/%d", passed, len(set.Cases))
+	t.Logf("%s match rate: %d/%d", label, passed, len(set.Cases))
 }

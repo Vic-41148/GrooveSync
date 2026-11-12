@@ -483,6 +483,20 @@
         "test:TestWatcherStopsOnContextCancel"
       ],
       "note": ""
+    },
+    {
+      "id": "v-youtube-playlist-set",
+      "doc": "docs/todo/phase-0.md",
+      "phase": "0",
+      "claim": "A metadata-only fixture from the owner's YouTube playlist exercises identity matching.",
+      "status": "verified",
+      "severity": "none",
+      "evidence": [
+        "file:server/internal/identity/testdata/youtube_playlist.json",
+        "test:TestYouTubePlaylistSet",
+        "contains:server/internal/identity/youtube_test.go::TestYouTubePlaylistSet"
+      ],
+      "note": "Labels are derived from the playlist and still need owner review."
     }
   ]
 }

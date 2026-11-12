@@ -70,7 +70,7 @@ func NormalizeTitle(raw string) string {
 			}
 		}
 		if !changed {
-			return trimmed
+			return strings.TrimRight(trimmed, ".!?")
 		}
 	}
 }
