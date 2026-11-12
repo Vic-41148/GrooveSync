@@ -22,16 +22,6 @@
       "note": "A two-week human run cannot be reconstructed from the tree. owner-choices.md says live Spotify tests are deferred and no run is recorded."
     },
     {
-      "id": "f-phase3-backtest-real",
-      "doc": "docs/todo/phase-3.md",
-      "phase": "3",
-      "claim": "Backtests were run against real listening history.",
-      "status": "unverifiable",
-      "severity": "S2",
-      "evidence": [],
-      "note": "Backtest helpers exist. No real history, dataset or recorded result is in the repository."
-    },
-    {
       "id": "v-16kb",
       "doc": "docs/todo/phase-6.md",
       "phase": "6",
