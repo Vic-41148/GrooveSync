@@ -39,20 +39,6 @@
       "note": "The fuzz target sits in a cgo-only file, so CGO_ENABLED=0 make test never compiles it."
     },
     {
-      "id": "f-phase2-live-contract",
-      "doc": "docs/todo/phase-2.md",
-      "phase": "2",
-      "claim": "Weekly live contract tests cover Spotify and YouTube.",
-      "status": "false",
-      "severity": "S2",
-      "evidence": [
-        "lacks:.github/workflows/contract.yml::spotify",
-        "lacks:.github/workflows/contract.yml::youtube",
-        "lacks:.github/workflows/nightly.yml::spotify"
-      ],
-      "note": "The only scheduled contract job is the Navidrome test."
-    },
-    {
       "id": "f-phase2-shadow",
       "doc": "docs/todo/phase-2.md",
       "phase": "2",
@@ -61,20 +47,6 @@
       "severity": "S1",
       "evidence": [],
       "note": "A two-week human run cannot be reconstructed from the tree. owner-choices.md says live Spotify tests are deferred and no run is recorded."
-    },
-    {
-      "id": "f-phase2-status-stale",
-      "doc": "docs/todo/phase-2.md",
-      "phase": "2",
-      "claim": "The status header says the Spotify authorization flow and encrypted storage do not exist.",
-      "status": "stale",
-      "severity": "S3",
-      "evidence": [
-        "file:server/internal/connectors/crypto.go",
-        "test:TestTokenEncryptionRoundtrip",
-        "file:server/internal/api/spotify_pkce_test.go"
-      ],
-      "note": "PKCE endpoints and AES-GCM token storage exist and are tested. The live owner test is still missing."
     },
     {
       "id": "f-phase3-backtest-real",
