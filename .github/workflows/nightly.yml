@@ -6,8 +6,15 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-      - uses: actions/setup-go@0aaccfd150d50ccaeb58ebd88d36e9db89720c5 # v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+      - uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
         with:
-          go-version: '1.23'
-      - run: go test ./...
+          go-version-file: go.mod
+      - name: Test
+        run: go test ./...
+      - name: Property tests
+        run: go test ./server/internal/identity ./server/internal/taste -run 'Property|Properties' -count=1 -rapid.checks=10000
+      - name: Simulation
+        env:
+          SIMULATION_SEEDS: '10000'
+        run: go test ./server/internal/simulation -count=1
