@@ -4,3 +4,4 @@ rootProject.name = "groovesync-client"
 include(":common")
 include(":android")
 include(":desktop")
+include(":benchmark")

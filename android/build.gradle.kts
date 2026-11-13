@@ -15,6 +15,19 @@ android {
         versionCode = 1
         versionName = "0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "ALLOW_SEED", "false")
+    }
+
+    buildTypes {
+        getByName("debug") {
+            buildConfigField("boolean", "ALLOW_SEED", "true")
+        }
+        create("benchmark") {
+            initWith(getByName("release"))
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "release"
+            buildConfigField("boolean", "ALLOW_SEED", "true")
+        }
     }
 
     buildFeatures {
@@ -36,6 +49,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.work:work-runtime-ktx:2.9.1")
     implementation("androidx.navigation:navigation-compose:2.8.3")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("app.cash.sqldelight:android-driver:2.4.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation(project(":common"))

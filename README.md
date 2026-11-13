@@ -156,7 +156,8 @@ work without a network round trip:
 ```
 
 `./gradlew :desktop:mirrorBenchmark` reports insert and page latency for a
-50k-track fixture.
+50k-track fixture. `./gradlew :benchmark:connectedBenchmarkAndroidTest` runs
+the Macrobenchmark cold start and library scroll on a connected device.
 
 Pinned tool and dependency versions are recorded in `docs/pins.md` (local-only).
 
