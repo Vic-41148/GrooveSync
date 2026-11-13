@@ -7,6 +7,8 @@ import androidx.work.WorkManager
 import java.util.concurrent.TimeUnit
 
 class GrooveSyncApplication : Application() {
+    val mirror: Mirror by lazy { Mirror(this) }
+
     override fun onCreate() {
         super.onCreate()
         PollScheduler.enqueue(this)
