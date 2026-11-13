@@ -145,6 +145,19 @@ Run the CLI from Gradle or from a distribution:
 ./desktop/build/install/desktop/bin/desktop status --data DIR
 ```
 
+The client keeps a local library mirror at `DIR/mirror.db`. `mirror` pulls the
+library from the server and `local` reads it back, so the list and search paths
+work without a network round trip:
+
+```sh
+./gradlew :desktop:run --args="mirror --data DIR"
+./gradlew :desktop:run --args="local --data DIR --limit 20"
+./gradlew :desktop:run --args="local --data DIR --search tribe"
+```
+
+`./gradlew :desktop:mirrorBenchmark` reports insert and page latency for a
+50k-track fixture.
+
 Pinned tool and dependency versions are recorded in `docs/pins.md` (local-only).
 
 ## License

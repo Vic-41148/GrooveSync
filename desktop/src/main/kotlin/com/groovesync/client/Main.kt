@@ -1,5 +1,7 @@
 package com.groovesync.client
 
+import com.groovesync.common.mirror.LibraryMirror
+import com.groovesync.common.mirror.MirrorTrack
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -37,6 +39,8 @@ private fun usage(): Nothing {
         gsclient watch    --data DIR [--music DIR] [--interval SECONDS]
         gsclient status   --data DIR
         gsclient meta     --data DIR
+        gsclient mirror   --data DIR [--page 500] [--run ID]
+        gsclient local    --data DIR [--search TEXT] [--limit 100] [--offset 0]
         gsclient review   --data DIR
         gsclient health   --data DIR
         """.trimIndent()
@@ -114,6 +118,50 @@ fun main(args: Array<String>) {
         "meta" -> {
             val state = runner(f).state()
             println(SyncdApi(state.serverUrls, state.token, state.deviceId).meta())
+        }
+        "mirror" -> {
+            val state = runner(f).state()
+            val pageSize = f["page"]?.toIntOrNull() ?: 500
+            val runId = f["run"]?.toLongOrNull() ?: System.currentTimeMillis()
+            val dbFile = File(dataDir(f), "mirror.db")
+            val api = SyncdApi(state.serverUrls, state.token, state.deviceId)
+            val started = System.nanoTime()
+            MirrorDatabase.open(dbFile).use { opened ->
+                val mirror = LibraryMirror(opened.db)
+                var offset = 0
+                var seen = 0
+                while (true) {
+                    val page = api.library(limit = pageSize, offset = offset)
+                    if (page.tracks.isEmpty()) break
+                    mirror.upsert(
+                        page.tracks.map {
+                            MirrorTrack(it.canonicalId, it.title, it.artist, it.album, it.durationMs.toLong())
+                        },
+                        runId,
+                    )
+                    seen += page.tracks.size
+                    offset += page.tracks.size
+                    if (offset >= page.total) break
+                }
+                mirror.deleteUnseen(runId)
+                val elapsed = (System.nanoTime() - started) / 1_000_000
+                println("mirrored $seen tracks, ${mirror.count()} rows in ${dbFile.path} (${elapsed} ms)")
+            }
+        }
+        "local" -> {
+            val dbFile = File(dataDir(f), "mirror.db")
+            val limit = f["limit"]?.toIntOrNull() ?: 100
+            MirrorDatabase.open(dbFile).use { opened ->
+                val mirror = LibraryMirror(opened.db)
+                val search = f["search"]
+                val rows = if (search.isNullOrBlank()) {
+                    mirror.page(limit, f["offset"]?.toLongOrNull() ?: 0L)
+                } else {
+                    mirror.search(search, limit)
+                }
+                rows.forEach { println("${it.canonicalId}\t${it.title}\t${it.artist}\t${it.album}") }
+                if (rows.isEmpty()) println("0 rows in ${dbFile.path}")
+            }
         }
         "review" -> {
             val state = runner(f).state()
