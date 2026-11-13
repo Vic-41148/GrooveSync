@@ -137,11 +137,12 @@ The desktop client lives in `desktop/` and is built with Gradle.
 ./gradlew :desktop:build :desktop:test
 ```
 
-Run the CLI from the compiled classes or a distribution built with Gradle:
+Run the CLI from Gradle or from a distribution:
 
 ```sh
+./gradlew :desktop:run --args="meta --data DIR"
 ./gradlew :desktop:installDist
-./desktop/build/install/groovesync-client/bin/groovesync-client status --data DIR
+./desktop/build/install/desktop/bin/desktop status --data DIR
 ```
 
 Pinned tool and dependency versions are recorded in `docs/pins.md` (local-only).
