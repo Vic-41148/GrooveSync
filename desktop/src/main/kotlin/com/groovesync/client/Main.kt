@@ -36,6 +36,7 @@ private fun usage(): Nothing {
         gsclient skip     --data DIR --track CANONICAL
         gsclient watch    --data DIR [--music DIR] [--interval SECONDS]
         gsclient status   --data DIR
+        gsclient meta     --data DIR
         gsclient review   --data DIR
         gsclient health   --data DIR
         """.trimIndent()
@@ -110,6 +111,10 @@ fun main(args: Array<String>) {
         )
         "skip" -> println(runner(f).enqueue("skip", f["track"] ?: usage().toString()))
         "status" -> println(runner(f).state())
+        "meta" -> {
+            val state = runner(f).state()
+            println(SyncdApi(state.serverUrls, state.token, state.deviceId).meta())
+        }
         "review" -> {
             val state = runner(f).state()
             val limit = f["limit"]?.toIntOrNull() ?: 100
