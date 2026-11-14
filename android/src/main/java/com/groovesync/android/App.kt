@@ -108,7 +108,9 @@ fun GrooveSyncApp(
                         Destination.SEARCH -> SearchScreen(mirror, deviceSync)
                         Destination.OFFLINE -> OfflineScreen(deviceSync)
                         Destination.YOU -> PolicyScreen(settings, deviceSync)
-                        Destination.HOME -> Text(destination.name)
+                        Destination.HOME -> HomeScreen(mirror, deviceSync) { destination ->
+                            navController.navigate(destination.name) { launchSingleTop = true }
+                        }
                     }
                 }
             }

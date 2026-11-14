@@ -45,6 +45,12 @@ class DeviceSync(context: Context, private val settings: Settings) {
 
     fun pinned(): Set<String> = if (settings.isConfigured) runner.state().pinned else emptySet()
 
+    fun configured(): Boolean = settings.isConfigured
+
+    fun syncMode(): String = settings.syncMode
+
+    fun lastSync(): String = if (settings.isConfigured) runner.state().lastSync else ""
+
     fun togglePin(canonicalId: String): Set<String> {
         val configured = configuredRunner()
         val state = configured.state()
