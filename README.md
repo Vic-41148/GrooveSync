@@ -159,6 +159,14 @@ work without a network round trip:
 50k-track fixture. `./gradlew :benchmark:connectedBenchmarkAndroidTest` runs
 the Macrobenchmark cold start and library scroll on a connected device.
 
+The app ships a baseline profile generated from the library screen:
+
+```
+./gradlew :benchmark:connectedBenchmarkAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.class=com.groovesync.benchmark.BaselineProfileGenerator
+./scripts/copy-baseline-profile.sh
+```
+
 Pinned tool and dependency versions are recorded in `docs/pins.md` (local-only).
 
 ## License
