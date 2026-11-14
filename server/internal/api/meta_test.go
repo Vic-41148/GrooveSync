@@ -341,6 +341,50 @@ func TestDevicePlan(t *testing.T) {
 	}
 }
 
+func TestDevicePins(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 24, Now: time.Now, Pins: pinsStub{pins: []string{"track-1", "track-2"}}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/pins", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var got struct {
+		Pins []string `json:"pins"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(got.Pins) != 2 || got.Pins[0] != "track-1" || got.Pins[1] != "track-2" {
+		t.Fatalf("pins = %#v, want both ids", got.Pins)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 24, Now: time.Now, Pins: pinsStub{err: errors.New("database down")}}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/pins", nil))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("error status = %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+
+	rec = httptest.NewRecorder()
+	New(Deps{Version: "1.2.3", Proto: 3, Schema: 24, Now: time.Now}).
+		ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/pins", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("unavailable status = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}
+
+type pinsStub struct {
+	pins []string
+	err  error
+}
+
+func (p pinsStub) Pins(context.Context, string) ([]string, error) {
+	return p.pins, p.err
+}
+
 type transferStub struct {
 	plan   transfer.Plan
 	err    error

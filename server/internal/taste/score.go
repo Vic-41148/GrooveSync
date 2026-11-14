@@ -31,6 +31,8 @@ const (
 	EventPlaylist EventType = "playlist_add"
 	EventDownload EventType = "download"
 	EventDelete   EventType = "delete"
+	EventPin      EventType = "pin"
+	EventUnpin    EventType = "unpin"
 )
 
 type Event struct {

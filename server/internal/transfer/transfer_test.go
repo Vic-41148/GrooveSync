@@ -220,6 +220,61 @@ func TestPlanStorageCap(t *testing.T) {
 	}
 }
 
+func TestPlanPinnedTrackIgnoresScopeAndCap(t *testing.T) {
+	t.Parallel()
+
+	db := openTransferDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-1", "Song")
+	seedRendition(t, db, "track-1", testHash("1"), "Song.flac", "flac", 100)
+	repo := seedDevice(t, db, devices.Device{ID: "phone", Name: "Phone"})
+	if err := repo.SetPolicy(ctx, "phone", devices.Policy{Scope: devices.ScopeLiked, StorageCapBytes: 50}); err != nil {
+		t.Fatalf("SetPolicy() error = %v", err)
+	}
+	seedPin(t, db, "phone", "track-1")
+
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(plan.Downloads) != 1 || plan.Downloads[0].CanonicalID != "track-1" {
+		t.Fatalf("downloads = %#v, want the pinned track", plan.Downloads)
+	}
+	if len(plan.Warnings) != 0 {
+		t.Fatalf("warnings = %#v, want no cap warning for a pin", plan.Warnings)
+	}
+}
+
+func TestPlanKeepsPinnedHoldingFromEviction(t *testing.T) {
+	t.Parallel()
+
+	db := openTransferDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "a-pinned", "Pinned")
+	seedRendition(t, db, "a-pinned", testHash("pinned"), "Pinned.flac", "flac", 100)
+	seedTrack(t, db, "z-cold", "Cold")
+	seedRendition(t, db, "z-cold", testHash("cold"), "Cold.flac", "flac", 100)
+	repo := seedDevice(t, db, devices.Device{ID: "phone", Name: "Phone"})
+	if err := repo.SetPolicy(ctx, "phone", devices.Policy{StorageCapBytes: 150}); err != nil {
+		t.Fatalf("SetPolicy() error = %v", err)
+	}
+	if err := repo.ReportHoldings(ctx, "phone", []devices.Holding{
+		{CanonicalID: "a-pinned", Hash: testHash("pinned")},
+		{CanonicalID: "z-cold", Hash: testHash("cold")},
+	}); err != nil {
+		t.Fatalf("ReportHoldings() error = %v", err)
+	}
+	seedPin(t, db, "phone", "a-pinned")
+
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(plan.Evictions) != 1 || plan.Evictions[0].CanonicalID != "z-cold" {
+		t.Fatalf("evictions = %#v, want only the unpinned track", plan.Evictions)
+	}
+}
+
 func TestPlanMirrorDeletions(t *testing.T) {
 	t.Parallel()
 
@@ -460,6 +515,17 @@ INSERT INTO rendition (canonical_id, kind, path_or_uri, sha256, codec, size_byte
 VALUES (?, 'file', ?, ?, ?, ?)
 `, id, path, hash, codec, size); err != nil {
 		t.Fatalf("insert rendition %s: %v", path, err)
+	}
+}
+
+func seedPin(t *testing.T, db *sql.DB, deviceID, id string) {
+	t.Helper()
+
+	if _, err := db.Exec(`
+INSERT INTO device_pin (device_id, canonical_id, pinned, hlc_timestamp)
+VALUES (?, ?, 1, '2026-10-30T12:00:00Z/0/phone')
+`, deviceID, id); err != nil {
+		t.Fatalf("insert pin %s: %v", id, err)
 	}
 }
 

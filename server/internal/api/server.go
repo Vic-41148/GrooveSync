@@ -62,6 +62,7 @@ type Deps struct {
 	SpotifyLibrary     SpotifyLibraryActions
 	Devices            DeviceRegistry
 	EventLog           EventLog
+	Pins               DevicePins
 	EventStream        EventBroadcaster
 	Overrides          OverrideStore
 	Mix                MixSource
@@ -292,6 +293,11 @@ type TransferPlanner interface {
 	Plan(context.Context, string, bool) (transfer.Plan, error)
 }
 
+// DevicePins returns the tracks one device keeps regardless of its scope.
+type DevicePins interface {
+	Pins(context.Context, string) ([]string, error)
+}
+
 // New builds the router with middleware applied.
 func New(d Deps) http.Handler {
 	if d.Logger == nil {
@@ -339,6 +345,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/devices/{id}/holdings", d.handleDeviceHoldings)
 	mux.HandleFunc("PUT /sync/v1/devices/{id}/holdings", d.handleDeviceHoldingsReport)
 	mux.HandleFunc("GET /sync/v1/devices/{id}/plan", d.handleDevicePlan)
+	mux.HandleFunc("GET /sync/v1/devices/{id}/pins", d.handleDevicePins)
 	mux.HandleFunc("GET /sync/v1/events", d.handleEvents)
 	mux.HandleFunc("GET /sync/v1/events/stream", d.handleEventStream)
 	mux.HandleFunc("POST /sync/v1/events", d.handleEventsAppend)
@@ -1780,6 +1787,27 @@ func (d Deps) handleDevicePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, plan, 0)
+}
+
+func (d Deps) handleDevicePins(w http.ResponseWriter, r *http.Request) {
+	if d.Pins == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "pins unavailable"}, 0)
+		return
+	}
+	id := r.PathValue("id")
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
+		return
+	}
+	pins, err := d.Pins.Pins(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "pins unavailable"}, 0)
+		return
+	}
+	if pins == nil {
+		pins = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"pins": pins}, 0)
 }
 
 func writeDeviceError(w http.ResponseWriter, err error) {

@@ -108,6 +108,11 @@ func (p Planner) Plan(ctx context.Context, deviceID string, onWiFi bool) (Plan, 
 	if err != nil {
 		return Plan{}, err
 	}
+	pinned, err := p.pinnedSet(ctx, deviceID)
+	if err != nil {
+		return Plan{}, err
+	}
+	targets = withPinned(targets, pinned)
 
 	held := make(map[string]devices.Holding, len(holdings))
 	heldTracks := make(map[string]bool, len(holdings))
@@ -138,7 +143,7 @@ func (p Planner) Plan(ctx context.Context, deviceID string, onWiFi bool) (Plan, 
 			plan.Unchanged++
 			continue
 		}
-		if policy.StorageCapBytes > 0 && used+choice.SizeBytes > policy.StorageCapBytes {
+		if !pinned[target.CanonicalID] && policy.StorageCapBytes > 0 && used+choice.SizeBytes > policy.StorageCapBytes {
 			capped = true
 			continue
 		}
@@ -157,7 +162,7 @@ func (p Planner) Plan(ctx context.Context, deviceID string, onWiFi bool) (Plan, 
 	plan.DownloadBytes = downloadBytes
 
 	if device.SyncMode != devices.ModeExternal {
-		evictions, err := p.evictions(ctx, holdings, renditions, policy.StorageCapBytes, used)
+		evictions, err := p.evictions(ctx, holdings, renditions, policy.StorageCapBytes, used, pinned)
 		if err != nil {
 			return Plan{}, err
 		}
@@ -203,7 +208,7 @@ type evictionCandidate struct {
 // evictions suggests files to remove when the device holds more than its cap.
 // Low affinity goes first, and liked or recently played tracks are never
 // suggested.
-func (p Planner) evictions(ctx context.Context, holdings []devices.Holding, renditions map[string][]rendition, capBytes, used int64) ([]File, error) {
+func (p Planner) evictions(ctx context.Context, holdings []devices.Holding, renditions map[string][]rendition, capBytes, used int64, pinned map[string]bool) ([]File, error) {
 	if capBytes <= 0 || used <= capBytes {
 		return nil, nil
 	}
@@ -236,7 +241,7 @@ func (p Planner) evictions(ctx context.Context, holdings []devices.Holding, rend
 
 	candidates := make([]evictionCandidate, 0, len(holdings))
 	for _, holding := range holdings {
-		if liked[holding.CanonicalID] || protected[holding.CanonicalID] {
+		if liked[holding.CanonicalID] || protected[holding.CanonicalID] || pinned[holding.CanonicalID] {
 			continue
 		}
 		size := sizeOf(renditions[holding.CanonicalID], holding.Hash)
@@ -267,6 +272,47 @@ func (p Planner) evictions(ctx context.Context, holdings []devices.Holding, rend
 		}
 		used -= candidate.file.SizeBytes
 		out = append(out, candidate.file)
+	}
+	return out, nil
+}
+
+func withPinned(targets []target, pinned map[string]bool) []target {
+	seen := make(map[string]bool, len(targets))
+	for _, target := range targets {
+		seen[target.CanonicalID] = true
+	}
+	ids := make([]string, 0, len(pinned))
+	for canonicalID := range pinned {
+		if !seen[canonicalID] {
+			ids = append(ids, canonicalID)
+		}
+	}
+	sort.Strings(ids)
+	for _, canonicalID := range ids {
+		targets = append(targets, target{CanonicalID: canonicalID})
+	}
+	return targets
+}
+
+func (p Planner) pinnedSet(ctx context.Context, deviceID string) (map[string]bool, error) {
+	rows, err := p.DB.QueryContext(ctx, `
+SELECT canonical_id FROM device_pin WHERE device_id = ? AND pinned = 1
+`, deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("transfer: list pinned tracks: %w", err)
+	}
+	defer rows.Close()
+
+	out := make(map[string]bool)
+	for rows.Next() {
+		var canonicalID string
+		if err := rows.Scan(&canonicalID); err != nil {
+			return nil, fmt.Errorf("transfer: scan pinned track: %w", err)
+		}
+		out[canonicalID] = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("transfer: iterate pinned tracks: %w", err)
 	}
 	return out, nil
 }

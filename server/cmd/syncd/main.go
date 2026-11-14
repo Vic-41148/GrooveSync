@@ -212,6 +212,7 @@ func run(parent context.Context, args []string, getenv func(string) string, stde
 		SpotifyLibrary:     connectorRepo,
 		Devices:            deviceRepo,
 		EventLog:           eventStore,
+		Pins:               eventStore,
 		EventStream:        stream,
 		Overrides:          eventStore,
 		Ntfy:               ntfyPublisher,

@@ -166,6 +166,103 @@ func TestStoreAppendMergesByClock(t *testing.T) {
 	}
 }
 
+func TestStorePinsFollowLatestChoice(t *testing.T) {
+	t.Parallel()
+
+	base := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name   string
+		events []EventRecord
+		want   []string
+	}{
+		{
+			name:   "pin is kept",
+			events: []EventRecord{pinEvent("p1", EventPin, HLC{Wall: base, Counter: 1, Node: "phone"})},
+			want:   []string{"track-1"},
+		},
+		{
+			name: "unpin removes the track",
+			events: []EventRecord{
+				pinEvent("p1", EventPin, HLC{Wall: base, Counter: 1, Node: "phone"}),
+				pinEvent("p2", EventUnpin, HLC{Wall: base.Add(time.Minute), Counter: 1, Node: "phone"}),
+			},
+			want: []string{},
+		},
+		{
+			name: "older unpin loses",
+			events: []EventRecord{
+				pinEvent("p1", EventPin, HLC{Wall: base.Add(time.Minute), Counter: 1, Node: "phone"}),
+				pinEvent("p2", EventUnpin, HLC{Wall: base, Counter: 9, Node: "phone"}),
+			},
+			want: []string{"track-1"},
+		},
+		{
+			name: "pin can return after an unpin",
+			events: []EventRecord{
+				pinEvent("p1", EventPin, HLC{Wall: base, Counter: 1, Node: "phone"}),
+				pinEvent("p2", EventUnpin, HLC{Wall: base.Add(time.Minute), Counter: 1, Node: "phone"}),
+				pinEvent("p3", EventPin, HLC{Wall: base.Add(2 * time.Minute), Counter: 1, Node: "phone"}),
+			},
+			want: []string{"track-1"},
+		},
+		{
+			name: "another device keeps its own pins",
+			events: []EventRecord{
+				pinEvent("p1", EventPin, HLC{Wall: base, Counter: 1, Node: "tablet"}),
+			},
+			want: []string{},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			db := openEventDB(t)
+			defer db.Close()
+			repo := NewStore(db)
+			if _, err := repo.Append(context.Background(), tc.events); err != nil {
+				t.Fatalf("Append() error = %v", err)
+			}
+
+			got, err := repo.Pins(context.Background(), "phone")
+			if err != nil {
+				t.Fatalf("Pins() error = %v", err)
+			}
+			if len(got) != len(tc.want) {
+				t.Fatalf("Pins() = %#v, want %#v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("Pins() = %#v, want %#v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestStorePinsRejectUnknownDevice(t *testing.T) {
+	t.Parallel()
+
+	db := openEventDB(t)
+	defer db.Close()
+	repo := NewStore(db)
+	event := pinEvent("p1", EventPin, HLC{Wall: time.Now().UTC(), Counter: 1, Node: "phone"})
+	event.DeviceID = "missing"
+
+	if _, err := repo.Append(context.Background(), []EventRecord{event}); !errors.Is(err, ErrInvalidEvent) {
+		t.Fatalf("Append() error = %v, want ErrInvalidEvent", err)
+	}
+	events, err := repo.List(context.Background())
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %#v, want the failed batch rolled back", events)
+	}
+}
+
 func TestStoreAppendRejectsInvalid(t *testing.T) {
 	t.Parallel()
 
@@ -230,6 +327,9 @@ func TestStoreWithoutDatabase(t *testing.T) {
 	if _, err := repo.List(context.Background()); err == nil {
 		t.Fatal("List() error = nil, want failure")
 	}
+	if _, err := repo.Pins(context.Background(), "phone"); err == nil {
+		t.Fatal("Pins() error = nil, want failure")
+	}
 }
 
 func likeEvent(id string, eventType EventType, hlc HLC) EventRecord {
@@ -249,6 +349,10 @@ func playEvent(id string, hlc HLC, percent float64) EventRecord {
 	return event
 }
 
+func pinEvent(id string, eventType EventType, hlc HLC) EventRecord {
+	return likeEvent(id, eventType, hlc)
+}
+
 func openEventDB(t *testing.T) *sql.DB {
 	t.Helper()
 
@@ -262,6 +366,11 @@ func openEventDB(t *testing.T) *sql.DB {
 	}
 	if _, err := db.Exec(`INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
 		t.Fatalf("insert track: %v", err)
+	}
+	for _, id := range []string{"phone", "tablet"} {
+		if _, err := db.Exec(`INSERT INTO device (id, name) VALUES (?, ?)`, id, id); err != nil {
+			t.Fatalf("insert device %s: %v", id, err)
+		}
 	}
 	t.Cleanup(func() { db.Close() })
 	return db

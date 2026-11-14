@@ -84,10 +84,95 @@ WHERE event_id = ?
 			stored++
 		}
 	}
+	for _, event := range events {
+		if err := applyPin(ctx, tx, event); err != nil {
+			return 0, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return 0, fmt.Errorf("taste: commit event tx: %w", err)
 	}
 	return stored, nil
+}
+
+// applyPin folds a pin or unpin event into the per-device projection. Older
+// clocks lose, so a delayed upload cannot revert a newer choice.
+func applyPin(ctx context.Context, tx *sql.Tx, event EventRecord) error {
+	var value int
+	switch event.Type {
+	case EventPin:
+		value = 1
+	case EventUnpin:
+		value = 0
+	default:
+		return nil
+	}
+
+	var known int
+	err := tx.QueryRowContext(ctx, `SELECT 1 FROM device WHERE id = ?`, event.DeviceID).Scan(&known)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return fmt.Errorf("%w: pin for unknown device %s", ErrInvalidEvent, event.DeviceID)
+	case err != nil:
+		return fmt.Errorf("taste: load pin device %s: %w", event.DeviceID, err)
+	}
+
+	var existing string
+	err = tx.QueryRowContext(ctx, `
+SELECT hlc_timestamp FROM device_pin WHERE device_id = ? AND canonical_id = ?
+`, event.DeviceID, event.CanonicalID).Scan(&existing)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO device_pin (device_id, canonical_id, pinned, hlc_timestamp)
+VALUES (?, ?, ?, ?)
+`, event.DeviceID, event.CanonicalID, value, event.HLC.Format()); err != nil {
+			return fmt.Errorf("taste: insert pin %s: %w", event.CanonicalID, err)
+		}
+	case err != nil:
+		return fmt.Errorf("taste: load pin %s: %w", event.CanonicalID, err)
+	default:
+		current, err := ParseHLC(existing)
+		if err != nil {
+			return fmt.Errorf("taste: load pin %s: %w", event.CanonicalID, err)
+		}
+		if !event.HLC.After(current) {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `
+UPDATE device_pin SET pinned = ?, hlc_timestamp = ? WHERE device_id = ? AND canonical_id = ?
+`, value, event.HLC.Format(), event.DeviceID, event.CanonicalID); err != nil {
+			return fmt.Errorf("taste: update pin %s: %w", event.CanonicalID, err)
+		}
+	}
+	return nil
+}
+
+// Pins returns the canonical ids this device keeps regardless of its scope.
+func (s *Store) Pins(ctx context.Context, deviceID string) ([]string, error) {
+	if s.db == nil {
+		return nil, errors.New("taste: database is required")
+	}
+	rows, err := s.db.QueryContext(ctx, `
+SELECT canonical_id FROM device_pin WHERE device_id = ? AND pinned = 1 ORDER BY canonical_id ASC
+`, deviceID)
+	if err != nil {
+		return nil, fmt.Errorf("taste: list pins: %w", err)
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var canonicalID string
+		if err := rows.Scan(&canonicalID); err != nil {
+			return nil, fmt.Errorf("taste: scan pin: %w", err)
+		}
+		out = append(out, canonicalID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("taste: iterate pins: %w", err)
+	}
+	return out, nil
 }
 
 // List returns the whole stored log ordered by clock.
