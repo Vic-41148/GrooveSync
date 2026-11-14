@@ -83,8 +83,13 @@ class SyncRunner(
             return SyncReport(api.lastBaseUrl, pulled, pushed)
         }
 
-        val plan = api.plan(state.deviceId, onWiFi)
         val canonical = state.canonicalByHash.toMutableMap()
+        val before = scan(musicDir).map { (_, hash) ->
+            HoldingDto(canonical[hash] ?: provisionalId(hash), hash)
+        }
+        api.reportHoldings(state.deviceId, before)
+
+        val plan = api.plan(state.deviceId, onWiFi)
         for (file in plan.downloads + plan.deletes + plan.evictions) {
             canonical[file.hash] = file.canonicalId
         }
