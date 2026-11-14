@@ -1,4 +1,4 @@
-package com.groovesync.client
+package com.groovesync.common.sync
 
 import com.groovesync.common.syncd.ClientState
 import com.groovesync.common.syncd.EventDto
@@ -18,6 +18,11 @@ class SyncRunner(
     private val chunkSize: Int = 4 * 1024 * 1024,
 ) {
     private val store = StateStore(stateFile)
+
+    fun configure(serverUrls: List<String>, token: String, deviceId: String) {
+        val current = store.load()
+        store.save(current.copy(serverUrls = serverUrls, token = token, deviceId = deviceId))
+    }
 
     fun sync(): SyncReport {
         var state = store.load()

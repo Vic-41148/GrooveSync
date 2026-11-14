@@ -1,6 +1,8 @@
 package com.groovesync.client
 
 import com.groovesync.common.mirror.LibraryMirror
+import com.groovesync.common.sync.StateStore
+import com.groovesync.common.sync.SyncRunner
 import com.groovesync.common.syncd.ClientState
 import com.groovesync.common.syncd.LibrarySync
 import com.groovesync.common.syncd.PolicyDto
