@@ -1,4 +1,4 @@
-package com.groovesync.client
+package com.groovesync.common.syncd
 
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection

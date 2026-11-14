@@ -1,5 +1,6 @@
 package com.groovesync.client
 
+import com.groovesync.common.syncd.ClientState
 import kotlinx.serialization.json.Json
 import java.io.File
 

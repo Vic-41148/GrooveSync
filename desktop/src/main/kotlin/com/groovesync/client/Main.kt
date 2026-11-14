@@ -1,7 +1,10 @@
 package com.groovesync.client
 
 import com.groovesync.common.mirror.LibraryMirror
-import com.groovesync.common.mirror.MirrorTrack
+import com.groovesync.common.syncd.ClientState
+import com.groovesync.common.syncd.LibrarySync
+import com.groovesync.common.syncd.PolicyDto
+import com.groovesync.common.syncd.SyncdApi
 import java.io.File
 import kotlin.system.exitProcess
 
@@ -128,22 +131,7 @@ fun main(args: Array<String>) {
             val started = System.nanoTime()
             MirrorDatabase.open(dbFile).use { opened ->
                 val mirror = LibraryMirror(opened.db)
-                var offset = 0
-                var seen = 0
-                while (true) {
-                    val page = api.library(limit = pageSize, offset = offset)
-                    if (page.tracks.isEmpty()) break
-                    mirror.upsert(
-                        page.tracks.map {
-                            MirrorTrack(it.canonicalId, it.title, it.artist, it.album, it.durationMs.toLong())
-                        },
-                        runId,
-                    )
-                    seen += page.tracks.size
-                    offset += page.tracks.size
-                    if (offset >= page.total) break
-                }
-                mirror.deleteUnseen(runId)
+                val seen = LibrarySync(api, mirror).refresh(pageSize, runId)
                 val elapsed = (System.nanoTime() - started) / 1_000_000
                 println("mirrored $seen tracks, ${mirror.count()} rows in ${dbFile.path} (${elapsed} ms)")
             }

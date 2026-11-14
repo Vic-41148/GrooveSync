@@ -1,4 +1,4 @@
-package com.groovesync.client
+package com.groovesync.common.syncd
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable

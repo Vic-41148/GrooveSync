@@ -5,6 +5,8 @@ import app.cash.sqldelight.driver.android.AndroidSqliteDriver
 import com.groovesync.common.mirror.GrooveDb
 import com.groovesync.common.mirror.LibraryMirror
 import com.groovesync.common.mirror.MirrorTrack
+import com.groovesync.common.syncd.LibrarySync
+import com.groovesync.common.syncd.SyncdApi
 
 /**
  * One mirror per process. Two drivers on the same file would contend for the
@@ -23,6 +25,13 @@ class Mirror(context: Context) {
         }
         library.deleteUnseen(runId)
     }
+
+    /**
+     * Pages the whole library into the mirror. Shares the lock with [seed] so a
+     * manual seed cannot interleave with a background refresh.
+     */
+    @Synchronized
+    fun refresh(api: SyncdApi): Int = LibrarySync(api, library).refresh()
 
     private fun fixture(index: Int, tracks: Int) = MirrorTrack(
         canonicalId = "seed-%06d".format(index),

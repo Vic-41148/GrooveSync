@@ -1,6 +1,7 @@
 package com.groovesync.client
 
 import com.groovesync.common.diagnostics.DiagnosticsScrubber
+import com.groovesync.common.syncd.SyncdApi
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive

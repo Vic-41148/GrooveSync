@@ -3,21 +3,28 @@ package com.groovesync.android
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import java.net.HttpURLConnection
-import java.net.URL
+import androidx.work.workDataOf
+import com.groovesync.common.syncd.ApiException
+import com.groovesync.common.syncd.SyncdApi
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class PollWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        val base = applicationContext.getSharedPreferences("groovesync", Context.MODE_PRIVATE)
-            .getString("server_url", null) ?: return Result.success()
+        val prefs = applicationContext.getSharedPreferences("groovesync", Context.MODE_PRIVATE)
+        val serverUrl = prefs.getString("server_url", null)?.takeIf { it.isNotBlank() }
+            ?: return Result.success()
+        val api = SyncdApi(
+            serverUrls = listOf(serverUrl),
+            token = prefs.getString("token", "").orEmpty(),
+            deviceId = prefs.getString("device_id", "").orEmpty(),
+        )
+        val mirror = (applicationContext as GrooveSyncApplication).mirror
         return try {
-            val connection = URL("$base/sync/v1/meta").openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 10_000
-            connection.readTimeout = 10_000
-            connection.responseCode
-            connection.disconnect()
-            Result.success()
+            val tracks = withContext(Dispatchers.IO) { mirror.refresh(api) }
+            Result.success(workDataOf("tracks" to tracks))
+        } catch (error: ApiException) {
+            if (error.status in 400..499) Result.failure() else Result.retry()
         } catch (_: Exception) {
             Result.retry()
         }
