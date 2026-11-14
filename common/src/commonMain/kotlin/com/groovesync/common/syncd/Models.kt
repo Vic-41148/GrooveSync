@@ -145,6 +145,7 @@ data class ClientState(
     val outbox: List<EventDto> = emptyList(),
     val holdings: List<HoldingDto> = emptyList(),
     val liked: Set<String> = emptySet(),
+    val pinned: Set<String> = emptySet(),
     val recentlyPlayed: Map<String, String> = emptyMap(),
     val canonicalByHash: Map<String, String> = emptyMap(),
     val lastSync: String = "",

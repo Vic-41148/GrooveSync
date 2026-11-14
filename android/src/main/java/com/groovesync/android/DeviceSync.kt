@@ -40,6 +40,14 @@ class DeviceSync(context: Context, private val settings: Settings) {
         settings.savePolicy(policy, syncMode)
     }
 
+    fun pinned(): Set<String> = runner.state().pinned
+
+    fun togglePin(canonicalId: String): Set<String> {
+        val state = runner.state()
+        runner.enqueue(if (canonicalId in state.pinned) "unpin" else "pin", canonicalId)
+        return runner.state().pinned
+    }
+
     private fun onWiFi(): Boolean {
         val manager = context.getSystemService(ConnectivityManager::class.java) ?: return false
         val capabilities = manager.getNetworkCapabilities(manager.activeNetwork) ?: return false

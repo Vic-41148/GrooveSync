@@ -2,6 +2,7 @@ package com.groovesync.android
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -21,6 +22,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -29,6 +31,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -101,7 +104,7 @@ fun GrooveSyncApp(
             Destination.entries.forEach { destination ->
                 composable(destination.name) {
                     when (destination) {
-                        Destination.LIBRARY -> LibraryScreen(mirror, seed, api)
+                        Destination.LIBRARY -> LibraryScreen(mirror, seed, api, deviceSync)
                         Destination.OFFLINE -> OfflineScreen(deviceSync)
                         Destination.YOU -> PolicyScreen(settings, deviceSync)
                         else -> Text(destination.name)
@@ -121,13 +124,15 @@ private fun icon(destination: Destination) = when (destination) {
 }
 
 @Composable
-fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?) {
+fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: DeviceSync) {
     var query by remember { mutableStateOf("") }
     var tracks by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var seeded by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
     var offline by remember { mutableStateOf(false) }
+    var pinned by remember { mutableStateOf(deviceSync.pinned()) }
+    val scope = rememberCoroutineScope()
     val changes = remember { Channel<Unit>(Channel.CONFLATED) }
 
     LaunchedEffect(api) {
@@ -201,9 +206,26 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?) {
         }
         LazyColumn(Modifier.fillMaxSize()) {
             items(tracks, key = { it.canonicalId }) { track ->
-                Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text(track.title)
-                    Text(track.artist)
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(track.title)
+                        Text(track.artist)
+                    }
+                    val isPinned = track.canonicalId in pinned
+                    TextButton(
+                        onClick = {
+                            scope.launch {
+                                pinned = withContext(Dispatchers.IO) {
+                                    deviceSync.togglePin(track.canonicalId)
+                                }
+                            }
+                        },
+                    ) {
+                        Text(if (isPinned) "Unpin" else "Pin")
+                    }
                 }
             }
         }

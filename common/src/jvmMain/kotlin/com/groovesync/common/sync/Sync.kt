@@ -49,6 +49,10 @@ class SyncRunner(
 
         var pulled = 0
         val likedIds = state.liked.toMutableSet()
+        val pinnedIds = state.pinned.toMutableSet()
+        val pendingPins = state.outbox.filter { it.type == "pin" || it.type == "unpin" }
+            .map { it.canonicalId }
+            .toSet()
         val recentIds = state.recentlyPlayed.toMutableMap()
         var since = state.cursor
         while (true) {
@@ -59,12 +63,14 @@ class SyncRunner(
                     "like" -> likedIds += event.canonicalId
                     "unlike" -> likedIds -= event.canonicalId
                     "play" -> recentIds[event.canonicalId] = event.hlc.wall
+                    "pin" -> if (event.deviceId == state.deviceId && event.canonicalId !in pendingPins) pinnedIds += event.canonicalId
+                    "unpin" -> if (event.deviceId == state.deviceId && event.canonicalId !in pendingPins) pinnedIds -= event.canonicalId
                 }
             }
             if (page.next.isNotBlank()) since = page.next
             if (!page.hasMore || page.events.isEmpty()) break
         }
-        state = state.copy(cursor = since, liked = likedIds, recentlyPlayed = recentIds)
+        state = state.copy(cursor = since, liked = likedIds, pinned = pinnedIds, recentlyPlayed = recentIds)
 
         val remaining = mutableListOf<EventDto>()
         var pushed = 0
@@ -184,13 +190,22 @@ class SyncRunner(
             canonicalId = canonicalId,
             source = "local",
             type = type,
-            value = if (type == "like") 1.0 else 0.0,
+            value = if (type == "like" || type == "pin") 1.0 else 0.0,
             percentPlayed = percentPlayed,
             hlc = HlcDto(Instant.now().toString(), 0, state.deviceId),
         )
-        val liked = if (type == "like") state.liked + canonicalId else state.liked
+        val liked = when (type) {
+            "like" -> state.liked + canonicalId
+            "unlike" -> state.liked - canonicalId
+            else -> state.liked
+        }
+        val pinned = when (type) {
+            "pin" -> state.pinned + canonicalId
+            "unpin" -> state.pinned - canonicalId
+            else -> state.pinned
+        }
         val recent = if (type == "play") state.recentlyPlayed + (canonicalId to Instant.now().toString()) else state.recentlyPlayed
-        store.save(state.copy(outbox = state.outbox + event, liked = liked, recentlyPlayed = recent))
+        store.save(state.copy(outbox = state.outbox + event, liked = liked, pinned = pinned, recentlyPlayed = recent))
         return event
     }
 

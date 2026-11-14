@@ -96,6 +96,100 @@ class SyncRunnerTest {
     }
 
     @Test
+    fun enqueuesPinAndUnpin() {
+        val dir = Files.createTempDirectory("sync-runner").toFile()
+        try {
+            val runner = SyncRunner(File(dir, "state.json"), File(dir, "music"))
+            StateStore(File(dir, "state.json")).save(ClientState(deviceId = "dev"))
+
+            val pin = runner.enqueue("pin", "t1")
+
+            assertEquals("pin", pin.type)
+            assertEquals(1.0, pin.value)
+            assertEquals(setOf("t1"), runner.state().pinned)
+            assertEquals(1, runner.state().outbox.size)
+
+            runner.enqueue("unpin", "t1")
+
+            assertEquals(emptySet(), runner.state().pinned)
+            assertEquals(2, runner.state().outbox.size)
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun pullsOnlyThisDevicesPins() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/sync/v1/events") { exchange ->
+            val body = """
+                {"events":[
+                  {"id":"e1","device_id":"dev","canonical_id":"a","type":"pin","hlc":{"wall":"2026-11-01T00:00:00Z","counter":0,"node":"dev"}},
+                  {"id":"e2","device_id":"other","canonical_id":"b","type":"pin","hlc":{"wall":"2026-11-01T00:00:01Z","counter":0,"node":"other"}},
+                  {"id":"e3","device_id":"dev","canonical_id":"c","type":"unpin","hlc":{"wall":"2026-11-01T00:00:02Z","counter":0,"node":"dev"}}
+                ],"next":"2026-11-01T00:00:02Z/0/dev","has_more":false}
+            """.trimIndent().toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        val dir = Files.createTempDirectory("sync-runner").toFile()
+        try {
+            val runner = SyncRunner(File(dir, "state.json"), File(dir, "music"))
+            StateStore(File(dir, "state.json")).save(ClientState(deviceId = "dev", pinned = setOf("c")))
+            runner.configure(
+                listOf("http://127.0.0.1:${server.address.port}"),
+                "token",
+                "dev",
+                "off",
+                PolicyDto(scope = "off"),
+            )
+
+            runner.sync()
+
+            assertEquals(setOf("a"), runner.state().pinned)
+        } finally {
+            server.stop(0)
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun localPinChoiceWinsOverOlderServerEvent() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/sync/v1/events") { exchange ->
+            val body = """
+                {"events":[
+                  {"id":"e1","device_id":"dev","canonical_id":"c","type":"unpin","hlc":{"wall":"2026-11-01T00:00:00Z","counter":0,"node":"dev"}}
+                ],"next":"2026-11-01T00:00:00Z/0/dev","has_more":false}
+            """.trimIndent().toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        val dir = Files.createTempDirectory("sync-runner").toFile()
+        try {
+            val runner = SyncRunner(File(dir, "state.json"), File(dir, "music"))
+            StateStore(File(dir, "state.json")).save(ClientState(deviceId = "dev"))
+            runner.enqueue("pin", "c")
+            runner.configure(
+                listOf("http://127.0.0.1:${server.address.port}"),
+                "token",
+                "dev",
+                "off",
+                PolicyDto(scope = "off"),
+            )
+
+            runner.sync()
+
+            assertEquals(setOf("c"), runner.state().pinned)
+        } finally {
+            server.stop(0)
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun protectsLikedTracks() {
         assertTrue(SyncRunner.isProtectedTrack("t1", setOf("t1"), emptyMap(), Instant.now()))
     }
