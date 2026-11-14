@@ -1,0 +1,29 @@
+[Unit]
+Description=GrooveSync airplane-mode outbox soak
+Documentation=https://github.com/Vic-41148/groovesync
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=groovesync
+Group=groovesync
+EnvironmentFile=/etc/groovesync-soak.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+WorkingDirectory=/srv/airplane-soak
+ExecStart=/opt/groovesync-soak/scripts/run-soak.sh
+Restart=always
+RestartSec=30
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/airplane-soak
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+MemoryMax=1G
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target
