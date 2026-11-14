@@ -96,6 +96,68 @@ class SyncRunnerTest {
     }
 
     @Test
+    fun externalModeReportsScannedHoldingsAndIgnoresPlanActions() {
+        val hash = "a".repeat(64)
+        val reported = mutableListOf<String>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/sync/v1/events") { exchange ->
+            val body = """{"events":[],"next":"","has_more":false}""".toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.createContext("/sync/v1/devices/dev/holdings") { exchange ->
+            reported += exchange.requestBody.readBytes().decodeToString()
+            exchange.sendResponseHeaders(204, -1)
+            exchange.close()
+        }
+        server.createContext("/sync/v1/devices/dev/plan") { exchange ->
+            val body = """
+                {"device_id":"dev",
+                 "downloads":[{"canonical_id":"track-1","hash":"$hash","path":"song.mp3","size_bytes":2048}],
+                 "deletes":[{"canonical_id":"old","hash":"${"b".repeat(64)}","path":"old.mp3","size_bytes":10}],
+                 "evictions":[{"canonical_id":"gone","hash":"${"c".repeat(64)}","path":"gone.mp3","size_bytes":10}],
+                 "unchanged":0,"download_bytes":2048,
+                 "warnings":[]}
+            """.trimIndent().toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        val dir = Files.createTempDirectory("sync-runner").toFile()
+        try {
+            val music = File(dir, "music").apply { mkdirs() }
+            File(music, "keep.mp3").writeBytes(ByteArray(16))
+            val runner = SyncRunner(
+                File(dir, "state.json"),
+                music,
+                externalScan = { mapOf("content://tree/song.mp3" to hash) },
+            )
+            runner.configure(
+                listOf("http://127.0.0.1:${server.address.port}"),
+                "token",
+                "dev",
+                "external",
+                PolicyDto(scope = "everything", networkRule = "any"),
+            )
+
+            val report = runner.sync()
+
+            assertEquals(2, reported.size)
+            assertTrue(reported.all { it.contains(hash) && it.contains("upload-${hash.take(16)}") })
+            assertEquals(0, report.downloaded)
+            assertEquals(0, report.deleted)
+            assertEquals(0, report.evicted)
+            assertEquals(1, report.holdings)
+            assertTrue("external mode ignores downloads" in report.warnings)
+            assertTrue("external mode ignores deletes and evictions" in report.warnings)
+            assertEquals(listOf("keep.mp3"), music.listFiles()!!.map { it.name })
+        } finally {
+            server.stop(0)
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun enqueuesPinAndUnpin() {
         val dir = Files.createTempDirectory("sync-runner").toFile()
         try {

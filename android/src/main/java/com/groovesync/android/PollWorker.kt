@@ -15,6 +15,9 @@ class PollWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
         val api = app.settings.api() ?: return Result.success()
         return try {
             val tracks = withContext(Dispatchers.IO) { app.mirror.refresh(api) }
+            if (app.settings.syncMode == "external" && app.settings.externalFolder.isNotBlank()) {
+                withContext(Dispatchers.IO) { app.deviceSync.sync() }
+            }
             Result.success(workDataOf("tracks" to tracks))
         } catch (error: ApiException) {
             Log.w(TAG, "library refresh returned ${error.status}", error)

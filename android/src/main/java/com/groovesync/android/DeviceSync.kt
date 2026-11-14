@@ -3,6 +3,7 @@ package com.groovesync.android
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
 import android.os.Environment
 import com.groovesync.common.sync.SyncRunner
 import com.groovesync.common.syncd.PolicyDto
@@ -19,9 +20,21 @@ class DeviceSync(context: Context, private val settings: Settings) {
     val musicDir: File = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
         ?: File(context.filesDir, "music")
 
-    private val runner = SyncRunner(File(context.filesDir, "sync-state.json"), musicDir)
+    private val saf = SafLibrary(context, File(context.filesDir, "saf-hash-index.json"))
+
+    private val runner = SyncRunner(
+        File(context.filesDir, "sync-state.json"),
+        musicDir,
+        externalScan = ::scanExternal,
+    )
 
     fun sync(): SyncReport = configuredRunner().sync(onWiFi = onWiFi())
+
+    fun setSyncMode(mode: String) {
+        val api = settings.api() ?: error("connect a server first")
+        api.setSyncMode(settings.deviceId, mode)
+        settings.saveSyncMode(mode)
+    }
 
     fun applyPolicy(policy: PolicyDto, syncMode: String) {
         val api = settings.api() ?: error("connect a server first")
@@ -49,6 +62,12 @@ class DeviceSync(context: Context, private val settings: Settings) {
             policy = settings.policy,
         )
         return runner
+    }
+
+    private fun scanExternal(): Map<String, String> {
+        val tree = settings.externalFolder
+        if (tree.isBlank()) return emptyMap()
+        return saf.scan(Uri.parse(tree))
     }
 
     private fun onWiFi(): Boolean {

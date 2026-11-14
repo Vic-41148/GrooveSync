@@ -18,6 +18,7 @@ class SyncRunner(
     private val musicDir: File,
     private val chunkSize: Int = 4 * 1024 * 1024,
     indexFile: File = File(stateFile.absoluteFile.parentFile ?: File("."), "hash-index.json"),
+    private val externalScan: (() -> Map<String, String>)? = null,
 ) {
     private val store = StateStore(stateFile)
     private val index = HashIndex(indexFile)
@@ -90,7 +91,7 @@ class SyncRunner(
         }
 
         val canonical = state.canonicalByHash.toMutableMap()
-        val before = scan(musicDir).map { (_, hash) ->
+        val before = scanFor(state.syncMode).map { (_, hash) ->
             HoldingDto(canonical[hash] ?: provisionalId(hash), hash)
         }
         api.reportHoldings(state.deviceId, before)
@@ -131,14 +132,23 @@ class SyncRunner(
                 }
             }
             "external" -> {
+                if (plan.downloads.isNotEmpty()) {
+                    warnings += "external mode ignores downloads"
+                }
                 if (plan.deletes.isNotEmpty() || plan.evictions.isNotEmpty()) {
                     warnings += "external mode ignores deletes and evictions"
                 }
             }
         }
 
-        val holdings = scan(musicDir).map { (_, hash) ->
-            HoldingDto(canonical[hash] ?: provisionalId(hash), hash)
+        // The external folder did not change during the run, so the second scan
+        // would hash the same files again.
+        val holdings = if (state.syncMode == "external") {
+            before
+        } else {
+            scanFor(state.syncMode).map { (_, hash) ->
+                HoldingDto(canonical[hash] ?: provisionalId(hash), hash)
+            }
         }
         api.reportHoldings(state.deviceId, holdings)
         state = state.copy(
@@ -212,6 +222,12 @@ class SyncRunner(
     fun state(): ClientState = store.load()
 
     fun scan(root: File): Map<String, String> = index.scan(root)
+
+    private fun scanFor(syncMode: String): Map<String, String> {
+        val external = externalScan
+        if (syncMode == "external" && external != null) return external()
+        return scan(musicDir)
+    }
 
     private fun deleteByHash(root: File, hash: String): Int {
         if (!root.exists()) return 0

@@ -21,6 +21,8 @@ class Settings(context: Context) {
 
     val syncMode: String get() = prefs.getString("sync_mode", "app").orEmpty()
 
+    val externalFolder: String get() = prefs.getString("external_folder", "").orEmpty()
+
     val policy: PolicyDto
         get() = prefs.getString("policy", null)?.let { stored ->
             runCatching { json.decodeFromString(PolicyDto.serializer(), stored) }.getOrNull()
@@ -54,5 +56,13 @@ class Settings(context: Context) {
             .putString("policy", json.encodeToString(PolicyDto.serializer(), policy))
             .putString("sync_mode", syncMode)
             .apply()
+    }
+
+    fun saveSyncMode(mode: String) {
+        prefs.edit().putString("sync_mode", mode).apply()
+    }
+
+    fun saveExternalFolder(uri: String) {
+        prefs.edit().putString("external_folder", uri).apply()
     }
 }

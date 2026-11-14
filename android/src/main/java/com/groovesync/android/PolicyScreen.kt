@@ -48,6 +48,7 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
     var report by remember { mutableStateOf<SyncReport?>(null) }
+    var mode by remember { mutableStateOf(settings.syncMode) }
     val coroutine = rememberCoroutineScope()
 
     Column(
@@ -55,10 +56,7 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Device policy", style = MaterialTheme.typography.headlineSmall)
-        if (settings.syncMode != "app") {
-            Text("This device is in ${settings.syncMode} mode. Manage it from the desktop client until the folder grant arrives.")
-            return@Column
-        }
+        SyncModesScreen(settings, deviceSync, mode) { mode = it }
         Text(
             "Saving applies the policy and runs one sync. Nothing downloads in the background.",
             style = MaterialTheme.typography.bodyMedium,
@@ -83,16 +81,18 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Mirror deletions", Modifier.weight(1f))
-            Switch(checked = mirror, onCheckedChange = { mirror = it })
+            Switch(
+                checked = mirror,
+                onCheckedChange = { mirror = it },
+                enabled = mode == "app",
+            )
         }
         Text(
-            "Deletes local files the server removed. Off by default.",
-            style = MaterialTheme.typography.bodySmall,
-        )
-
-        Text("Sync mode: App")
-        Text(
-            "External mode needs a folder grant and is not available in this build.",
+            if (mode == "app") {
+                "Deletes local files the server removed. Off by default."
+            } else {
+                "Unavailable in external mode: another app owns the folder and GrooveSync never deletes."
+            },
             style = MaterialTheme.typography.bodySmall,
         )
 
@@ -116,7 +116,7 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
                         failure = null
                         try {
                             report = withContext(Dispatchers.IO) {
-                                deviceSync.applyPolicy(policy, "app")
+                                deviceSync.applyPolicy(policy, mode)
                                 deviceSync.sync()
                             }
                         } catch (error: Exception) {
