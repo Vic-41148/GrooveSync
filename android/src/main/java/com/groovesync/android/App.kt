@@ -103,6 +103,7 @@ fun GrooveSyncApp(
                     when (destination) {
                         Destination.LIBRARY -> LibraryScreen(mirror, seed, api)
                         Destination.OFFLINE -> OfflineScreen(deviceSync)
+                        Destination.YOU -> PolicyScreen(settings, deviceSync)
                         else -> Text(destination.name)
                     }
                 }
