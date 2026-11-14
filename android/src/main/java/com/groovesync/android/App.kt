@@ -6,7 +6,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.List
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -18,8 +27,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.groovesync.common.mirror.MirrorTrack
 import com.groovesync.common.syncd.SyncdApi
@@ -42,7 +53,28 @@ fun GrooveSyncApp(mirror: Mirror, settings: Settings, seed: Boolean, startRoute:
     val start = Destination.entries.firstOrNull { it.name == startRoute }
         ?: if (configured) Destination.LIBRARY else Destination.HOME
     val navController = rememberNavController()
-    Scaffold { padding ->
+    Scaffold(
+        bottomBar = {
+            NavigationBar {
+                val backStack by navController.currentBackStackEntryAsState()
+                val current = backStack?.destination?.route
+                Destination.entries.forEach { destination ->
+                    NavigationBarItem(
+                        selected = current == destination.name,
+                        onClick = {
+                            navController.navigate(destination.name) {
+                                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                                launchSingleTop = true
+                                restoreState = true
+                            }
+                        },
+                        icon = { Icon(icon(destination), contentDescription = null) },
+                        label = { Text(destination.name.lowercase().replaceFirstChar { it.titlecase() }) },
+                    )
+                }
+            }
+        },
+    ) { padding ->
         NavHost(
             navController = navController,
             startDestination = start.name,
@@ -59,6 +91,14 @@ fun GrooveSyncApp(mirror: Mirror, settings: Settings, seed: Boolean, startRoute:
             }
         }
     }
+}
+
+private fun icon(destination: Destination) = when (destination) {
+    Destination.HOME -> Icons.Default.Home
+    Destination.SEARCH -> Icons.Default.Search
+    Destination.LIBRARY -> Icons.AutoMirrored.Filled.List
+    Destination.OFFLINE -> Icons.Default.CheckCircle
+    Destination.YOU -> Icons.Default.Person
 }
 
 @Composable
