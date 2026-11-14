@@ -110,6 +110,15 @@ class SyncdApi(
         return json.decodeFromString(EventsResponse.serializer(), response.text())
     }
 
+    fun eventsStream(): SseStream {
+        val base = lastBaseUrl.ifBlank { serverUrls.firstOrNull().orEmpty() }
+        if (base.isBlank()) throw IOException("no server urls configured")
+        return SseStream(
+            url = base.trimEnd('/') + "/sync/v1/events/stream",
+            headers = headers() - "Accept",
+        )
+    }
+
     fun appendEvents(events: List<EventDto>) {
         val response = call(
             "POST",
