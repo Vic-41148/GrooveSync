@@ -1,6 +1,7 @@
 package com.groovesync.android
 
 import android.content.Context
+import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -24,9 +25,15 @@ class PollWorker(appContext: Context, params: WorkerParameters) : CoroutineWorke
             val tracks = withContext(Dispatchers.IO) { mirror.refresh(api) }
             Result.success(workDataOf("tracks" to tracks))
         } catch (error: ApiException) {
+            Log.w(TAG, "library refresh returned ${error.status}", error)
             if (error.status in 400..499) Result.failure() else Result.retry()
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            Log.w(TAG, "library refresh failed", error)
             Result.retry()
         }
+    }
+
+    private companion object {
+        const val TAG = "GrooveSyncPoll"
     }
 }
