@@ -1,5 +1,6 @@
 package com.groovesync.common.syncd
 
+import com.groovesync.common.sync.ResumableDownloader
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.IOException
@@ -156,35 +157,17 @@ class SyncdApi(
         throw IOException("upload did not complete: $hash")
     }
 
-    fun download(hash: String, destination: File): File {
-        val part = File(destination.path + ".part")
-        destination.parentFile?.mkdirs()
-        var existing = if (part.exists()) part.length() else 0L
-        var response = call(
-            "GET",
-            "/sync/v1/library/files/$hash",
-            if (existing > 0) mapOf("Range" to "bytes=$existing-") else emptyMap(),
+    fun download(hash: String, destination: File, expectedSize: Long? = null): File {
+        val base = lastBaseUrl.ifBlank { serverUrls.firstOrNull().orEmpty() }
+        if (base.isBlank()) throw IOException("no server urls configured")
+        ResumableDownloader().download(
+            url = base.trimEnd('/') + "/sync/v1/library/files/$hash",
+            destination = destination,
+            headers = headers() - "Accept",
+            expectedSize = expectedSize,
+            expectedSha256 = hash,
         )
-        if (existing > 0 && response.status == 200) {
-            part.delete()
-            existing = 0
-        }
-        requireOk(response, "download")
-        if (response.status == 206 && existing > 0) {
-            part.appendBytes(response.body)
-        } else {
-            part.writeBytes(response.body)
-        }
-        val actual = sha256(part)
-        if (actual != hash) {
-            part.delete()
-            throw IOException("download hash mismatch: want $hash got $actual")
-        }
-        if (destination.exists()) destination.delete()
-        if (!part.renameTo(destination)) {
-            destination.writeBytes(part.readBytes())
-            part.delete()
-        }
+        lastBaseUrl = base
         return destination
     }
 

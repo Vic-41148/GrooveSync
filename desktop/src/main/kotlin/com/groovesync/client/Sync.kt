@@ -77,7 +77,7 @@ class SyncRunner(
                 for (file in plan.downloads) {
                     val destination = File(musicDir, fileName(file.path, file.hash))
                     if (destination.exists() && SyncdApi.sha256(destination) == file.hash) continue
-                    api.download(file.hash, destination)
+                    api.download(file.hash, destination, file.sizeBytes.takeIf { it > 0 })
                     downloaded++
                 }
                 if (state.policy.mirrorDeletions) {

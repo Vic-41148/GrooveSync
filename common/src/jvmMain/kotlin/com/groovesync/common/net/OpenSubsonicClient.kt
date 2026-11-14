@@ -16,7 +16,6 @@ class OpenSubsonicClient(private val baseUrl: String, private val token: String,
     fun getAlbumList(): String = get("getAlbumList2")
     fun getSong(id: String): String = get("getSong&id=$id")
     fun scrobble(id: String, time: Long): String = get("scrobble&id=$id&time=$time")
-    fun download(id: String): String = get("download&id=$id")
 
     fun openSubsonicExtensions(): List<String> = extensions()
 
