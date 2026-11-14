@@ -171,6 +171,15 @@ The app ships a baseline profile generated from the library screen:
 against the UX-4 cold start and jank budgets. It refuses emulator reports
 unless `--allow-emulator` is passed.
 
+## Android client
+
+The first launch asks for the syncd server URL and the admin token. The token
+registers this device once and is not stored; the app keeps the returned
+device token. It refreshes the local mirror on first open and every 15 minutes
+through WorkManager, and falls back to the cached mirror when the server is
+unreachable. Cleartext HTTP is allowed only for loopback, so a remote server
+must be HTTPS.
+
 Pinned tool and dependency versions are recorded in `docs/pins.md` (local-only).
 
 ## License

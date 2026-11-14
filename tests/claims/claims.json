@@ -52,11 +52,11 @@
       "id": "v-android-screenshot",
       "doc": "docs/todo/phase-4.md",
       "phase": "4",
-      "claim": "A Roborazzi screenshot test exists for the Android home screen.",
+      "claim": "A Roborazzi screenshot test renders the Android setup screen.",
       "status": "verified",
       "severity": "none",
       "evidence": [
-        "contains:android/src/androidTest/java/com/groovesync/android/ScreenshotTest.kt::fun homeScreenshot()"
+        "contains:android/src/androidTest/java/com/groovesync/android/ScreenshotTest.kt::fun setupScreenshot()"
       ],
       "note": ""
     },

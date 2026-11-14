@@ -22,7 +22,9 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.groovesync.common.mirror.MirrorTrack
+import com.groovesync.common.syncd.SyncdApi
 import com.groovesync.common.ui.Destination
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -30,8 +32,15 @@ private const val LIST_LIMIT = 50_000
 private const val SEARCH_LIMIT = 500
 
 @Composable
-fun GrooveSyncApp(mirror: Mirror, seed: Boolean, startRoute: String? = null) {
-    val start = Destination.entries.firstOrNull { it.name == startRoute } ?: Destination.HOME
+fun GrooveSyncApp(mirror: Mirror, settings: Settings, seed: Boolean, startRoute: String? = null) {
+    var configured by remember { mutableStateOf(settings.isConfigured) }
+    val api = remember(configured) { if (configured) settings.api() else null }
+    if (!configured && !seed) {
+        SetupScreen(settings) { configured = true }
+        return
+    }
+    val start = Destination.entries.firstOrNull { it.name == startRoute }
+        ?: if (configured) Destination.LIBRARY else Destination.HOME
     val navController = rememberNavController()
     Scaffold { padding ->
         NavHost(
@@ -42,7 +51,7 @@ fun GrooveSyncApp(mirror: Mirror, seed: Boolean, startRoute: String? = null) {
             Destination.entries.forEach { destination ->
                 composable(destination.name) {
                     if (destination == Destination.LIBRARY) {
-                        LibraryScreen(mirror, seed)
+                        LibraryScreen(mirror, seed, api)
                     } else {
                         Text(destination.name)
                     }
@@ -53,13 +62,30 @@ fun GrooveSyncApp(mirror: Mirror, seed: Boolean, startRoute: String? = null) {
 }
 
 @Composable
-fun LibraryScreen(mirror: Mirror, seed: Boolean) {
+fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?) {
     var query by remember { mutableStateOf("") }
     var tracks by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var seeded by remember { mutableStateOf(false) }
+    var reload by remember { mutableStateOf(0) }
+    var offline by remember { mutableStateOf(false) }
 
-    LaunchedEffect(seed, query) {
+    LaunchedEffect(api) {
+        if (api == null) return@LaunchedEffect
+        offline = withContext(Dispatchers.IO) {
+            try {
+                mirror.refresh(api)
+                false
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                true
+            }
+        }
+        reload++
+    }
+
+    LaunchedEffect(seed, query, reload) {
         loading = true
         tracks = withContext(Dispatchers.IO) {
             if (seed && !seeded) {
@@ -81,6 +107,12 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
         } else {
             Text("${tracks.size} tracks", Modifier.padding(horizontal = 16.dp))
+        }
+        if (offline) {
+            Text(
+                "Showing the local copy; syncd is unreachable",
+                Modifier.padding(horizontal = 16.dp),
+            )
         }
         LazyColumn(Modifier.fillMaxSize()) {
             items(tracks, key = { it.canonicalId }) { track ->
