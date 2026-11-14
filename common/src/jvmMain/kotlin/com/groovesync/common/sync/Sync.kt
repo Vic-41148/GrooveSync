@@ -16,8 +16,10 @@ class SyncRunner(
     private val stateFile: File,
     private val musicDir: File,
     private val chunkSize: Int = 4 * 1024 * 1024,
+    indexFile: File = File(stateFile.absoluteFile.parentFile ?: File("."), "hash-index.json"),
 ) {
     private val store = StateStore(stateFile)
+    private val index = HashIndex(indexFile)
 
     fun configure(serverUrls: List<String>, token: String, deviceId: String) {
         val current = store.load()
@@ -174,18 +176,18 @@ class SyncRunner(
 
     fun state(): ClientState = store.load()
 
-    companion object {
-        fun scan(root: File): Map<String, String> {
-            if (!root.exists()) return emptyMap()
-            val out = linkedMapOf<String, String>()
-            root.walkTopDown().filter { it.isFile }.forEach { file ->
-                if (ignored(file.name)) return@forEach
-                out[file.absolutePath] = SyncdApi.sha256(file)
-            }
-            return out
+    fun scan(root: File): Map<String, String> = index.scan(root)
+
+    private fun deleteByHash(root: File, hash: String): Int {
+        if (!root.exists()) return 0
+        var removed = 0
+        for (path in scan(root).filterValues { it == hash }.keys) {
+            if (File(path).delete()) removed++
         }
+        return removed
+    }
 
-
+    companion object {
         fun isProtectedTrack(
             canonicalId: String,
             liked: Set<String>,
@@ -214,14 +216,5 @@ class SyncRunner(
         }
 
         fun provisionalId(hash: String): String = "upload-" + hash.take(16)
-
-        fun deleteByHash(root: File, hash: String): Int {
-            if (!root.exists()) return 0
-            var removed = 0
-            root.walkTopDown().filter { it.isFile }.forEach { file ->
-                if (SyncdApi.sha256(file) == hash && file.delete()) removed++
-            }
-            return removed
-        }
     }
 }
