@@ -166,6 +166,9 @@ jobs:
       - name: Build Android
         run: ./gradlew :android:assembleDebug
 
+      - name: Test the benchmark gate
+        run: python3 -m unittest discover -s scripts -p '*_test.py'
+
   alignment:
     runs-on: ubuntu-latest
     steps:

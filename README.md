@@ -167,6 +167,10 @@ The app ships a baseline profile generated from the library screen:
 ./scripts/copy-baseline-profile.sh
 ```
 
+`scripts/check_benchmarks.py REPORT` checks a generated `benchmarkData.json`
+against the UX-4 cold start and jank budgets. It refuses emulator reports
+unless `--allow-emulator` is passed.
+
 Pinned tool and dependency versions are recorded in `docs/pins.md` (local-only).
 
 ## License
