@@ -21,17 +21,7 @@ class DeviceSync(context: Context, private val settings: Settings) {
 
     private val runner = SyncRunner(File(context.filesDir, "sync-state.json"), musicDir)
 
-    fun sync(): SyncReport {
-        if (!settings.isConfigured) error("connect a server first")
-        runner.configure(
-            serverUrls = listOf(settings.serverUrl),
-            token = settings.token,
-            deviceId = settings.deviceId,
-            syncMode = settings.syncMode,
-            policy = settings.policy,
-        )
-        return runner.sync(onWiFi = onWiFi())
-    }
+    fun sync(): SyncReport = configuredRunner().sync(onWiFi = onWiFi())
 
     fun applyPolicy(policy: PolicyDto, syncMode: String) {
         val api = settings.api() ?: error("connect a server first")
@@ -40,12 +30,25 @@ class DeviceSync(context: Context, private val settings: Settings) {
         settings.savePolicy(policy, syncMode)
     }
 
-    fun pinned(): Set<String> = runner.state().pinned
+    fun pinned(): Set<String> = if (settings.isConfigured) runner.state().pinned else emptySet()
 
     fun togglePin(canonicalId: String): Set<String> {
-        val state = runner.state()
-        runner.enqueue(if (canonicalId in state.pinned) "unpin" else "pin", canonicalId)
-        return runner.state().pinned
+        val configured = configuredRunner()
+        val state = configured.state()
+        configured.enqueue(if (canonicalId in state.pinned) "unpin" else "pin", canonicalId)
+        return configured.state().pinned
+    }
+
+    private fun configuredRunner(): SyncRunner {
+        if (!settings.isConfigured) error("connect a server first")
+        runner.configure(
+            serverUrls = listOf(settings.serverUrl),
+            token = settings.token,
+            deviceId = settings.deviceId,
+            syncMode = settings.syncMode,
+            policy = settings.policy,
+        )
+        return runner
     }
 
     private fun onWiFi(): Boolean {
