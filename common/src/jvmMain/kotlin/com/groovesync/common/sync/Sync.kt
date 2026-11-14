@@ -4,6 +4,7 @@ import com.groovesync.common.syncd.ClientState
 import com.groovesync.common.syncd.EventDto
 import com.groovesync.common.syncd.HlcDto
 import com.groovesync.common.syncd.HoldingDto
+import com.groovesync.common.syncd.PolicyDto
 import com.groovesync.common.syncd.SyncdApi
 import com.groovesync.common.syncd.SyncReport
 import com.groovesync.common.syncd.UploadStatus
@@ -21,12 +22,26 @@ class SyncRunner(
     private val store = StateStore(stateFile)
     private val index = HashIndex(indexFile)
 
-    fun configure(serverUrls: List<String>, token: String, deviceId: String) {
+    fun configure(
+        serverUrls: List<String>,
+        token: String,
+        deviceId: String,
+        syncMode: String,
+        policy: PolicyDto,
+    ) {
         val current = store.load()
-        store.save(current.copy(serverUrls = serverUrls, token = token, deviceId = deviceId))
+        store.save(
+            current.copy(
+                serverUrls = serverUrls,
+                token = token,
+                deviceId = deviceId,
+                syncMode = syncMode,
+                policy = policy,
+            )
+        )
     }
 
-    fun sync(): SyncReport {
+    fun sync(onWiFi: Boolean = false): SyncReport {
         var state = store.load()
         require(state.token.isNotBlank()) { "register the device first" }
         require(state.serverUrls.isNotEmpty()) { "no server urls configured" }
@@ -68,7 +83,7 @@ class SyncRunner(
             return SyncReport(api.lastBaseUrl, pulled, pushed)
         }
 
-        val plan = api.plan(state.deviceId)
+        val plan = api.plan(state.deviceId, onWiFi)
         val canonical = state.canonicalByHash.toMutableMap()
         for (file in plan.downloads + plan.deletes + plan.evictions) {
             canonical[file.hash] = file.canonicalId

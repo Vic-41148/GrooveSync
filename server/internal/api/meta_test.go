@@ -149,6 +149,19 @@ func TestDeviceSyncModeAndDelete(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPut, "/sync/v1/devices/phone/sync-mode", strings.NewReader(`{"sync_mode":"external"}`)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("put status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	updated, err := repo.Get(ctx, "phone")
+	if err != nil {
+		t.Fatalf("Get() after PUT error = %v", err)
+	}
+	if updated.SyncMode != devices.ModeExternal {
+		t.Fatalf("sync mode = %q, want %q", updated.SyncMode, devices.ModeExternal)
+	}
+
+	rec = httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/sync/v1/devices/phone", strings.NewReader(`{"sync_mode":"sometimes"}`)))
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadRequest)
@@ -292,12 +305,18 @@ func TestDevicePlan(t *testing.T) {
 		DownloadBytes: 42,
 		Warnings:      []string{},
 	}
-	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 12, Now: time.Now, Transfer: transferStub{plan: plan}})
+	var onWiFi bool
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 12, Now: time.Now, Transfer: transferStub{plan: plan, onWiFi: &onWiFi}})
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/plan", nil))
+	req := httptest.NewRequest(http.MethodGet, "/sync/v1/devices/phone/plan", nil)
+	req.Header.Set("X-Network", "wifi")
+	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if !onWiFi {
+		t.Fatal("planner did not receive the Wi-Fi header")
 	}
 	var got transfer.Plan
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
@@ -323,11 +342,15 @@ func TestDevicePlan(t *testing.T) {
 }
 
 type transferStub struct {
-	plan transfer.Plan
-	err  error
+	plan   transfer.Plan
+	err    error
+	onWiFi *bool
 }
 
-func (s transferStub) Plan(context.Context, string) (transfer.Plan, error) {
+func (s transferStub) Plan(_ context.Context, _ string, onWiFi bool) (transfer.Plan, error) {
+	if s.onWiFi != nil {
+		*s.onWiFi = onWiFi
+	}
 	return s.plan, s.err
 }
 

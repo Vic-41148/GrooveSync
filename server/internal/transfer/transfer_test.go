@@ -25,7 +25,7 @@ func TestPlanDownloadsMissingFiles(t *testing.T) {
 	seedRendition(t, db, "track-1", testHash("1"), "Music/Artist/Song.flac", "flac", 100)
 	repo := seedDevice(t, db, devices.Device{ID: "phone", Name: "Phone"})
 
-	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -38,6 +38,36 @@ func TestPlanDownloadsMissingFiles(t *testing.T) {
 	}
 	if len(plan.Deletes) != 0 {
 		t.Fatalf("deletes = %#v, want none without mirror deletions", plan.Deletes)
+	}
+}
+
+func TestPlanNeedsWiFiWhenPolicyAsks(t *testing.T) {
+	t.Parallel()
+
+	db := openTransferDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-1", "Song")
+	seedRendition(t, db, "track-1", testHash("1"), "Music/Artist/Song.flac", "flac", 100)
+	repo := seedDevice(t, db, devices.Device{
+		ID:     "phone",
+		Name:   "Phone",
+		Policy: devices.Policy{Scope: devices.ScopeEverything, NetworkRule: devices.NetworkWiFi},
+	})
+
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
+	if err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if len(plan.Downloads) != 0 || len(plan.Warnings) != 1 {
+		t.Fatalf("plan = %#v, want the Wi-Fi warning and no downloads", plan)
+	}
+
+	plan, err = Planner{DB: db, Devices: repo}.Plan(ctx, "phone", true)
+	if err != nil {
+		t.Fatalf("Plan(on Wi-Fi) error = %v", err)
+	}
+	if len(plan.Downloads) != 1 || len(plan.Warnings) != 0 {
+		t.Fatalf("plan = %#v, want the missing file", plan)
 	}
 }
 
@@ -55,7 +85,7 @@ VALUES ('track-1', 'cached', 'Music/Incoming/song.opus', ?, 'opus', 90)
 	}
 	repo := seedDevice(t, db, devices.Device{ID: "phone", Name: "Phone"})
 
-	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -76,7 +106,7 @@ func TestPlanSkipsHeldFiles(t *testing.T) {
 		t.Fatalf("ReportHoldings() error = %v", err)
 	}
 
-	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -153,7 +183,7 @@ func TestPlanScopes(t *testing.T) {
 			}
 			tc.seed(t, db)
 
-			plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+			plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 			if err != nil {
 				t.Fatalf("Plan() error = %v", err)
 			}
@@ -178,7 +208,7 @@ func TestPlanStorageCap(t *testing.T) {
 		t.Fatalf("SetPolicy() error = %v", err)
 	}
 
-	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -225,7 +255,7 @@ func TestPlanMirrorDeletions(t *testing.T) {
 				t.Fatalf("ReportHoldings() error = %v", err)
 			}
 
-			plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+			plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 			if err != nil {
 				t.Fatalf("Plan() error = %v", err)
 			}
@@ -264,7 +294,7 @@ func TestPlanQualityPreference(t *testing.T) {
 				t.Fatalf("SetPolicy() error = %v", err)
 			}
 
-			plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+			plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 			if err != nil {
 				t.Fatalf("Plan() error = %v", err)
 			}
@@ -298,7 +328,7 @@ func TestPlanEvictionSuggestions(t *testing.T) {
 		t.Fatalf("ReportHoldings() error = %v", err)
 	}
 
-	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -325,7 +355,7 @@ func TestPlanEvictionsWithinCap(t *testing.T) {
 		t.Fatalf("ReportHoldings() error = %v", err)
 	}
 
-	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -361,7 +391,7 @@ VALUES ('spotify:pl-1', 0, 'in-playlist')
 		t.Fatalf("SetPolicy() error = %v", err)
 	}
 
-	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone")
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "phone", false)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}
@@ -376,13 +406,13 @@ func TestPlanRequiresDependencies(t *testing.T) {
 	db := openTransferDB(t)
 	repo := seedDevice(t, db, devices.Device{ID: "phone", Name: "Phone"})
 
-	if _, err := (Planner{Devices: repo}).Plan(context.Background(), "phone"); err == nil {
+	if _, err := (Planner{Devices: repo}).Plan(context.Background(), "phone", false); err == nil {
 		t.Fatal("Plan() without database error = nil, want failure")
 	}
-	if _, err := (Planner{DB: db}).Plan(context.Background(), "phone"); err == nil {
+	if _, err := (Planner{DB: db}).Plan(context.Background(), "phone", false); err == nil {
 		t.Fatal("Plan() without device source error = nil, want failure")
 	}
-	if _, err := (Planner{DB: db, Devices: repo}).Plan(context.Background(), "missing"); err == nil {
+	if _, err := (Planner{DB: db, Devices: repo}).Plan(context.Background(), "missing", false); err == nil {
 		t.Fatal("Plan() for an unknown device error = nil, want failure")
 	}
 }
@@ -470,7 +500,7 @@ func TestPlanExternalModeRules(t *testing.T) {
 		t.Fatalf("ReportHoldings() error = %v", err)
 	}
 
-	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "ext")
+	plan, err := Planner{DB: db, Devices: repo}.Plan(ctx, "ext", false)
 	if err != nil {
 		t.Fatalf("Plan() error = %v", err)
 	}

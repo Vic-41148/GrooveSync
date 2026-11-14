@@ -1,5 +1,6 @@
 package com.groovesync.android
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,8 +13,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -24,6 +27,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -34,6 +38,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.groovesync.common.mirror.MirrorTrack
 import com.groovesync.common.syncd.SseException
+import com.groovesync.common.syncd.SyncReport
 import com.groovesync.common.syncd.SyncdApi
 import com.groovesync.common.ui.Destination
 import kotlinx.coroutines.CancellationException
@@ -41,6 +46,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 
@@ -49,7 +55,13 @@ private const val SEARCH_LIMIT = 500
 private const val RECONNECT_MS = 5_000L
 
 @Composable
-fun GrooveSyncApp(mirror: Mirror, settings: Settings, seed: Boolean, startRoute: String? = null) {
+fun GrooveSyncApp(
+    mirror: Mirror,
+    settings: Settings,
+    deviceSync: DeviceSync,
+    seed: Boolean,
+    startRoute: String? = null,
+) {
     var configured by remember { mutableStateOf(settings.isConfigured) }
     val api = remember(configured) { if (configured) settings.api() else null }
     if (!configured && !seed) {
@@ -88,10 +100,10 @@ fun GrooveSyncApp(mirror: Mirror, settings: Settings, seed: Boolean, startRoute:
         ) {
             Destination.entries.forEach { destination ->
                 composable(destination.name) {
-                    if (destination == Destination.LIBRARY) {
-                        LibraryScreen(mirror, seed, api)
-                    } else {
-                        Text(destination.name)
+                    when (destination) {
+                        Destination.LIBRARY -> LibraryScreen(mirror, seed, api)
+                        Destination.OFFLINE -> OfflineScreen(deviceSync)
+                        else -> Text(destination.name)
                     }
                 }
             }
@@ -208,3 +220,53 @@ private suspend fun refreshLibrary(mirror: Mirror, api: SyncdApi): Boolean =
             true
         }
     }
+
+@Composable
+fun OfflineScreen(deviceSync: DeviceSync) {
+    var busy by remember { mutableStateOf(false) }
+    var report by remember { mutableStateOf<SyncReport?>(null) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+
+    Column(
+        Modifier.fillMaxSize().padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Text("Offline music", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "Downloads follow this device's policy. Nothing is fetched in the " +
+                "background until you set a scope and tap Sync now.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Button(
+            enabled = !busy,
+            onClick = {
+                scope.launch {
+                    busy = true
+                    failure = null
+                    try {
+                        report = withContext(Dispatchers.IO) { deviceSync.sync() }
+                    } catch (error: Exception) {
+                        failure = error.message ?: "sync failed"
+                    } finally {
+                        busy = false
+                    }
+                }
+            },
+        ) {
+            Text(if (busy) "Syncing" else "Sync now")
+        }
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        report?.let { result ->
+            Text("Downloaded ${result.downloaded}, deleted ${result.deleted}, evicted ${result.evicted}")
+            Text("${result.holdings} files on this device")
+            result.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
+        Text(
+            "Files: ${deviceSync.musicDir.path}",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+}
+

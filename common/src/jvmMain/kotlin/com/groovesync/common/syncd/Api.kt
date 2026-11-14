@@ -87,9 +87,30 @@ class SyncdApi(
         return json.decodeFromString(LibraryResponse.serializer(), response.text())
     }
 
-    fun plan(deviceId: String): PlanResponse {
-        val response = requireOk(call("GET", "/sync/v1/devices/$deviceId/plan"), "plan")
+    fun plan(deviceId: String, onWiFi: Boolean = false): PlanResponse {
+        val extra = if (onWiFi) mapOf("X-Network" to "wifi") else emptyMap()
+        val response = requireOk(call("GET", "/sync/v1/devices/$deviceId/plan", extra), "plan")
         return json.decodeFromString(PlanResponse.serializer(), response.text())
+    }
+
+    fun setPolicy(deviceId: String, policy: PolicyDto) {
+        val response = call(
+            "PUT",
+            "/sync/v1/devices/$deviceId/policy",
+            mapOf("Content-Type" to "application/json"),
+            jsonBody(json.encodeToString(PolicyDto.serializer(), policy)),
+        )
+        requireOk(response, "policy")
+    }
+
+    fun setSyncMode(deviceId: String, mode: String) {
+        val response = call(
+            "PUT",
+            "/sync/v1/devices/$deviceId/sync-mode",
+            mapOf("Content-Type" to "application/json"),
+            jsonBody(json.encodeToString(SyncModeRequest.serializer(), SyncModeRequest(mode))),
+        )
+        requireOk(response, "sync mode")
     }
 
     fun reportHoldings(deviceId: String, holdings: List<HoldingDto>) {

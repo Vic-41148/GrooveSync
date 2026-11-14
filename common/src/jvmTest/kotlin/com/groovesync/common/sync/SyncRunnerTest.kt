@@ -1,6 +1,7 @@
 package com.groovesync.common.sync
 
 import com.groovesync.common.syncd.ClientState
+import com.groovesync.common.syncd.PolicyDto
 import java.io.File
 import java.nio.file.Files
 import java.time.Instant
@@ -16,12 +17,20 @@ class SyncRunnerTest {
         StateStore(File(dir, "state.json")).save(ClientState(liked = setOf("t1"), cursor = "abc"))
         val runner = SyncRunner(File(dir, "state.json"), File(dir, "music"))
 
-        runner.configure(listOf("http://127.0.0.1:8787"), "token", "device")
+        runner.configure(
+            listOf("http://127.0.0.1:8787"),
+            "token",
+            "device",
+            "app",
+            PolicyDto(scope = "off", networkRule = "wifi"),
+        )
 
         val state = runner.state()
         assertEquals("token", state.token)
         assertEquals("device", state.deviceId)
         assertEquals(listOf("http://127.0.0.1:8787"), state.serverUrls)
+        assertEquals("off", state.policy.scope)
+        assertEquals("wifi", state.policy.networkRule)
         assertEquals(setOf("t1"), state.liked)
         assertEquals("abc", state.cursor)
     }

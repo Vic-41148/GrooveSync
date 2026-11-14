@@ -20,7 +20,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.groovesync.common.syncd.PolicyDto
 import com.groovesync.common.syncd.SyncdApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -67,18 +66,25 @@ fun SetupScreen(settings: Settings, onConnected: () -> Unit) {
                     failure = null
                     try {
                         val deviceId = withContext(Dispatchers.IO) { settings.deviceIdOrNew() }
+                        val policy = settings.policy
                         val registered = withContext(Dispatchers.IO) {
                             SyncdApi(listOf(base)).register(
                                 adminToken = adminToken,
                                 id = deviceId,
                                 name = Build.MODEL,
                                 platform = "android",
-                                syncMode = "app",
-                                policy = PolicyDto(),
+                                syncMode = settings.syncMode,
+                                policy = policy,
                                 urls = listOf(base),
                             )
                         }
-                        settings.save(base, registered.token, registered.device.id.ifBlank { deviceId })
+                        settings.save(
+                            base,
+                            registered.token,
+                            registered.device.id.ifBlank { deviceId },
+                            policy,
+                            settings.syncMode,
+                        )
                         onConnected()
                     } catch (error: Exception) {
                         failure = error.message ?: "could not register this device"

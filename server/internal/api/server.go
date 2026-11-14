@@ -289,7 +289,7 @@ type PlaylistLister interface {
 
 // TransferPlanner builds the file plan for one device.
 type TransferPlanner interface {
-	Plan(context.Context, string) (transfer.Plan, error)
+	Plan(context.Context, string, bool) (transfer.Plan, error)
 }
 
 // New builds the router with middleware applied.
@@ -332,6 +332,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/devices", d.handleDevices)
 	mux.HandleFunc("POST /sync/v1/devices", d.handleDeviceRegister)
 	mux.HandleFunc("PATCH /sync/v1/devices/{id}", d.handleDeviceSyncMode)
+	mux.HandleFunc("PUT /sync/v1/devices/{id}/sync-mode", d.handleDeviceSyncMode)
 	mux.HandleFunc("PUT /sync/v1/devices/{id}/urls", d.handleDeviceURLs)
 	mux.HandleFunc("PUT /sync/v1/devices/{id}/policy", d.handleDevicePolicy)
 	mux.HandleFunc("DELETE /sync/v1/devices/{id}", d.handleDeviceDelete)
@@ -1773,7 +1774,7 @@ func (d Deps) handleDevicePlan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"}, 0)
 		return
 	}
-	plan, err := d.Transfer.Plan(r.Context(), id)
+	plan, err := d.Transfer.Plan(r.Context(), id, strings.EqualFold(r.Header.Get("X-Network"), "wifi"))
 	if err != nil {
 		writeDeviceError(w, err)
 		return

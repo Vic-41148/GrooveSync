@@ -39,6 +39,9 @@ data class DeviceDto(
 data class RegisterResponse(val device: DeviceDto, val token: String)
 
 @Serializable
+data class SyncModeRequest(@SerialName("sync_mode") val syncMode: String)
+
+@Serializable
 data class ContributionDto(val path: String = "", val source: String = "")
 
 @Serializable

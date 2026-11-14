@@ -48,7 +48,6 @@ type Planner struct {
 	DB      *sql.DB
 	Devices DeviceSource
 	Now     func() time.Time
-	OnWiFi  bool
 }
 
 type target struct {
@@ -68,7 +67,7 @@ type rendition struct {
 // Plan compares the device policy and holdings with the library and returns the
 // transfers that bring the device in line. It never deletes unless the policy
 // allows mirrored deletions.
-func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
+func (p Planner) Plan(ctx context.Context, deviceID string, onWiFi bool) (Plan, error) {
 	if p.DB == nil {
 		return Plan{}, errors.New("transfer: database is required")
 	}
@@ -92,7 +91,7 @@ func (p Planner) Plan(ctx context.Context, deviceID string) (Plan, error) {
 	if device.SyncMode == devices.ModeOff || policy.Scope == devices.ScopeOff {
 		return plan, nil
 	}
-	if policy.NetworkRule == devices.NetworkWiFi && !p.OnWiFi {
+	if policy.NetworkRule == devices.NetworkWiFi && !onWiFi {
 		plan.Warnings = append(plan.Warnings, "network rule requires Wi-Fi")
 		return plan, nil
 	}
