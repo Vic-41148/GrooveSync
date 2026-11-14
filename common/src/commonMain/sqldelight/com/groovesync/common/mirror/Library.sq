@@ -6,6 +6,7 @@ CREATE TABLE track (
     artist_sort TEXT NOT NULL,
     album TEXT NOT NULL,
     duration_ms INTEGER NOT NULL,
+    first_seen_run INTEGER NOT NULL DEFAULT 0,
     seen_run INTEGER NOT NULL DEFAULT 0
 );
 
@@ -13,16 +14,27 @@ CREATE INDEX track_title_sort ON track(title_sort);
 CREATE INDEX track_artist_sort ON track(artist_sort);
 
 upsert:
--- INSERT OR REPLACE, not UPSERT: minSdk 26 ships SQLite before 3.24, and every
--- column is supplied, so the delete-and-insert has nothing to lose.
-INSERT OR REPLACE INTO track(canonical_id, title, title_sort, artist, artist_sort, album, duration_ms, seen_run)
-VALUES (:canonical_id, :title, :title_sort, :artist, :artist_sort, :album, :duration_ms, :seen_run);
+-- INSERT OR REPLACE, not UPSERT: minSdk 26 ships SQLite before 3.24. The
+-- subquery keeps the first run that saw a track while every later run updates
+-- the row in place.
+INSERT OR REPLACE INTO track(canonical_id, title, title_sort, artist, artist_sort, album, duration_ms, first_seen_run, seen_run)
+VALUES (
+    :canonical_id, :title, :title_sort, :artist, :artist_sort, :album, :duration_ms,
+    COALESCE(NULLIF((SELECT first_seen_run FROM track WHERE canonical_id = :canonical_id), 0), :run_id),
+    :run_id
+);
 
 page:
 SELECT canonical_id, title, artist, album, duration_ms
 FROM track
 ORDER BY title_sort
 LIMIT :limit OFFSET :offset;
+
+recent:
+SELECT canonical_id, title, artist, album, duration_ms
+FROM track
+ORDER BY first_seen_run DESC, title_sort
+LIMIT :limit;
 
 search:
 SELECT canonical_id, title, artist, album, duration_ms

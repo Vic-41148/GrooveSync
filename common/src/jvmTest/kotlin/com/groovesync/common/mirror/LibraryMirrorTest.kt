@@ -79,6 +79,21 @@ class LibraryMirrorTest {
     }
 
     @Test
+    fun recentKeepsTheFirstRunAndPutsNewRowsFirst() {
+        mirror.replaceAll(
+            listOf(track("a", "Alpha"), track("b", "Beta")),
+            runId = 10,
+        )
+        mirror.replaceAll(
+            listOf(track("a", "Alpha"), track("b", "Beta"), track("c", "Gamma")),
+            runId = 20,
+        )
+
+        assertEquals("c", mirror.recent(limit = 3).first().canonicalId)
+        assertEquals(listOf("c", "a", "b"), mirror.recent(limit = 3).map { it.canonicalId })
+    }
+
+    @Test
     fun refreshDeletesRowsTheServerNoLongerReturns() {
         mirror.replaceAll(listOf(track("a", "A"), track("b", "B")), runId = 1)
         mirror.replaceAll(listOf(track("b", "B"), track("c", "C")), runId = 2)

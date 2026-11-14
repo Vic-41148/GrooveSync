@@ -20,7 +20,7 @@ class LibraryMirror(private val db: GrooveDb) {
                     artist_sort = sortKey(track.artist),
                     album = track.album,
                     duration_ms = track.durationMs,
-                    seen_run = runId,
+                    run_id = runId,
                 )
             }
         }
@@ -37,6 +37,11 @@ class LibraryMirror(private val db: GrooveDb) {
 
     fun page(limit: Int, offset: Long): List<MirrorTrack> =
         queries.page(limit.toLong(), offset) { canonicalId, title, artist, album, durationMs ->
+            MirrorTrack(canonicalId, title, artist, album, durationMs)
+        }.executeAsList()
+
+    fun recent(limit: Int): List<MirrorTrack> =
+        queries.recent(limit.toLong()) { canonicalId, title, artist, album, durationMs ->
             MirrorTrack(canonicalId, title, artist, album, durationMs)
         }.executeAsList()
 
