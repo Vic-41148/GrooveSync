@@ -33,14 +33,20 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.groovesync.common.mirror.MirrorTrack
+import com.groovesync.common.syncd.SseException
 import com.groovesync.common.syncd.SyncdApi
 import com.groovesync.common.ui.Destination
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 private const val LIST_LIMIT = 50_000
 private const val SEARCH_LIMIT = 500
+private const val RECONNECT_MS = 5_000L
 
 @Composable
 fun GrooveSyncApp(mirror: Mirror, settings: Settings, seed: Boolean, startRoute: String? = null) {
@@ -109,20 +115,46 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?) {
     var seeded by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
     var offline by remember { mutableStateOf(false) }
+    val changes = remember { Channel<Unit>(Channel.CONFLATED) }
 
     LaunchedEffect(api) {
         if (api == null) return@LaunchedEffect
-        offline = withContext(Dispatchers.IO) {
-            try {
-                mirror.refresh(api)
-                false
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                true
-            }
-        }
+        offline = refreshLibrary(mirror, api)
         reload++
+    }
+
+    LaunchedEffect(api) {
+        if (api == null) return@LaunchedEffect
+        val stream = api.eventsStream()
+        try {
+            withContext(Dispatchers.IO) {
+                while (isActive) {
+                    try {
+                        stream.stream { event ->
+                            if (event.name == "library" || event.name == "events") {
+                                changes.trySend(Unit)
+                            }
+                        }
+                    } catch (error: SseException) {
+                        if (error.status in 400..499) break
+                        delay(RECONNECT_MS)
+                    } catch (_: IOException) {
+                        if (!isActive) break
+                        delay(RECONNECT_MS)
+                    }
+                }
+            }
+        } finally {
+            stream.close()
+        }
+    }
+
+    LaunchedEffect(changes) {
+        for (change in changes) {
+            if (api == null) break
+            offline = refreshLibrary(mirror, api)
+            reload++
+        }
     }
 
     LaunchedEffect(seed, query, reload) {
@@ -164,3 +196,15 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?) {
         }
     }
 }
+
+private suspend fun refreshLibrary(mirror: Mirror, api: SyncdApi): Boolean =
+    withContext(Dispatchers.IO) {
+        try {
+            mirror.refresh(api)
+            false
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            true
+        }
+    }
