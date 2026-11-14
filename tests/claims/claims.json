@@ -123,7 +123,7 @@
       "severity": "none",
       "evidence": [
         "file:desktop/src/main/kotlin/com/groovesync/client/Main.kt",
-        "contains:desktop/src/test/kotlin/com/groovesync/client/SyncRunnerTest.kt::fun protectsLikedTracks()"
+        "contains:common/src/jvmTest/kotlin/com/groovesync/common/sync/SyncRunnerTest.kt::fun protectsLikedTracks()"
       ],
       "note": ""
     },
