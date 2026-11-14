@@ -34,8 +34,9 @@ private fun usage(): Nothing {
     println(
         """
         gsclient register --server URL --admin TOKEN --id ID --name NAME --data DIR [--music DIR]
-                          [--mode app|external|off] [--urls URL,URL] [--scope everything|affinity|off]
-                          [--cap BYTES] [--network any|wifi] [--mirror true|false] [--quality ...]
+                          [--admin-env VAR] [--mode app|external|off] [--urls URL,URL]
+                          [--scope everything|affinity|off] [--cap BYTES]
+                          [--network any|wifi] [--mirror true|false] [--quality ...]
         gsclient sync     --data DIR [--music DIR]
         gsclient upload   --data DIR --music DIR --file PATH [--track CANONICAL]
         gsclient like     --data DIR --track CANONICAL
@@ -80,7 +81,8 @@ fun main(args: Array<String>) {
             val platform = f["platform"] ?: "linux"
             val mode = f["mode"] ?: "app"
             val api = SyncdApi(urls, f["admin"] ?: "")
-            val registration = api.register(f["admin"] ?: "", id, name, platform, mode, policy, urls)
+            val admin = f["admin"] ?: f["admin-env"]?.let { System.getenv(it) }.orEmpty()
+            val registration = api.register(admin, id, name, platform, mode, policy, urls)
             val store = StateStore(File(dataDir(f), "state.json"))
             store.save(
                 ClientState(
