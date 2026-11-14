@@ -105,9 +105,10 @@ fun GrooveSyncApp(
                 composable(destination.name) {
                     when (destination) {
                         Destination.LIBRARY -> LibraryScreen(mirror, seed, api, deviceSync)
+                        Destination.SEARCH -> SearchScreen(mirror, deviceSync)
                         Destination.OFFLINE -> OfflineScreen(deviceSync)
                         Destination.YOU -> PolicyScreen(settings, deviceSync)
-                        else -> Text(destination.name)
+                        Destination.HOME -> Text(destination.name)
                     }
                 }
             }
