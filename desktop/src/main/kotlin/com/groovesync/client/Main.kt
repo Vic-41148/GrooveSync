@@ -1,5 +1,8 @@
 package com.groovesync.client
 
+import com.groovesync.client.player.MpvException
+import com.groovesync.client.player.MpvPlayerEngine
+import com.groovesync.common.audio.AudioConfig
 import com.groovesync.common.mirror.LibraryMirror
 import com.groovesync.common.sync.StateStore
 import com.groovesync.common.sync.SyncRunner
@@ -21,8 +24,13 @@ private fun flags(args: List<String>): Map<String, String> {
                 val (name, value) = key.split("=", limit = 2)
                 out[name] = value
             } else {
-                out[key] = args.getOrNull(index + 1) ?: ""
-                index++
+                val next = args.getOrNull(index + 1)
+                if (next == null || next.startsWith("--")) {
+                    out[key] = "true"
+                } else {
+                    out[key] = next
+                    index++
+                }
             }
         }
         index++
@@ -49,6 +57,9 @@ private fun usage(): Nothing {
         gsclient local    --data DIR [--search TEXT] [--limit 100] [--offset 0]
         gsclient review   --data DIR
         gsclient health   --data DIR
+        gsclient playback --data DIR [--music DIR] [--tracks ID,ID | --all]
+                          [--gapless true|false] [--replaygain true|false]
+                          [--preamp DB] [--mpv PATH] [--ao NAME] [--timeout SECONDS]
         """.trimIndent()
     )
     exitProcess(2)
@@ -60,6 +71,53 @@ private fun musicDir(f: Map<String, String>): File = File(f["music"] ?: File(dat
 
 private fun runner(f: Map<String, String>): SyncRunner =
     SyncRunner(File(dataDir(f), "state.json"), musicDir(f))
+
+private val audioExtensions = setOf("flac", "mp3", "m4a", "aac", "opus", "ogg", "wav")
+
+private fun audioFiles(root: File): List<File> {
+    if (!root.exists()) return emptyList()
+    return root.walkTopDown()
+        .filter { it.isFile && it.extension.lowercase() in audioExtensions }
+        .sortedBy { it.name.lowercase() }
+        .toList()
+}
+
+/**
+ * Maps `--tracks` entries to files. An entry is an absolute path or a
+ * canonical id that the sync state already holds.
+ */
+private fun playbackQueue(f: Map<String, String>, state: ClientState): List<String> {
+    val music = musicDir(f)
+    val wanted = (f["tracks"] ?: "").split(",").map { it.trim() }.filter { it.isNotEmpty() }
+    if (wanted.isEmpty()) {
+        if (f["all"]?.toBooleanStrictOrNull() != true) usage()
+        return audioFiles(music).map { it.absolutePath }
+    }
+    val local by lazy { audioFiles(music) }
+    val hashes = state.holdings.associate { it.canonicalId to it.hash }
+    return wanted.mapNotNull { entry ->
+        val direct = File(entry)
+        if (direct.isFile) return@mapNotNull direct.absolutePath
+        val hash = hashes[entry]
+        val file = hash?.let { seen -> local.firstOrNull { it.name.startsWith(seen.take(8) + "-") } }
+        if (file == null) println("skipping $entry: no local file")
+        file?.absolutePath
+    }
+}
+
+private fun reportProgress(engine: MpvPlayerEngine, timeoutMs: Long) {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    var lastLine = ""
+    while (System.currentTimeMillis() < deadline && !engine.isIdle()) {
+        val seconds = engine.positionMs() / 1000
+        val line = "%d:%02d\t%s".format(seconds / 60, seconds % 60, engine.currentPath().orEmpty())
+        if (line != lastLine) {
+            println(line)
+            lastLine = line
+        }
+        Thread.sleep(500)
+    }
+}
 
 fun main(args: Array<String>) {
     val command = args.firstOrNull() ?: usage()
@@ -171,6 +229,37 @@ fun main(args: Array<String>) {
             val out = File(f["out"] ?: "diagnostics.json")
             out.writeText(DiagnosticsExporter(api).export())
             println("wrote ${out.absolutePath}")
+        }
+        "playback" -> {
+            val queue = playbackQueue(f, runner(f).state())
+            if (queue.isEmpty()) {
+                println("no playable files in ${musicDir(f).path}")
+                exitProcess(1)
+            }
+            val config = AudioConfig(
+                gapless = f["gapless"]?.toBooleanStrictOrNull() ?: true,
+                replayGain = f["replaygain"]?.toBooleanStrictOrNull() ?: true,
+                replayGainGainDb = f["preamp"]?.toFloatOrNull() ?: 0f,
+                peakLimiter = false,
+                eqBands = emptyList(),
+                crossfadeMs = 0,
+            )
+            val engine = try {
+                MpvPlayerEngine(
+                    binary = f["mpv"] ?: System.getenv("GROOVESYNC_MPV").orEmpty().ifBlank { "mpv" },
+                    extraArguments = f["ao"]?.let { listOf("--ao=$it") }.orEmpty(),
+                )
+            } catch (error: MpvException) {
+                println("${error.message}; install mpv or pass --mpv")
+                exitProcess(1)
+            }
+            engine.use {
+                it.setConfig(config)
+                it.load(queue)
+                it.play()
+                println("playing ${queue.size} file(s)")
+                reportProgress(it, (f["timeout"]?.toLongOrNull() ?: 600L) * 1000L)
+            }
         }
         else -> usage()
     }
