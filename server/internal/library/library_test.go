@@ -113,3 +113,46 @@ VALUES (?, ?, ?, NULLIF(?, ''))
 		t.Fatalf("insert rendition %s: %v", path, err)
 	}
 }
+
+func TestListAndGetReturnReplayGain(t *testing.T) {
+	t.Parallel()
+
+	db := openLibraryDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-1", "One", "Artist", "Album", "", "")
+	if _, err := db.ExecContext(ctx, `
+UPDATE track SET replay_gain_track_db = -7.5, replay_gain_album_db = -6.25 WHERE canonical_id = 'track-1'
+`); err != nil {
+		t.Fatalf("update gain: %v", err)
+	}
+	seedTrack(t, db, "track-2", "Two", "Artist", "Album", "", "")
+
+	repo := Repo{DB: db}
+	tracks, err := repo.List(ctx, 10, 0)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	byID := map[string]Track{}
+	for _, track := range tracks {
+		byID[track.CanonicalID] = track
+	}
+	one := byID["track-1"]
+	if one.ReplayGainTrack == nil || *one.ReplayGainTrack != -7.5 {
+		t.Fatalf("track gain = %v, want -7.5", one.ReplayGainTrack)
+	}
+	if one.ReplayGainAlbum == nil || *one.ReplayGainAlbum != -6.25 {
+		t.Fatalf("album gain = %v, want -6.25", one.ReplayGainAlbum)
+	}
+	two := byID["track-2"]
+	if two.ReplayGainTrack != nil || two.ReplayGainAlbum != nil {
+		t.Fatalf("track-2 gain = %v/%v, want nil", two.ReplayGainTrack, two.ReplayGainAlbum)
+	}
+
+	got, err := repo.Get(ctx, "track-1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.ReplayGainTrack == nil || *got.ReplayGainTrack != -7.5 {
+		t.Fatalf("Get() track gain = %v, want -7.5", got.ReplayGainTrack)
+	}
+}

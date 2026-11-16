@@ -135,7 +135,8 @@ func (r Repo) List(ctx context.Context, limit, offset int) ([]Track, error) {
 	}
 
 	rows, err := r.DB.QueryContext(ctx, `
-SELECT canonical_id, mbid, isrc, title, artist, album, duration_ms
+SELECT canonical_id, mbid, isrc, title, artist, album, duration_ms,
+       replay_gain_track_db, replay_gain_album_db
 FROM track
 ORDER BY title COLLATE NOCASE ASC, canonical_id ASC
 LIMIT ? OFFSET ?
@@ -150,12 +151,15 @@ LIMIT ? OFFSET ?
 	for rows.Next() {
 		var track Track
 		var mbid, isrc, album sql.NullString
-		if err := rows.Scan(&track.CanonicalID, &mbid, &isrc, &track.Title, &track.Artist, &album, &track.DurationMs); err != nil {
+		var gainTrack, gainAlbum sql.NullFloat64
+		if err := rows.Scan(&track.CanonicalID, &mbid, &isrc, &track.Title, &track.Artist, &album, &track.DurationMs, &gainTrack, &gainAlbum); err != nil {
 			return nil, fmt.Errorf("library: scan track: %w", err)
 		}
 		track.MBID = mbid.String
 		track.ISRC = isrc.String
 		track.Album = album.String
+		track.ReplayGainTrack = gainPointer(gainTrack)
+		track.ReplayGainAlbum = gainPointer(gainAlbum)
 		track.Renditions = make([]Rendition, 0)
 		tracks = append(tracks, track)
 		ids = append(ids, track.CanonicalID)
@@ -189,11 +193,13 @@ func (r Repo) Get(ctx context.Context, canonicalID string) (Track, error) {
 	}
 	var track Track
 	var mbid, isrc, album sql.NullString
+	var gainTrack, gainAlbum sql.NullFloat64
 	err := r.DB.QueryRowContext(ctx, `
-SELECT canonical_id, mbid, isrc, title, artist, album, duration_ms
+SELECT canonical_id, mbid, isrc, title, artist, album, duration_ms,
+       replay_gain_track_db, replay_gain_album_db
 FROM track
 WHERE canonical_id = ?
-`, canonicalID).Scan(&track.CanonicalID, &mbid, &isrc, &track.Title, &track.Artist, &album, &track.DurationMs)
+`, canonicalID).Scan(&track.CanonicalID, &mbid, &isrc, &track.Title, &track.Artist, &album, &track.DurationMs, &gainTrack, &gainAlbum)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Track{}, ErrTrackNotFound
 	}
@@ -203,6 +209,8 @@ WHERE canonical_id = ?
 	track.MBID = mbid.String
 	track.ISRC = isrc.String
 	track.Album = album.String
+	track.ReplayGainTrack = gainPointer(gainTrack)
+	track.ReplayGainAlbum = gainPointer(gainAlbum)
 	track.Renditions = make([]Rendition, 0)
 	stored, err := r.renditions(ctx, []string{canonicalID})
 	if err != nil {
@@ -212,6 +220,14 @@ WHERE canonical_id = ?
 		track.Renditions = renditions
 	}
 	return track, nil
+}
+
+func gainPointer(value sql.NullFloat64) *float64 {
+	if !value.Valid {
+		return nil
+	}
+	gain := value.Float64
+	return &gain
 }
 
 // Count returns the number of mirrored tracks.

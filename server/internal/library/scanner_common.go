@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -76,16 +77,17 @@ func (s Scanner) Scan(ctx context.Context) (int, error) {
 		}
 
 		tags, _ := readTagLib(path)
-		if strings.HasPrefix(canonicalID, "upload-") && (tags.Title != "" || tags.Artist != "" || tags.Album != "" || tags.DurationMS > 0) {
+		if strings.HasPrefix(canonicalID, "upload-") && (tags.Title != "" || tags.Artist != "" || tags.Album != "" || tags.DurationMS > 0 || tags.ReplayGain != "") {
 			artist := splitScannedArtists(tags.Artist)
 			if _, err := s.DB.ExecContext(ctx, `
 UPDATE track
 SET title = COALESCE(NULLIF(?, ''), title),
     artist = COALESCE(NULLIF(?, ''), artist),
     album = COALESCE(NULLIF(?, ''), album),
-    duration_ms = CASE WHEN ? > 0 THEN ? ELSE duration_ms END
+    duration_ms = CASE WHEN ? > 0 THEN ? ELSE duration_ms END,
+    replay_gain_track_db = COALESCE(?, replay_gain_track_db)
 WHERE canonical_id = ?
-`, tags.Title, artist, tags.Album, tags.DurationMS, tags.DurationMS, canonicalID); err != nil {
+`, tags.Title, artist, tags.Album, tags.DurationMS, tags.DurationMS, parseReplayGainDb(tags.ReplayGain), canonicalID); err != nil {
 				return fmt.Errorf("library: update scanned track %s: %w", canonicalID, err)
 			}
 		}
@@ -96,6 +98,21 @@ WHERE canonical_id = ?
 		return scanned, err
 	}
 	return scanned, nil
+}
+
+// parseReplayGainDb reads the leading number from a tag such as "-7.50 dB".
+// Anything unparseable stays nil so the column keeps its NULL.
+func parseReplayGainDb(text string) *float64 {
+	fields := strings.Fields(strings.TrimSpace(text))
+	if len(fields) == 0 {
+		return nil
+	}
+	token := strings.TrimSuffix(strings.TrimSuffix(fields[0], "dB"), "db")
+	value, err := strconv.ParseFloat(token, 64)
+	if err != nil {
+		return nil
+	}
+	return &value
 }
 
 func splitScannedArtists(value string) string {
