@@ -22,6 +22,7 @@ class SyncRunner(
 ) {
     private val store = StateStore(stateFile)
     private val index = HashIndex(indexFile)
+    private val stateLock = Any()
 
     fun configure(
         serverUrls: List<String>,
@@ -30,20 +31,23 @@ class SyncRunner(
         syncMode: String,
         policy: PolicyDto,
     ) {
-        val current = store.load()
-        store.save(
-            current.copy(
-                serverUrls = serverUrls,
-                token = token,
-                deviceId = deviceId,
-                syncMode = syncMode,
-                policy = policy,
+        synchronized(stateLock) {
+            val current = store.load()
+            store.save(
+                current.copy(
+                    serverUrls = serverUrls,
+                    token = token,
+                    deviceId = deviceId,
+                    syncMode = syncMode,
+                    policy = policy,
+                )
             )
-        )
+        }
     }
 
     fun sync(onWiFi: Boolean = false): SyncReport {
         var state = store.load()
+        val attempted = state.outbox.map { it.id }.toSet()
         require(state.token.isNotBlank()) { "register the device first" }
         require(state.serverUrls.isNotEmpty()) { "no server urls configured" }
         val api = SyncdApi(state.serverUrls, state.token, state.deviceId)
@@ -84,9 +88,10 @@ class SyncRunner(
             }
         }
         state = state.copy(outbox = remaining)
+        val delivered = attempted - remaining.map { it.id }.toSet()
 
         if (state.syncMode == "off") {
-            store.save(state.copy(lastSync = Instant.now().toString()))
+            persistSync(state.copy(lastSync = Instant.now().toString()), delivered)
             return SyncReport(api.lastBaseUrl, pulled, pushed)
         }
 
@@ -156,7 +161,7 @@ class SyncRunner(
             holdings = holdings,
             lastSync = Instant.now().toString(),
         )
-        store.save(state)
+        persistSync(state, delivered)
         return SyncReport(
             baseUrl = api.lastBaseUrl,
             pulled = pulled,
@@ -181,7 +186,7 @@ class SyncRunner(
             HoldingDto(canonical[h] ?: provisionalId(h), h)
         }
         api.reportHoldings(state.deviceId, holdings)
-        store.save(
+        persistSync(
             state.copy(
                 canonicalByHash = canonical,
                 holdings = holdings,
@@ -191,32 +196,57 @@ class SyncRunner(
         return status
     }
 
-    fun enqueue(type: String, canonicalId: String, percentPlayed: Double = 0.0): EventDto {
-        val state = store.load()
-        require(state.deviceId.isNotBlank()) { "register the device first" }
-        val event = EventDto(
-            id = UUID.randomUUID().toString(),
-            deviceId = state.deviceId,
-            canonicalId = canonicalId,
-            source = "local",
-            type = type,
-            value = if (type == "like" || type == "pin") 1.0 else 0.0,
-            percentPlayed = percentPlayed,
-            hlc = HlcDto(Instant.now().toString(), 0, state.deviceId),
-        )
-        val liked = when (type) {
-            "like" -> state.liked + canonicalId
-            "unlike" -> state.liked - canonicalId
-            else -> state.liked
+    fun enqueue(type: String, canonicalId: String, percentPlayed: Double = 0.0): EventDto =
+        synchronized(stateLock) {
+            val state = store.load()
+            require(state.deviceId.isNotBlank()) { "register the device first" }
+            val event = EventDto(
+                id = UUID.randomUUID().toString(),
+                deviceId = state.deviceId,
+                canonicalId = canonicalId,
+                source = "local",
+                type = type,
+                value = if (type == "like" || type == "pin") 1.0 else 0.0,
+                percentPlayed = percentPlayed,
+                hlc = HlcDto(Instant.now().toString(), 0, state.deviceId),
+            )
+            val liked = when (type) {
+                "like" -> state.liked + canonicalId
+                "unlike" -> state.liked - canonicalId
+                else -> state.liked
+            }
+            val pinned = when (type) {
+                "pin" -> state.pinned + canonicalId
+                "unpin" -> state.pinned - canonicalId
+                else -> state.pinned
+            }
+            val recent = if (type == "play") state.recentlyPlayed + (canonicalId to Instant.now().toString()) else state.recentlyPlayed
+            store.save(state.copy(outbox = state.outbox + event, liked = liked, pinned = pinned, recentlyPlayed = recent))
+            event
         }
-        val pinned = when (type) {
-            "pin" -> state.pinned + canonicalId
-            "unpin" -> state.pinned - canonicalId
-            else -> state.pinned
+
+    /**
+     * A sync runs for a while, and a play reported meanwhile must survive its
+     * final write. Re-read the stored state and keep everything a concurrent
+     * enqueue or configure changed; the sync only owns the fields it computed.
+     */
+    private fun persistSync(computed: ClientState, delivered: Set<String> = emptySet()) {
+        synchronized(stateLock) {
+            val latest = store.load()
+            store.save(
+                computed.copy(
+                    serverUrls = latest.serverUrls,
+                    token = latest.token,
+                    deviceId = latest.deviceId,
+                    syncMode = latest.syncMode,
+                    policy = latest.policy,
+                    // Keep anything queued while the sync ran, and never bring
+                    // back an event the server already accepted.
+                    outbox = (computed.outbox + latest.outbox.filterNot { it.id in delivered })
+                        .distinctBy { it.id },
+                )
+            )
         }
-        val recent = if (type == "play") state.recentlyPlayed + (canonicalId to Instant.now().toString()) else state.recentlyPlayed
-        store.save(state.copy(outbox = state.outbox + event, liked = liked, pinned = pinned, recentlyPlayed = recent))
-        return event
     }
 
     fun state(): ClientState = store.load()

@@ -61,7 +61,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 import java.io.IOException
 
 private const val LIST_LIMIT = 50_000
@@ -282,9 +281,9 @@ fun OfflineScreen(deviceSync: DeviceSync, playback: PlaybackController) {
         }
     }
 
-    fun play(files: List<File>, index: Int = 0) {
+    fun play(tracks: List<LocalTrack>, index: Int = 0) {
         askForNotifications()
-        playback.play(files, index)
+        playback.play(tracks, index)
     }
 
     LaunchedEffect(Unit) {
@@ -358,14 +357,14 @@ fun OfflineScreen(deviceSync: DeviceSync, playback: PlaybackController) {
 
         if (tracks.isNotEmpty()) {
             Text("Downloaded files", style = MaterialTheme.typography.titleMedium)
-            Button(onClick = { play(tracks.map { it.file }) }) { Text("Play all") }
+            Button(onClick = { play(tracks) }) { Text("Play all") }
             tracks.forEach { track ->
                 Row(
                     Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(track.title, Modifier.weight(1f))
-                    TextButton(onClick = { play(listOf(track.file)) }) { Text("Play") }
+                    TextButton(onClick = { play(listOf(track)) }) { Text("Play") }
                 }
             }
         } else {

@@ -21,6 +21,9 @@ import java.io.File
  * the formats it supports; [setConfig] drives the ReplayGain audio processor
  * and ignores the EQ and crossfade fields until those stages exist.
  */
+/** A file to play, tagged with the canonical id when the file came from the mirror. */
+data class QueueEntry(val path: String, val mediaId: String = "")
+
 @androidx.annotation.OptIn(UnstableApi::class)
 class Media3PlayerEngine(context: Context) : PlayerEngine {
     private val replayGain = ReplayGainProcessor()
@@ -42,7 +45,7 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
         get() = exoPlayer
 
     override fun load(queue: List<String>) {
-        player.setMediaItems(queue.map(::mediaItem))
+        player.setMediaItems(queue.map { mediaItem(QueueEntry(it)) })
         player.prepare()
     }
 
@@ -62,10 +65,20 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
         replayGain.setGainDb(if (config.replayGain) config.replayGainGainDb else 0f)
     }
 
-    fun playFrom(queue: List<String>, index: Int) {
-        load(queue)
+    fun playFrom(queue: List<QueueEntry>, index: Int) {
+        player.setMediaItems(queue.map(::mediaItem))
+        player.prepare()
         player.seekTo(index.coerceIn(0, (queue.size - 1).coerceAtLeast(0)), 0)
         player.play()
+    }
+
+    /**
+     * The server id of the current item, or null for a side-loaded file that
+     * has no canonical track. Play reporting uses this as the event target.
+     */
+    fun currentCanonicalId(): String? {
+        val id = player.currentMediaItem?.mediaId ?: return null
+        return id.takeIf { it.isNotBlank() && !it.contains("://") && !it.startsWith("/") }
     }
 
     fun stop() {
@@ -94,15 +107,16 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
         player.release()
     }
 
-    private fun mediaItem(pathOrUri: String): MediaItem {
-        val uri = if (pathOrUri.contains("://")) {
-            Uri.parse(pathOrUri)
+    private fun mediaItem(entry: QueueEntry): MediaItem {
+        val uri = if (entry.path.contains("://")) {
+            Uri.parse(entry.path)
         } else {
-            Uri.fromFile(File(pathOrUri))
+            Uri.fromFile(File(entry.path))
         }
         val title = if (uri.scheme == "file") File(uri.path.orEmpty()).name else null
         return MediaItem.Builder()
             .setUri(uri)
+            .setMediaId(entry.mediaId.ifBlank { entry.path })
             .setMediaMetadata(
                 MediaMetadata.Builder()
                     .setTitle(title)

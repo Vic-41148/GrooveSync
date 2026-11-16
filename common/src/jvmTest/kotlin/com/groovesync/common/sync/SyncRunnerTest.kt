@@ -1,6 +1,8 @@
 package com.groovesync.common.sync
 
 import com.groovesync.common.syncd.ClientState
+import com.groovesync.common.syncd.EventDto
+import com.groovesync.common.syncd.HlcDto
 import com.groovesync.common.syncd.PolicyDto
 import com.sun.net.httpserver.HttpServer
 import java.io.File
@@ -8,6 +10,9 @@ import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -152,6 +157,86 @@ class SyncRunnerTest {
             assertTrue("external mode ignores deletes and evictions" in report.warnings)
             assertEquals(listOf("keep.mp3"), music.listFiles()!!.map { it.name })
         } finally {
+            server.stop(0)
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun keepsPlaysQueuedDuringASync() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        val holdingsReached = CountDownLatch(1)
+        val releaseHoldings = CountDownLatch(1)
+        var firstHoldings = true
+        val pushed = mutableListOf<String>()
+        server.createContext("/sync/v1/events") { exchange ->
+            if (exchange.requestMethod == "POST") {
+                val body = exchange.requestBody.readBytes().decodeToString()
+                pushed += Regex(""""id":"([^"]+)"""").findAll(body).map { it.groupValues[1] }
+                exchange.sendResponseHeaders(200, 0)
+            } else {
+                val body = """{"events":[],"next":"","has_more":false}""".toByteArray()
+                exchange.sendResponseHeaders(200, body.size.toLong())
+                exchange.responseBody.use { it.write(body) }
+            }
+            exchange.close()
+        }
+        server.createContext("/sync/v1/devices/dev/holdings") { exchange ->
+            if (firstHoldings) {
+                firstHoldings = false
+                holdingsReached.countDown()
+                releaseHoldings.await(5, TimeUnit.SECONDS)
+            }
+            exchange.requestBody.readBytes()
+            exchange.sendResponseHeaders(204, -1)
+            exchange.close()
+        }
+        server.createContext("/sync/v1/devices/dev/plan") { exchange ->
+            val body = """
+                {"device_id":"dev","downloads":[],"deletes":[],"evictions":[],
+                 "unchanged":0,"download_bytes":0,"warnings":[]}
+            """.trimIndent().toByteArray()
+            exchange.sendResponseHeaders(200, body.size.toLong())
+            exchange.responseBody.use { it.write(body) }
+        }
+        server.start()
+        val dir = Files.createTempDirectory("sync-runner").toFile()
+        try {
+            val stateFile = File(dir, "state.json")
+            val pending = EventDto(
+                id = "e1",
+                deviceId = "dev",
+                canonicalId = "track-1",
+                type = "like",
+                value = 1.0,
+                hlc = HlcDto(Instant.now().toString(), 0, "dev"),
+            )
+            StateStore(stateFile).save(
+                ClientState(
+                    deviceId = "dev",
+                    token = "token",
+                    serverUrls = listOf("http://127.0.0.1:${server.address.port}"),
+                    syncMode = "app",
+                    policy = PolicyDto(scope = "everything", networkRule = "any"),
+                    outbox = listOf(pending),
+                )
+            )
+            val runner = SyncRunner(stateFile, File(dir, "music").apply { mkdirs() })
+
+            val sync = thread { runner.sync() }
+            assertTrue(holdingsReached.await(5, TimeUnit.SECONDS), "sync never reached holdings")
+            val play = runner.enqueue("play", "track-2", 0.9)
+            releaseHoldings.countDown()
+            sync.join(10_000)
+            assertFalse(sync.isAlive, "sync did not finish")
+
+            val outbox = runner.state().outbox
+            assertEquals(listOf(play.id), outbox.map { it.id }, "the pushed event must not be re-queued")
+            assertEquals("play", outbox.single().type)
+            assertEquals(0.9, outbox.single().percentPlayed)
+            assertEquals(listOf("e1"), pushed)
+        } finally {
+            releaseHoldings.countDown()
             server.stop(0)
             dir.deleteRecursively()
         }

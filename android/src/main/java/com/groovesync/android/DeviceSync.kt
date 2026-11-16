@@ -5,6 +5,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Environment
+import com.groovesync.common.play.PlayDecision
 import com.groovesync.common.sync.SyncRunner
 import com.groovesync.common.syncd.PolicyDto
 import com.groovesync.common.syncd.SyncReport
@@ -15,7 +16,13 @@ import java.io.File
  * server id when the file is still in the state holdings, and the absolute path
  * otherwise so a side-loaded file remains playable.
  */
-data class LocalTrack(val canonicalId: String, val title: String, val file: File)
+data class LocalTrack(
+    val canonicalId: String,
+    val title: String,
+    val file: File,
+    /** False for a side-loaded file the server has never seen. */
+    val tracked: Boolean = false,
+)
 
 private val AUDIO_EXTENSIONS = setOf("flac", "mp3", "m4a", "aac", "opus", "ogg", "wav")
 private const val HASH_PREFIX = 8
@@ -73,10 +80,20 @@ class DeviceSync(context: Context, private val settings: Settings) {
                     canonicalId = holding?.canonicalId ?: file.absolutePath,
                     title = file.name.substringAfter('-', file.name).substringBeforeLast('.').ifBlank { file.name },
                     file = file,
+                    tracked = holding != null,
                 )
             }
             .sortedBy { it.title.lowercase() }
             .toList()
+    }
+
+    /**
+     * Queues a play or skip for the next sync. A side-loaded file and a device
+     * that has not registered yet both produce nothing.
+     */
+    fun reportPlay(decision: PlayDecision) {
+        if (!settings.isConfigured || decision.canonicalId.isBlank()) return
+        runCatching { runner.enqueue(decision.type, decision.canonicalId, decision.percentPlayed) }
     }
 
     fun togglePin(canonicalId: String): Set<String> {

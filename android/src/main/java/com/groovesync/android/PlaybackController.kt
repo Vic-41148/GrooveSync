@@ -10,7 +10,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.util.UnstableApi
 import com.groovesync.android.playback.Media3PlayerEngine
-import java.io.File
+import com.groovesync.android.playback.QueueEntry
 
 /**
  * Binds the UI to [PlaybackService]. Playback outlives a screen, so the
@@ -52,9 +52,12 @@ class PlaybackController(private val context: Context) {
         connected = false
     }
 
-    fun play(files: List<File>, index: Int = 0) {
+    fun play(tracks: List<LocalTrack>, index: Int = 0) {
         val target = engine ?: return
-        target.playFrom(files.map { it.absolutePath }, index)
+        target.playFrom(
+            tracks.map { QueueEntry(it.file.absolutePath, if (it.tracked) it.canonicalId else "") },
+            index,
+        )
     }
 
     fun toggle() {
