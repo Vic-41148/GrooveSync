@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -117,7 +118,7 @@ fun GrooveSyncApp(
                 composable(destination.name) {
                     when (destination) {
                         Destination.LIBRARY -> LibraryScreen(mirror, seed, api, deviceSync)
-                        Destination.SEARCH -> SearchScreen(mirror, deviceSync)
+                        Destination.SEARCH -> SearchScreen(mirror, deviceSync, api)
                         Destination.OFFLINE -> OfflineScreen(deviceSync, playback)
                         Destination.YOU -> PolicyScreen(settings, deviceSync)
                         Destination.HOME -> HomeScreen(mirror, deviceSync) { destination ->
@@ -148,6 +149,7 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
     var offline by remember { mutableStateOf(false) }
     var pinned by remember { mutableStateOf(deviceSync.pinned()) }
     var badges by remember { mutableStateOf<Map<String, OfflineBadge>>(emptyMap()) }
+    var whyTrack by remember { mutableStateOf<MirrorTrack?>(null) }
     val scope = rememberCoroutineScope()
     val changes = remember { Channel<Unit>(Channel.CONFLATED) }
 
@@ -227,7 +229,9 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
                     Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
+                    Column(
+                        Modifier.weight(1f).clickable { whyTrack = track },
+                    ) {
                         Text(track.title)
                         Text(track.artist)
                     }
@@ -248,6 +252,10 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
                 }
             }
         }
+    }
+
+    whyTrack?.let { track ->
+        WhySheet(api, track) { whyTrack = null }
     }
 }
 

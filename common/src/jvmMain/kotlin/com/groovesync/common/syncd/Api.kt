@@ -53,6 +53,9 @@ class SyncdApi(
 
     private fun jsonBody(body: String): ByteArray = body.toByteArray(Charsets.UTF_8)
 
+    private fun encode(value: String): String =
+        URLEncoder.encode(value, "UTF-8").replace("+", "%20")
+
     private fun requireOk(response: HttpResponse, what: String): HttpResponse {
         if (response.status !in 200..299) {
             throw ApiException(response.status, "$what failed: ${response.status} ${response.text().take(300)}")
@@ -81,6 +84,11 @@ class SyncdApi(
     }
 
     fun meta(): String = requireOk(call("GET", "/sync/v1/meta"), "meta").text()
+
+    fun metaInfo(): MetaDto {
+        val response = requireOk(call("GET", "/sync/v1/meta"), "meta")
+        return json.decodeFromString(MetaDto.serializer(), response.text())
+    }
 
     fun library(limit: Int = 500, offset: Int = 0): LibraryResponse {
         val response = requireOk(call("GET", "/sync/v1/library?limit=$limit&offset=$offset"), "library")
@@ -203,6 +211,38 @@ class SyncdApi(
 
     fun review(limit: Int = 100, offset: Int = 0): String =
         requireOk(call("GET", "/sync/v1/review?limit=$limit&offset=$offset"), "review").text()
+
+    fun reviewQueue(limit: Int = 100, offset: Int = 0): List<ReviewItemDto> {
+        val response = requireOk(call("GET", "/sync/v1/review?limit=$limit&offset=$offset"), "review")
+        return json.decodeFromString(ReviewResponse.serializer(), response.text()).items
+    }
+
+    fun resolveReview(id: Long) {
+        requireOk(call("POST", "/sync/v1/review/$id/resolve"), "review resolve")
+    }
+
+    fun deleteReview(id: Long) {
+        requireOk(call("DELETE", "/sync/v1/review/$id"), "review delete")
+    }
+
+    fun why(canonicalId: String): WhyDto {
+        val response = requireOk(call("GET", "/sync/v1/why/${encode(canonicalId)}"), "why")
+        return json.decodeFromString(WhyDto.serializer(), response.text())
+    }
+
+    fun setOverride(canonicalId: String, level: String) {
+        val response = call(
+            "PUT",
+            "/sync/v1/why/${encode(canonicalId)}/override",
+            mapOf("Content-Type" to "application/json"),
+            jsonBody("""{"value":"$level"}"""),
+        )
+        requireOk(response, "override")
+    }
+
+    fun deleteOverride(canonicalId: String) {
+        requireOk(call("DELETE", "/sync/v1/why/${encode(canonicalId)}/override"), "override")
+    }
 
     fun health(): String = requireOk(call("GET", "/sync/v1/health"), "health").text()
 

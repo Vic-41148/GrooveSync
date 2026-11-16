@@ -50,6 +50,7 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
     var report by remember { mutableStateOf<SyncReport?>(null) }
     var mode by remember { mutableStateOf(settings.syncMode) }
     val coroutine = rememberCoroutineScope()
+    val api = remember { settings.api() }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -138,6 +139,7 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
             result.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
         Text("Files: ${deviceSync.musicDir.path}", style = MaterialTheme.typography.bodySmall)
+        ReviewSection(api)
     }
 }
 

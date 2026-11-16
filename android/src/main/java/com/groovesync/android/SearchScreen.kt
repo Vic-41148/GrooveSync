@@ -1,5 +1,6 @@
 package com.groovesync.android
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -26,6 +27,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.groovesync.common.mirror.MirrorTrack
+import com.groovesync.common.syncd.SyncdApi
 import com.groovesync.common.ui.OfflineBadge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -41,12 +43,13 @@ private const val SEARCH_DEBOUNCE_MS = 250L
  * 50k-track table.
  */
 @Composable
-fun SearchScreen(mirror: Mirror, deviceSync: DeviceSync) {
+fun SearchScreen(mirror: Mirror, deviceSync: DeviceSync, api: SyncdApi?) {
     var query by rememberSaveable { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var pinned by remember { mutableStateOf(deviceSync.pinned()) }
     var badges by remember { mutableStateOf<Map<String, OfflineBadge>>(emptyMap()) }
+    var whyTrack by remember { mutableStateOf<MirrorTrack?>(null) }
     val scope = rememberCoroutineScope()
     val term = query.trim()
 
@@ -87,6 +90,7 @@ fun SearchScreen(mirror: Mirror, deviceSync: DeviceSync) {
                     track = track,
                     badge = badges[track.canonicalId] ?: OfflineBadge.ONLINE_ONLY,
                     pinned = track.canonicalId in pinned,
+                    onOpen = { whyTrack = track },
                     onTogglePin = {
                         scope.launch {
                             pinned = withContext(Dispatchers.IO) {
@@ -99,6 +103,10 @@ fun SearchScreen(mirror: Mirror, deviceSync: DeviceSync) {
                 HorizontalDivider()
             }
         }
+    }
+
+    whyTrack?.let { track ->
+        WhySheet(api, track) { whyTrack = null }
     }
 }
 
@@ -116,6 +124,7 @@ private fun SearchResult(
     track: MirrorTrack,
     badge: OfflineBadge,
     pinned: Boolean,
+    onOpen: () -> Unit,
     onTogglePin: () -> Unit,
 ) {
     Row(
@@ -123,7 +132,10 @@ private fun SearchResult(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Column(
+            Modifier.weight(1f).clickable(onClick = onOpen),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
             Text(track.title, style = MaterialTheme.typography.bodyLarge)
             Text(
                 listOf(track.artist, track.album).filter { it.isNotBlank() }.joinToString(", "),

@@ -162,3 +162,48 @@ data class SyncReport(
     val holdings: Int = 0,
     val warnings: List<String> = emptyList(),
 )
+
+/** The handshake payload. A client trusts nothing else until this parses. */
+@Serializable
+data class MetaDto(
+    @SerialName("server_version") val serverVersion: String = "",
+    val proto: Int = 0,
+    @SerialName("proto_min") val protoMin: Int = 0,
+    val schema: Long = 0,
+    val features: List<String> = emptyList(),
+    @SerialName("releases_url") val releasesUrl: String = "",
+    @SerialName("review_queue") val reviewQueue: Boolean = false,
+)
+
+@Serializable
+data class WhyContributionDto(val name: String = "", val value: Double = 0.0)
+
+@Serializable
+data class WhyDto(
+    val track: String = "",
+    @SerialName("as_of") val asOf: String = "",
+    val score: Double = 0.0,
+    @SerialName("derived_score") val derivedScore: Double = 0.0,
+    val contributions: List<WhyContributionDto> = emptyList(),
+    @SerialName("manual_override") val manualOverride: String? = null,
+)
+
+/** Go encodes the field names as written, capitals included. */
+@Serializable
+data class ReviewItemDto(
+    @SerialName("ID") val id: Long = 0,
+    @SerialName("CanonicalID") val canonicalId: String = "",
+    @SerialName("Provider") val provider: String = "",
+    @SerialName("ServiceID") val serviceId: String = "",
+    @SerialName("Reason") val reason: String = "",
+    @SerialName("Method") val method: String = "",
+    @SerialName("Confidence") val confidence: Double = 0.0,
+    @SerialName("CreatedAt") val createdAt: String = "",
+)
+
+@Serializable
+data class ReviewResponse(
+    val items: List<ReviewItemDto> = emptyList(),
+    val limit: Int = 0,
+    val offset: Int = 0,
+)
