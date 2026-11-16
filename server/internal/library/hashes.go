@@ -35,6 +35,8 @@ type HashBackfill struct {
 	// checking a file is stable before hashing. If zero, a sensible default
 	// is used to preserve existing behaviour.
 	StabilityInterval time.Duration
+	// stat replaces os.Stat only when a test needs to drive unstable metadata.
+	stat func(string) (os.FileInfo, error)
 }
 
 // Run hashes at most limit renditions that have no digest yet.
@@ -112,6 +114,13 @@ func resolvePath(root, path string) string {
 	return filepath.Join(root, path)
 }
 
+func (h HashBackfill) statFile(path string) (os.FileInfo, error) {
+	if h.stat != nil {
+		return h.stat(path)
+	}
+	return os.Stat(path)
+}
+
 func (h HashBackfill) hashFile(path string) (string, error) {
 	if path == "" {
 		return "", os.ErrNotExist
@@ -131,12 +140,12 @@ func (h HashBackfill) hashFile(path string) (string, error) {
 		// Pre-check: stat, wait stability interval, stat again. This
 		// reduces the chance we start hashing while another process is
 		// writing the file.
-		info1, err := os.Stat(path)
+		info1, err := h.statFile(path)
 		if err != nil {
 			return "", err
 		}
 		time.Sleep(stability)
-		info2, err := os.Stat(path)
+		info2, err := h.statFile(path)
 		if err != nil {
 			return "", err
 		}
@@ -166,7 +175,7 @@ func (h HashBackfill) hashFile(path string) (string, error) {
 		}
 		file.Close()
 
-		infoAfter, err := os.Stat(path)
+		infoAfter, err := h.statFile(path)
 		if err != nil {
 			return "", err
 		}

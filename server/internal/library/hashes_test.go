@@ -103,6 +103,13 @@ func TestHashFileStabilityWindow(t *testing.T) {
 	}
 }
 
+type varyingInfo struct {
+	os.FileInfo
+	size int64
+}
+
+func (v varyingInfo) Size() int64 { return v.size }
+
 func TestHashFileFailsWhenNeverStable(t *testing.T) {
 	t.Parallel()
 
@@ -112,29 +119,22 @@ func TestHashFileFailsWhenNeverStable(t *testing.T) {
 		t.Fatalf("write initial: %v", err)
 	}
 
-	// Rewrite the file from a tight loop so no stability window can close.
-	// A sleeping writer races the scheduler and occasionally finishes before
-	// hashFile starts, which made this test flaky.
-	stop := make(chan struct{})
-	finished := make(chan struct{})
-	contents := [][]byte{[]byte("a"), []byte("ab")}
-	go func() {
-		defer close(finished)
-		for i := 0; ; i++ {
-			select {
-			case <-stop:
-				return
-			default:
+	// Every stat reports a different size, so no stability window closes. A
+	// real writer races the scheduler and occasionally looks stable.
+	calls := 0
+	hb := HashBackfill{
+		Root:              root,
+		StabilityInterval: time.Millisecond,
+		stat: func(string) (os.FileInfo, error) {
+			calls++
+			info, err := os.Stat(path)
+			if err != nil {
+				return nil, err
 			}
-			_ = os.WriteFile(path, contents[i%2], 0o644)
-		}
-	}()
-
-	hb := HashBackfill{Root: root, StabilityInterval: 50 * time.Millisecond}
-	_, err := hb.hashFile(path)
-	close(stop)
-	<-finished
-	if err == nil {
+			return varyingInfo{FileInfo: info, size: int64(calls)}, nil
+		},
+	}
+	if _, err := hb.hashFile(path); err == nil {
 		t.Fatal("hashFile succeeded despite continuous changes, want failure")
 	}
 }
