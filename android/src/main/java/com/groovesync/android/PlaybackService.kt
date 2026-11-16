@@ -51,9 +51,14 @@ class PlaybackService : MediaLibraryService() {
     override fun onCreate() {
         super.onCreate()
         engine = Media3PlayerEngine(this)
-        session = MediaLibrarySession.Builder(this, engine.player, library)
+        val created = MediaLibrarySession.Builder(this, engine.player, library)
             .setId(SESSION_ID)
             .build()
+        session = created
+        // The session is created here rather than through the stub, so the
+        // service has to register it to own the notification and foreground
+        // promotion that keep playback alive off screen.
+        addSession(created)
         instance = engine
     }
 
@@ -61,7 +66,10 @@ class PlaybackService : MediaLibraryService() {
 
     override fun onDestroy() {
         instance = null
-        session?.release()
+        session?.let { created ->
+            removeSession(created)
+            created.release()
+        }
         session = null
         engine.release()
         super.onDestroy()
