@@ -1,0 +1,1 @@
+ALTER TABLE track ADD COLUMN replay_gain_db REAL;
