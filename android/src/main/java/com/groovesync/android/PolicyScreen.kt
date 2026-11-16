@@ -139,6 +139,7 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
             result.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
         Text("Files: ${deviceSync.musicDir.path}", style = MaterialTheme.typography.bodySmall)
+        ServerCapabilities(api)
         ReviewSection(api)
     }
 }
