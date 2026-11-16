@@ -137,6 +137,14 @@ The desktop client lives in `desktop/` and is built with Gradle.
 ./gradlew :desktop:build :desktop:test
 ```
 
+Register once against the syncd server. The admin token comes from
+`--admin-env VAR` or `--admin TOKEN`, and the server returns a device token that
+the client stores in `DIR/state.json`:
+
+```sh
+./gradlew :desktop:run --args="register --server URL --admin-env SYNCD_ADMIN_TOKEN --id desktop --name desktop --data DIR"
+```
+
 Run the CLI from Gradle or from a distribution:
 
 ```sh
@@ -154,6 +162,20 @@ work without a network round trip:
 ./gradlew :desktop:run --args="local --data DIR --limit 20"
 ./gradlew :desktop:run --args="local --data DIR --search tribe"
 ```
+
+Playback goes through mpv. Install mpv on PATH, or pass `--mpv PATH`; the client
+drives it over the JSON IPC socket, so the decoder stays out of the JVM and the
+GPL boundary stays at the socket. This is Linux only because the transport is an
+AF_UNIX socket.
+
+```sh
+./gradlew :desktop:run --args="playback --data DIR --all"
+./gradlew :desktop:run --args="playback --data DIR --tracks ID,ID --replaygain true"
+```
+
+Gapless playback and track ReplayGain are on by default; `--gapless false`,
+`--replaygain false` and `--preamp DB` change that. `--ao NAME` forwards an audio
+output to mpv, which is how the tests render to a file.
 
 `./gradlew :desktop:mirrorBenchmark` reports insert and page latency for a
 50k-track fixture. `./gradlew :benchmark:connectedBenchmarkAndroidTest` runs
