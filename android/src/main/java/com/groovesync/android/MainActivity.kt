@@ -10,6 +10,6 @@ class MainActivity : ComponentActivity() {
         val app = application as GrooveSyncApplication
         val seed = BuildConfig.ALLOW_SEED && intent?.getBooleanExtra("seed_mirror", false) == true
         val start = intent?.getStringExtra("start_route")
-        setContent { GrooveSyncApp(app.mirror, app.settings, app.deviceSync, seed, start) }
+        setContent { GrooveSyncApp(app.mirror, app.settings, app.deviceSync, app.playback, seed, start) }
     }
 }

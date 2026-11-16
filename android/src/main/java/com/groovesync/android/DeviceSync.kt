@@ -11,6 +11,16 @@ import com.groovesync.common.syncd.SyncReport
 import java.io.File
 
 /**
+ * A downloaded file that can be handed to the player. The canonical id is the
+ * server id when the file is still in the state holdings, and the absolute path
+ * otherwise so a side-loaded file remains playable.
+ */
+data class LocalTrack(val canonicalId: String, val title: String, val file: File)
+
+private val AUDIO_EXTENSIONS = setOf("flac", "mp3", "m4a", "aac", "opus", "ogg", "wav")
+private const val HASH_PREFIX = 8
+
+/**
  * Wires the shared sync runner to Android credentials and storage. The state
  * and hash index stay in internal storage, never in the music folder.
  */
@@ -50,6 +60,24 @@ class DeviceSync(context: Context, private val settings: Settings) {
     fun syncMode(): String = settings.syncMode
 
     fun lastSync(): String = if (settings.isConfigured) runner.state().lastSync else ""
+
+    fun localTracks(): List<LocalTrack> {
+        if (!musicDir.exists()) return emptyList()
+        val holdings = runner.state().holdings.associateBy { it.hash.take(8) }
+        return musicDir.walkTopDown()
+            .filter { it.isFile && it.extension.lowercase() in AUDIO_EXTENSIONS }
+            .map { file ->
+                val prefix = file.name.substringBefore('-')
+                val holding = if (prefix.length == HASH_PREFIX) holdings[prefix] else null
+                LocalTrack(
+                    canonicalId = holding?.canonicalId ?: file.absolutePath,
+                    title = file.name.substringAfter('-', file.name).substringBeforeLast('.').ifBlank { file.name },
+                    file = file,
+                )
+            }
+            .sortedBy { it.title.lowercase() }
+            .toList()
+    }
 
     fun togglePin(canonicalId: String): Set<String> {
         val configured = configuredRunner()

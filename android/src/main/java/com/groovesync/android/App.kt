@@ -1,5 +1,10 @@
 package com.groovesync.android
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -8,6 +13,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.CheckCircle
@@ -15,6 +22,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -33,7 +41,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -51,6 +61,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.IOException
 
 private const val LIST_LIMIT = 50_000
@@ -62,6 +73,7 @@ fun GrooveSyncApp(
     mirror: Mirror,
     settings: Settings,
     deviceSync: DeviceSync,
+    playback: PlaybackController,
     seed: Boolean,
     startRoute: String? = null,
 ) {
@@ -106,7 +118,7 @@ fun GrooveSyncApp(
                     when (destination) {
                         Destination.LIBRARY -> LibraryScreen(mirror, seed, api, deviceSync)
                         Destination.SEARCH -> SearchScreen(mirror, deviceSync)
-                        Destination.OFFLINE -> OfflineScreen(deviceSync)
+                        Destination.OFFLINE -> OfflineScreen(deviceSync, playback)
                         Destination.YOU -> PolicyScreen(settings, deviceSync)
                         Destination.HOME -> HomeScreen(mirror, deviceSync) { destination ->
                             navController.navigate(destination.name) { launchSingleTop = true }
@@ -248,14 +260,46 @@ private suspend fun refreshLibrary(mirror: Mirror, api: SyncdApi): Boolean =
     }
 
 @Composable
-fun OfflineScreen(deviceSync: DeviceSync) {
+fun OfflineScreen(deviceSync: DeviceSync, playback: PlaybackController) {
     var busy by remember { mutableStateOf(false) }
     var report by remember { mutableStateOf<SyncReport?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
+    var tracks by remember { mutableStateOf<List<LocalTrack>>(emptyList()) }
+    var nowPlaying by remember { mutableStateOf<String?>(null) }
+    var playing by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val notificationPermission = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { }
+
+    fun askForNotifications() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    fun play(files: List<File>, index: Int = 0) {
+        askForNotifications()
+        playback.play(files, index)
+    }
+
+    LaunchedEffect(Unit) {
+        tracks = withContext(Dispatchers.IO) { deviceSync.localTracks() }
+    }
+    LaunchedEffect(playback.connected) {
+        while (playback.connected) {
+            nowPlaying = playback.engine?.currentTitle()
+            playing = playback.engine?.isPlaying() == true
+            delay(500)
+        }
+    }
 
     Column(
-        Modifier.fillMaxSize().padding(16.dp),
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Offline music", style = MaterialTheme.typography.headlineSmall)
@@ -272,6 +316,7 @@ fun OfflineScreen(deviceSync: DeviceSync) {
                     failure = null
                     try {
                         report = withContext(Dispatchers.IO) { deviceSync.sync() }
+                        tracks = withContext(Dispatchers.IO) { deviceSync.localTracks() }
                     } catch (error: Exception) {
                         failure = error.message ?: "sync failed"
                     } finally {
@@ -289,6 +334,47 @@ fun OfflineScreen(deviceSync: DeviceSync) {
             Text("${result.holdings} files on this device")
             result.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
+
+        if (nowPlaying != null) {
+            Card(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(nowPlaying.orEmpty())
+                        Text(
+                            if (playing) "Playing" else "Paused",
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    TextButton(onClick = { playback.toggle() }) {
+                        Text(if (playing) "Pause" else "Resume")
+                    }
+                    TextButton(onClick = { playback.stop() }) { Text("Stop") }
+                }
+            }
+        }
+
+        if (tracks.isNotEmpty()) {
+            Text("Downloaded files", style = MaterialTheme.typography.titleMedium)
+            Button(onClick = { play(tracks.map { it.file }) }) { Text("Play all") }
+            tracks.forEach { track ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(track.title, Modifier.weight(1f))
+                    TextButton(onClick = { play(listOf(track.file)) }) { Text("Play") }
+                }
+            }
+        } else {
+            Text(
+                "No downloaded files yet. Set a scope and sync to fill this list.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        }
+
         Text(
             "Files: ${deviceSync.musicDir.path}",
             style = MaterialTheme.typography.bodySmall,
