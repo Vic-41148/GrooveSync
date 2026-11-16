@@ -9,6 +9,8 @@ import com.groovesync.common.play.PlayDecision
 import com.groovesync.common.sync.SyncRunner
 import com.groovesync.common.syncd.PolicyDto
 import com.groovesync.common.syncd.SyncReport
+import com.groovesync.common.ui.OfflineBadge
+import com.groovesync.common.ui.OfflineBadges
 import java.io.File
 
 /**
@@ -94,6 +96,25 @@ class DeviceSync(context: Context, private val settings: Settings) {
     fun reportPlay(decision: PlayDecision) {
         if (!settings.isConfigured || decision.canonicalId.isBlank()) return
         runCatching { runner.enqueue(decision.type, decision.canonicalId, decision.percentPlayed) }
+    }
+
+    /**
+     * A badge per track the device knows about. A pin with no file yet counts
+     * as queued unless sync is off, because nothing will fetch it then.
+     */
+    fun offlineBadges(): Map<String, OfflineBadge> {
+        if (!settings.isConfigured) return emptyMap()
+        val state = runner.state()
+        val held = state.holdings.map { it.canonicalId }.toSet()
+        val wanted = state.pinned
+        return (held + wanted).associateWith { id ->
+            val onDisk = id in held
+            OfflineBadges.of(
+                held = onDisk,
+                pinned = id in wanted,
+                queued = id in wanted && !onDisk && settings.syncMode != "off",
+            )
+        }
     }
 
     fun togglePin(canonicalId: String): Set<String> {

@@ -26,6 +26,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.groovesync.common.mirror.MirrorTrack
+import com.groovesync.common.ui.OfflineBadge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -45,6 +46,7 @@ fun SearchScreen(mirror: Mirror, deviceSync: DeviceSync) {
     var results by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var pinned by remember { mutableStateOf(deviceSync.pinned()) }
+    var badges by remember { mutableStateOf<Map<String, OfflineBadge>>(emptyMap()) }
     val scope = rememberCoroutineScope()
     val term = query.trim()
 
@@ -57,6 +59,7 @@ fun SearchScreen(mirror: Mirror, deviceSync: DeviceSync) {
         searching = true
         delay(SEARCH_DEBOUNCE_MS)
         results = withContext(Dispatchers.IO) { mirror.library.search(term, SEARCH_LIMIT) }
+        badges = withContext(Dispatchers.IO) { deviceSync.offlineBadges() }
         searching = false
     }
 
@@ -82,12 +85,14 @@ fun SearchScreen(mirror: Mirror, deviceSync: DeviceSync) {
             items(results, key = { it.canonicalId }) { track ->
                 SearchResult(
                     track = track,
+                    badge = badges[track.canonicalId] ?: OfflineBadge.ONLINE_ONLY,
                     pinned = track.canonicalId in pinned,
                     onTogglePin = {
                         scope.launch {
                             pinned = withContext(Dispatchers.IO) {
                                 deviceSync.togglePin(track.canonicalId)
                             }
+                            badges = withContext(Dispatchers.IO) { deviceSync.offlineBadges() }
                         }
                     },
                 )
@@ -107,7 +112,12 @@ private fun Hint(text: String) {
 }
 
 @Composable
-private fun SearchResult(track: MirrorTrack, pinned: Boolean, onTogglePin: () -> Unit) {
+private fun SearchResult(
+    track: MirrorTrack,
+    badge: OfflineBadge,
+    pinned: Boolean,
+    onTogglePin: () -> Unit,
+) {
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -120,6 +130,7 @@ private fun SearchResult(track: MirrorTrack, pinned: Boolean, onTogglePin: () ->
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        OfflineBadgeLabel(badge)
         if (track.durationMs > 0) {
             Text(formatDuration(track.durationMs), style = MaterialTheme.typography.bodySmall)
         }

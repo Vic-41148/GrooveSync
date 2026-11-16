@@ -54,6 +54,7 @@ import com.groovesync.common.syncd.SseException
 import com.groovesync.common.syncd.SyncReport
 import com.groovesync.common.syncd.SyncdApi
 import com.groovesync.common.ui.Destination
+import com.groovesync.common.ui.OfflineBadge
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.Channel
@@ -146,6 +147,7 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
     var reload by remember { mutableStateOf(0) }
     var offline by remember { mutableStateOf(false) }
     var pinned by remember { mutableStateOf(deviceSync.pinned()) }
+    var badges by remember { mutableStateOf<Map<String, OfflineBadge>>(emptyMap()) }
     val scope = rememberCoroutineScope()
     val changes = remember { Channel<Unit>(Channel.CONFLATED) }
 
@@ -202,6 +204,7 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
                 mirror.library.search(query, SEARCH_LIMIT)
             }
         }
+        badges = withContext(Dispatchers.IO) { deviceSync.offlineBadges() }
         loading = false
     }
 
@@ -228,6 +231,7 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
                         Text(track.title)
                         Text(track.artist)
                     }
+                    OfflineBadgeLabel(badges[track.canonicalId] ?: OfflineBadge.ONLINE_ONLY)
                     val isPinned = track.canonicalId in pinned
                     TextButton(
                         onClick = {
@@ -235,6 +239,7 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
                                 pinned = withContext(Dispatchers.IO) {
                                     deviceSync.togglePin(track.canonicalId)
                                 }
+                                badges = withContext(Dispatchers.IO) { deviceSync.offlineBadges() }
                             }
                         },
                     ) {
