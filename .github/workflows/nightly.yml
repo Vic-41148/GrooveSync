@@ -21,11 +21,16 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Test
+        env:
+          CGO_ENABLED: '0'
         run: go test ./...
       - name: Property tests
+        env:
+          CGO_ENABLED: '0'
         run: go test ./server/internal/identity ./server/internal/taste -run 'Property|Properties' -count=1 -rapid.checks=10000
       - name: Simulation
         env:
+          CGO_ENABLED: '0'
           SIMULATION_SEEDS: '10000'
         run: go test ./server/internal/simulation -count=1
 
