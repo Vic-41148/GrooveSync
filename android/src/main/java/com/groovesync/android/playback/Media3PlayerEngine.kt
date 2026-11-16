@@ -2,6 +2,7 @@ package com.groovesync.android.playback
 
 import android.content.Context
 import android.net.Uri
+import android.os.Bundle
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -14,6 +15,7 @@ import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
 import com.groovesync.common.audio.AudioConfig
 import com.groovesync.common.audio.PlayerEngine
+import com.groovesync.common.audio.ReplayGain
 import java.io.File
 
 /**
@@ -22,11 +24,20 @@ import java.io.File
  * and ignores the EQ and crossfade fields until those stages exist.
  */
 /** A file to play, tagged with the canonical id when the file came from the mirror. */
-data class QueueEntry(val path: String, val mediaId: String = "")
+data class QueueEntry(
+    val path: String,
+    val mediaId: String = "",
+    /** Per-track ReplayGain in dB, null when the file carries no tag. */
+    val gainDb: Float? = null,
+)
+
+private const val GAIN_DB_KEY = "com.groovesync.gainDb"
 
 @androidx.annotation.OptIn(UnstableApi::class)
 class Media3PlayerEngine(context: Context) : PlayerEngine {
     private val replayGain = ReplayGainProcessor()
+    private var replayGainEnabled = true
+    private var fallbackGainDb = 0f
 
     private val exoPlayer: ExoPlayer =
         ExoPlayer.Builder(context, GainRenderersFactory(context, replayGain))
@@ -40,6 +51,14 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
             .setHandleAudioBecomingNoisy(true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
+
+    init {
+        player.addListener(object : Player.Listener {
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                applyGain(mediaItem)
+            }
+        })
+    }
 
     val player: Player
         get() = exoPlayer
@@ -62,13 +81,16 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
     }
 
     override fun setConfig(config: AudioConfig) {
-        replayGain.setGainDb(if (config.replayGain) config.replayGainGainDb else 0f)
+        replayGainEnabled = config.replayGain
+        fallbackGainDb = config.replayGainGainDb
+        applyGain(player.currentMediaItem)
     }
 
     fun playFrom(queue: List<QueueEntry>, index: Int) {
         player.setMediaItems(queue.map(::mediaItem))
         player.prepare()
         player.seekTo(index.coerceIn(0, (queue.size - 1).coerceAtLeast(0)), 0)
+        applyGain(player.currentMediaItem)
         player.play()
     }
 
@@ -114,15 +136,33 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
             Uri.fromFile(File(entry.path))
         }
         val title = if (uri.scheme == "file") File(uri.path.orEmpty()).name else null
+        val metadata = MediaMetadata.Builder().setTitle(title)
+        entry.gainDb?.let { gain ->
+            metadata.setExtras(Bundle().apply { putFloat(GAIN_DB_KEY, gain) })
+        }
         return MediaItem.Builder()
             .setUri(uri)
             .setMediaId(entry.mediaId.ifBlank { entry.path })
-            .setMediaMetadata(
-                MediaMetadata.Builder()
-                    .setTitle(title)
-                    .build(),
-            )
+            .setMediaMetadata(metadata.build())
             .build()
+    }
+
+    /**
+     * The item's own tag wins over the configured value. Buffers already
+     * decoded keep the old gain, so a change lands at the next decode, not
+     * exactly on the gapless boundary.
+     */
+    private fun applyGain(mediaItem: MediaItem?) {
+        val gainDb = if (replayGainEnabled) {
+            val tagged = mediaItem?.mediaMetadata?.extras
+                ?.takeIf { it.containsKey(GAIN_DB_KEY) }
+                ?.getFloat(GAIN_DB_KEY)
+                ?.toDouble()
+            ReplayGain.gainDb(tagged, fallbackGainDb)
+        } else {
+            0f
+        }
+        replayGain.setGainDb(gainDb)
     }
 }
 

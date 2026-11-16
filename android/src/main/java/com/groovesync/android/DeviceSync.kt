@@ -24,6 +24,8 @@ data class LocalTrack(
     val file: File,
     /** False for a side-loaded file the server has never seen. */
     val tracked: Boolean = false,
+    /** Per-track ReplayGain from the mirror, null when the file has no tag. */
+    val replayGainDb: Double? = null,
 )
 
 private val AUDIO_EXTENSIONS = setOf("flac", "mp3", "m4a", "aac", "opus", "ogg", "wav")
@@ -32,8 +34,14 @@ private const val HASH_PREFIX = 8
 /**
  * Wires the shared sync runner to Android credentials and storage. The state
  * and hash index stay in internal storage, never in the music folder.
+ * [gainLookup] reads per-track ReplayGain from the mirror; it stays a function
+ * so this class does not open a second database driver.
  */
-class DeviceSync(context: Context, private val settings: Settings) {
+class DeviceSync(
+    context: Context,
+    private val settings: Settings,
+    private val gainLookup: (String) -> Double? = { null },
+) {
     private val context = context.applicationContext
 
     val musicDir: File = context.getExternalFilesDir(Environment.DIRECTORY_MUSIC)
@@ -78,11 +86,13 @@ class DeviceSync(context: Context, private val settings: Settings) {
             .map { file ->
                 val prefix = file.name.substringBefore('-')
                 val holding = if (prefix.length == HASH_PREFIX) holdings[prefix] else null
+                val canonicalId = holding?.canonicalId ?: file.absolutePath
                 LocalTrack(
-                    canonicalId = holding?.canonicalId ?: file.absolutePath,
+                    canonicalId = canonicalId,
                     title = file.name.substringAfter('-', file.name).substringBeforeLast('.').ifBlank { file.name },
                     file = file,
                     tracked = holding != null,
+                    replayGainDb = if (holding != null) runCatching { gainLookup(canonicalId) }.getOrNull() else null,
                 )
             }
             .sortedBy { it.title.lowercase() }

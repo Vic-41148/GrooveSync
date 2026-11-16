@@ -9,7 +9,7 @@ import java.util.concurrent.TimeUnit
 class GrooveSyncApplication : Application() {
     val mirror: Mirror by lazy { Mirror(this) }
     val settings: Settings by lazy { Settings(this) }
-    val deviceSync: DeviceSync by lazy { DeviceSync(this, settings) }
+    val deviceSync: DeviceSync by lazy { DeviceSync(this, settings) { mirror.library.gain(it) } }
     val playback: PlaybackController by lazy { PlaybackController(this) }
 
     override fun onCreate() {

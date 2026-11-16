@@ -55,7 +55,13 @@ class PlaybackController(private val context: Context) {
     fun play(tracks: List<LocalTrack>, index: Int = 0) {
         val target = engine ?: return
         target.playFrom(
-            tracks.map { QueueEntry(it.file.absolutePath, if (it.tracked) it.canonicalId else "") },
+            tracks.map {
+                QueueEntry(
+                    path = it.file.absolutePath,
+                    mediaId = if (it.tracked) it.canonicalId else "",
+                    gainDb = it.replayGainDb?.toFloat(),
+                )
+            },
             index,
         )
     }

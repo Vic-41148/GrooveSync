@@ -10,9 +10,9 @@ import kotlin.math.pow
 import kotlin.math.roundToInt
 
 /**
- * Applies a fixed ReplayGain value to 16-bit PCM. ExoPlayer reads the gain from
- * the track policy through [setGainDb] before playback starts; buffers that are
- * already queued keep their old gain until the sink reconfigure.
+ * Applies a ReplayGain value to 16-bit PCM. The engine sets the gain when the
+ * current item changes; the value is read per buffer, so it lands on the first
+ * buffer decoded after the switch.
  */
 @androidx.annotation.OptIn(UnstableApi::class)
 internal class ReplayGainProcessor : BaseAudioProcessor() {
