@@ -51,6 +51,41 @@ install -m 0600 /opt/groovesync-soak/scripts/soak.env.example /etc/groovesync-so
 
 Edit `/etc/groovesync-soak.env` if the paths or timings differ.
 
+## Install without a bundled JRE
+
+A host that already runs Java 21 can skip `jlink` and the `jre` tree. The soak
+commands use `state.json` rather than SQLite, so the 12 MB
+`lib/sqlite-jdbc-*.jar` can also be dropped, which keeps the upload near 3 MB.
+
+```
+./gradlew :desktop:installDist
+mkdir -p /tmp/airplane-soak/scripts
+cp -a desktop/build/install/desktop /tmp/airplane-soak/gsclient
+rm -f /tmp/airplane-soak/gsclient/lib/sqlite-jdbc-*.jar
+cp ops/airplane-soak/record.py ops/airplane-soak/progress.py \
+  ops/airplane-soak/set-url.py ops/airplane-soak/verify.py \
+  ops/airplane-soak/prepare.sh ops/airplane-soak/run-soak.sh \
+  /tmp/airplane-soak/scripts/
+chmod 0755 /tmp/airplane-soak/scripts/*.sh
+tar -C /tmp/airplane-soak -czf airplane-soak.tar.gz gsclient scripts
+```
+
+Point `JAVA_HOME` at the host runtime in `/etc/groovesync-soak.env`. If the
+host has no `groovesync` account, keep the unit generic and add a drop-in:
+
+```
+install -d /etc/systemd/system/airplane-soak.service.d
+cat > /etc/systemd/system/airplane-soak.service.d/user.conf <<'EOF'
+[Service]
+User=vic41148
+Group=vic41148
+EOF
+systemctl daemon-reload
+```
+
+Create `/srv/airplane-soak` owned by that account instead of using the
+tmpfiles rule.
+
 ## Prepare once
 
 The prepare step registers a fresh device with the admin token, picks the first
