@@ -37,6 +37,9 @@ jobs:
   emulator:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      ANDROID_USER_HOME: ${{ runner.temp }}/android
+      ANDROID_AVD_HOME: ${{ runner.temp }}/android/avd
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
         with:
@@ -59,10 +62,12 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Create the emulator
         run: |
+          mkdir -p "$ANDROID_AVD_HOME"
           yes | sdkmanager --licenses > /dev/null
           sdkmanager "system-images;android-35;google_apis;x86_64"
           echo no | avdmanager create avd -n ci \
             -k "system-images;android-35;google_apis;x86_64"
+          ls -l "$ANDROID_AVD_HOME"
       - name: Check the accelerator
         run: |
           ls -l /dev/kvm
