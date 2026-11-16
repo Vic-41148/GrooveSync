@@ -1,0 +1,47 @@
+package com.groovesync.android.playback
+
+import androidx.media3.common.C
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.BaseAudioProcessor
+import androidx.media3.common.util.UnstableApi
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+import kotlin.math.pow
+import kotlin.math.roundToInt
+
+/**
+ * Applies a fixed ReplayGain value to 16-bit PCM. ExoPlayer reads the gain from
+ * the track policy through [setGainDb] before playback starts; buffers that are
+ * already queued keep their old gain until the sink reconfigure.
+ */
+@androidx.annotation.OptIn(UnstableApi::class)
+internal class ReplayGainProcessor : BaseAudioProcessor() {
+    @Volatile
+    private var gain: Float = 1f
+
+    fun setGainDb(gainDb: Float) {
+        gain = 10.0.pow(gainDb / 20.0).toFloat()
+    }
+
+    override fun onConfigure(inputAudioFormat: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat =
+        if (inputAudioFormat.encoding == C.ENCODING_PCM_16BIT) {
+            inputAudioFormat
+        } else {
+            AudioProcessor.AudioFormat.NOT_SET
+        }
+
+    override fun queueInput(inputBuffer: ByteBuffer) {
+        val size = inputBuffer.remaining()
+        val source = inputBuffer.duplicate().order(ByteOrder.nativeOrder()).asShortBuffer()
+        val output = replaceOutputBuffer(size)
+        val samples = output.asShortBuffer()
+        val currentGain = gain
+        while (source.hasRemaining()) {
+            val scaled = (source.get() * currentGain).roundToInt()
+            samples.put(scaled.coerceIn(Short.MIN_VALUE.toInt(), Short.MAX_VALUE.toInt()).toShort())
+        }
+        output.position(0)
+        output.limit(size)
+        inputBuffer.position(inputBuffer.limit())
+    }
+}

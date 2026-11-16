@@ -10,10 +10,12 @@ class GrooveSyncApplication : Application() {
     val mirror: Mirror by lazy { Mirror(this) }
     val settings: Settings by lazy { Settings(this) }
     val deviceSync: DeviceSync by lazy { DeviceSync(this, settings) }
+    val playback: PlaybackController by lazy { PlaybackController(this) }
 
     override fun onCreate() {
         super.onCreate()
         PollScheduler.enqueue(this)
+        playback.connect()
     }
 }
 
