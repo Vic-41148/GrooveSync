@@ -34,6 +34,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -52,7 +53,6 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.groovesync.common.mirror.MirrorTrack
 import com.groovesync.common.syncd.SseException
-import com.groovesync.common.syncd.SyncReport
 import com.groovesync.common.syncd.SyncdApi
 import com.groovesync.common.ui.Destination
 import com.groovesync.common.ui.OfflineBadge
@@ -273,13 +273,10 @@ private suspend fun refreshLibrary(mirror: Mirror, api: SyncdApi): Boolean =
 
 @Composable
 fun OfflineScreen(deviceSync: DeviceSync, playback: PlaybackController) {
-    var busy by remember { mutableStateOf(false) }
-    var report by remember { mutableStateOf<SyncReport?>(null) }
-    var failure by remember { mutableStateOf<String?>(null) }
+    val download by DownloadService.status.collectAsState()
     var tracks by remember { mutableStateOf<List<LocalTrack>>(emptyList()) }
     var nowPlaying by remember { mutableStateOf<String?>(null) }
     var playing by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val notificationPermission = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -299,8 +296,8 @@ fun OfflineScreen(deviceSync: DeviceSync, playback: PlaybackController) {
         playback.play(tracks, index)
     }
 
-    LaunchedEffect(Unit) {
-        tracks = withContext(Dispatchers.IO) { deviceSync.localTracks() }
+    LaunchedEffect(download.running) {
+        if (!download.running) tracks = withContext(Dispatchers.IO) { deviceSync.localTracks() }
     }
     LaunchedEffect(playback.connected) {
         while (playback.connected) {
@@ -321,27 +318,17 @@ fun OfflineScreen(deviceSync: DeviceSync, playback: PlaybackController) {
             style = MaterialTheme.typography.bodyMedium,
         )
         Button(
-            enabled = !busy,
+            enabled = !download.running,
             onClick = {
-                scope.launch {
-                    busy = true
-                    failure = null
-                    try {
-                        report = withContext(Dispatchers.IO) { deviceSync.sync() }
-                        tracks = withContext(Dispatchers.IO) { deviceSync.localTracks() }
-                    } catch (error: Exception) {
-                        failure = error.message ?: "sync failed"
-                    } finally {
-                        busy = false
-                    }
-                }
+                askForNotifications()
+                DownloadService.start(context)
             },
         ) {
-            Text(if (busy) "Syncing" else "Sync now")
+            Text(if (download.running) "Syncing" else "Sync now")
         }
-        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-        report?.let { result ->
+        if (download.running) LinearProgressIndicator(Modifier.fillMaxWidth())
+        download.failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        download.report?.let { result ->
             Text("Downloaded ${result.downloaded}, deleted ${result.deleted}, evicted ${result.evicted}")
             Text("${result.holdings} files on this device")
             result.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
