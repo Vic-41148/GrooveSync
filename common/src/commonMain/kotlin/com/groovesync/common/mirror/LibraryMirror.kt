@@ -20,6 +20,7 @@ class LibraryMirror(private val db: GrooveDb) {
                     artist_sort = sortKey(track.artist),
                     album = track.album,
                     duration_ms = track.durationMs,
+                    replay_gain_db = track.replayGainDb,
                     run_id = runId,
                 )
             }
@@ -36,21 +37,24 @@ class LibraryMirror(private val db: GrooveDb) {
     }
 
     fun page(limit: Int, offset: Long): List<MirrorTrack> =
-        queries.page(limit.toLong(), offset) { canonicalId, title, artist, album, durationMs ->
-            MirrorTrack(canonicalId, title, artist, album, durationMs)
+        queries.page(limit.toLong(), offset) { canonicalId, title, artist, album, durationMs, replayGainDb ->
+            MirrorTrack(canonicalId, title, artist, album, durationMs, replayGainDb)
         }.executeAsList()
 
     fun recent(limit: Int): List<MirrorTrack> =
-        queries.recent(limit.toLong()) { canonicalId, title, artist, album, durationMs ->
-            MirrorTrack(canonicalId, title, artist, album, durationMs)
+        queries.recent(limit.toLong()) { canonicalId, title, artist, album, durationMs, replayGainDb ->
+            MirrorTrack(canonicalId, title, artist, album, durationMs, replayGainDb)
         }.executeAsList()
 
     fun search(query: String, limit: Int): List<MirrorTrack> {
         val like = "%" + sortKey(query) + "%"
-        return queries.search(like, limit.toLong()) { canonicalId, title, artist, album, durationMs ->
-            MirrorTrack(canonicalId, title, artist, album, durationMs)
+        return queries.search(like, limit.toLong()) { canonicalId, title, artist, album, durationMs, replayGainDb ->
+            MirrorTrack(canonicalId, title, artist, album, durationMs, replayGainDb)
         }.executeAsList()
     }
 
     fun count(): Long = queries.countAll().executeAsOne()
+
+    fun gain(canonicalId: String): Double? =
+        queries.gain(canonicalId).executeAsOneOrNull()?.replay_gain_db
 }

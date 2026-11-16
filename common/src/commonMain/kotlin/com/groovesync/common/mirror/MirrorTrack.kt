@@ -11,6 +11,8 @@ data class MirrorTrack(
     val artist: String,
     val album: String,
     val durationMs: Long,
+    /** Track ReplayGain in dB, or null when the file carries no tag. */
+    val replayGainDb: Double? = null,
 )
 
 /**

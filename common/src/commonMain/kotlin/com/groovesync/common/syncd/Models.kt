@@ -60,6 +60,8 @@ data class TrackDto(
     val artist: String = "",
     val album: String = "",
     @SerialName("duration_ms") val durationMs: Int = 0,
+    @SerialName("replay_gain_track_db") val replayGainTrackDb: Double? = null,
+    @SerialName("replay_gain_album_db") val replayGainAlbumDb: Double? = null,
     val renditions: List<RenditionDto> = emptyList(),
 )
 

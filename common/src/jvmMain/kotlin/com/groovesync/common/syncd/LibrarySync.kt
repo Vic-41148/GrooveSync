@@ -33,4 +33,5 @@ private fun TrackDto.toMirrorTrack() = MirrorTrack(
     artist = artist,
     album = album,
     durationMs = durationMs.toLong(),
+    replayGainDb = replayGainTrackDb,
 )
