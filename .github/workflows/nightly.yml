@@ -73,6 +73,7 @@ jobs:
           emulator -accel-check
       - name: Boot the emulator
         run: |
+          # shellcheck disable=SC2016
           emulator -avd ci -no-window -no-audio -no-boot-anim -no-metrics \
             -accel on -gpu swiftshader_indirect -no-snapshot \
             > emulator.log 2>&1 &
