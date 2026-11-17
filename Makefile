@@ -1,4 +1,4 @@
-GO ?= ~/.local/go/bin/go
+GO ?= go
 BASE ?= origin/main
 
 .PHONY: build vet test tidy check-licenses patch-coverage install-hooks backup
