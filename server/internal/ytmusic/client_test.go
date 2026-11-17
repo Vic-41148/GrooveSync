@@ -178,3 +178,63 @@ func writeJSON(t *testing.T, w http.ResponseWriter, payload any) {
 		t.Errorf("encode response: %v", err)
 	}
 }
+
+func TestBrowseEndpoints(t *testing.T) {
+	t.Parallel()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/search":
+			if r.URL.Query().Get("q") != "night drive" || r.URL.Query().Get("limit") != "7" {
+				t.Errorf("search query = %q limit = %q", r.URL.Query().Get("q"), r.URL.Query().Get("limit"))
+			}
+			_, _ = w.Write([]byte(`{"tracks":[{"video_id":"v1","title":"Song","artists":["Artist"],"duration_ms":180000}]}`))
+		case "/library/songs":
+			_, _ = w.Write([]byte(`{"tracks":[{"video_id":"v2","title":"Saved","artists":["Artist"]}]}`))
+		case "/library/albums":
+			_, _ = w.Write([]byte(`{"albums":[{"browse_id":"a1","title":"Album","artists":["Artist"],"year":"2020"}]}`))
+		case "/library/artists":
+			_, _ = w.Write([]byte(`{"artists":[{"browse_id":"ar1","name":"Artist"}]}`))
+		case "/home":
+			_, _ = w.Write([]byte(`{"sections":[{"title":"Listen again","tracks":[{"video_id":"v3","title":"Again"}]}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient(server.URL)
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	ctx := context.Background()
+
+	tracks, err := client.Search(ctx, "night drive", 7)
+	if err != nil || len(tracks) != 1 || tracks[0].VideoID != "v1" {
+		t.Fatalf("Search() = %#v, %v", tracks, err)
+	}
+	if tracks, err := client.LibrarySongs(ctx); err != nil || len(tracks) != 1 || tracks[0].VideoID != "v2" {
+		t.Fatalf("LibrarySongs() = %#v, %v", tracks, err)
+	}
+	if albums, err := client.LibraryAlbums(ctx); err != nil || len(albums) != 1 || albums[0].BrowseID != "a1" {
+		t.Fatalf("LibraryAlbums() = %#v, %v", albums, err)
+	}
+	if artists, err := client.LibraryArtists(ctx); err != nil || len(artists) != 1 || artists[0].Name != "Artist" {
+		t.Fatalf("LibraryArtists() = %#v, %v", artists, err)
+	}
+	if sections, err := client.Home(ctx); err != nil || len(sections) != 1 || sections[0].Title != "Listen again" {
+		t.Fatalf("Home() = %#v, %v", sections, err)
+	}
+}
+
+func TestSearchRequiresQuery(t *testing.T) {
+	t.Parallel()
+
+	client, err := NewClient("http://127.0.0.1:8099")
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if _, err := client.Search(context.Background(), "  ", 5); err == nil {
+		t.Fatal("Search() error = nil, want a missing query failure")
+	}
+}

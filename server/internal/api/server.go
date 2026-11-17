@@ -34,6 +34,7 @@ import (
 	"github.com/Vic-41148/groovesync/server/internal/taste"
 	"github.com/Vic-41148/groovesync/server/internal/transfer"
 	"github.com/Vic-41148/groovesync/server/internal/writeback"
+	"github.com/Vic-41148/groovesync/server/internal/ytmusic"
 )
 
 // spotifyTokenEndpoint is the OAuth token endpoint used to exchange codes for
@@ -83,6 +84,7 @@ type Deps struct {
 	SpotifyPlaylists   SpotifyPlaylistImport
 	YouTubeImport      YouTubeLikeImport
 	YouTubePlaylists   YouTubePlaylistImport
+	YouTubeBrowse      YouTubeBrowse
 	ListenBrainzImport ListenBrainzImport
 	Playlists          PlaylistLister
 	YouTubeHealth      HealthChecker
@@ -186,6 +188,7 @@ type MixSource interface {
 // AcquisitionQueue records downloads for the optional worker.
 type AcquisitionQueue interface {
 	Create(context.Context, string, string) (acquisition.Request, error)
+	CreateWithSource(context.Context, string, string, string) (acquisition.Request, error)
 	List(context.Context, ...acquisition.State) ([]acquisition.Request, error)
 	Claim(context.Context, string) error
 	Complete(context.Context, string) error
@@ -282,6 +285,20 @@ type YouTubePlaylistImport interface {
 	ImportPlaylists(context.Context, connectors.PlaylistImportOptions) (connectors.ImportResult, error)
 }
 
+// YouTubeBrowse reads the signed-in account and resolves one item to a
+// canonical track. It is present only when the sidecar is configured.
+type YouTubeBrowse interface {
+	Search(context.Context, string, int) ([]ytmusic.Track, error)
+	Likes(context.Context) ([]ytmusic.Track, error)
+	LibrarySongs(context.Context) ([]ytmusic.Track, error)
+	LibraryAlbums(context.Context) ([]ytmusic.Album, error)
+	LibraryArtists(context.Context) ([]ytmusic.Artist, error)
+	Home(context.Context) ([]ytmusic.Section, error)
+	Playlists(context.Context) ([]ytmusic.Playlist, error)
+	PlaylistTracks(context.Context, string) ([]ytmusic.Track, error)
+	ImportTrack(context.Context, ytmusic.Track) (string, error)
+}
+
 // ListenBrainzImport mirrors recording feedback into like state.
 type ListenBrainzImport interface {
 	ImportFeedback(context.Context, string, int, connectors.ImportOptions) (connectors.ImportResult, error)
@@ -334,6 +351,15 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/playlists/import", d.handleSpotifyPlaylistImport)
 	mux.HandleFunc("POST /sync/v1/connectors/youtube/import", d.handleYouTubeImport)
 	mux.HandleFunc("POST /sync/v1/connectors/youtube/playlists/import", d.handleYouTubePlaylistImport)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/search", d.handleYouTubeSearch)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/likes", d.handleYouTubeLikes)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/library/songs", d.handleYouTubeLibrarySongs)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/library/albums", d.handleYouTubeLibraryAlbums)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/library/artists", d.handleYouTubeLibraryArtists)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/home", d.handleYouTubeHome)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/playlists", d.handleYouTubePlaylists)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/playlists/{id}/tracks", d.handleYouTubePlaylistTracks)
+	mux.HandleFunc("POST /sync/v1/connectors/youtube/download", d.handleYouTubeDownload)
 	mux.HandleFunc("POST /sync/v1/connectors/listenbrainz/{user}/import", d.handleListenBrainzImport)
 	mux.HandleFunc("GET /sync/v1/playlists", d.handlePlaylists)
 	mux.HandleFunc("PUT /sync/v1/me/library", d.handleSpotifyLibraryWrite("like"))
@@ -1427,6 +1453,216 @@ func (d Deps) handleYouTubeImport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result, 0)
 }
 
+// youtubeBrowseUnavailable is the reason a client shows when the sidecar is
+// not configured. The feature list omits youtube in that case.
+func (d Deps) youtubeBrowseUnavailable(w http.ResponseWriter) {
+	writeJSON(w, http.StatusNotImplemented, map[string]string{
+		"error":  "youtube browse unavailable",
+		"reason": "configure SYNCD_YTMUSIC_URL and sign the sidecar in to browse YouTube Music",
+	}, 0)
+}
+
+func (d Deps) handleYouTubeSearch(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	if query == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "query is required"}, 0)
+		return
+	}
+	limit := 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 || parsed > 50 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid limit"}, 0)
+			return
+		}
+		limit = parsed
+	}
+	tracks, err := d.YouTubeBrowse.Search(r.Context(), query, limit)
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube search failed"}, 0)
+		return
+	}
+	d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthOK, "")
+	writeJSON(w, http.StatusOK, map[string]any{"tracks": tracks}, 0)
+}
+
+func (d Deps) handleYouTubeLikes(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	tracks, err := d.YouTubeBrowse.Likes(r.Context())
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube likes failed"}, 0)
+		return
+	}
+	d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthOK, "")
+	writeJSON(w, http.StatusOK, map[string]any{"tracks": tracks}, 0)
+}
+
+func (d Deps) handleYouTubeLibrarySongs(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	tracks, err := d.YouTubeBrowse.LibrarySongs(r.Context())
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube library failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tracks": tracks}, 0)
+}
+
+func (d Deps) handleYouTubeLibraryAlbums(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	albums, err := d.YouTubeBrowse.LibraryAlbums(r.Context())
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube albums failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"albums": albums}, 0)
+}
+
+func (d Deps) handleYouTubeLibraryArtists(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	artists, err := d.YouTubeBrowse.LibraryArtists(r.Context())
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube artists failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"artists": artists}, 0)
+}
+
+func (d Deps) handleYouTubeHome(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	sections, err := d.YouTubeBrowse.Home(r.Context())
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube home failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"sections": sections}, 0)
+}
+
+func (d Deps) handleYouTubePlaylists(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	playlists, err := d.YouTubeBrowse.Playlists(r.Context())
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube playlists failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"playlists": playlists}, 0)
+}
+
+func (d Deps) handleYouTubePlaylistTracks(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "playlist id is required"}, 0)
+		return
+	}
+	tracks, err := d.YouTubeBrowse.PlaylistTracks(r.Context(), id)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube playlist tracks failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tracks": tracks}, 0)
+}
+
+// handleYouTubeDownload resolves a browse item to a canonical track and files
+// one acquisition request for it. The request carries the watch URL so the
+// worker downloads the exact item instead of searching again.
+func (d Deps) handleYouTubeDownload(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	if d.Acquisition == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	var req struct {
+		VideoID    string   `json:"video_id"`
+		Title      string   `json:"title"`
+		Artists    []string `json:"artists"`
+		Album      string   `json:"album"`
+		DurationMS int      `json:"duration_ms"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
+		return
+	}
+	req.VideoID = strings.TrimSpace(req.VideoID)
+	if req.VideoID == "" || strings.TrimSpace(req.Title) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "video id and title are required"}, 0)
+		return
+	}
+	canonicalID, err := d.YouTubeBrowse.ImportTrack(r.Context(), ytmusic.Track{
+		VideoID:    req.VideoID,
+		Title:      req.Title,
+		Artists:    req.Artists,
+		Album:      req.Album,
+		DurationMS: req.DurationMS,
+	})
+	if err != nil {
+		if errors.Is(err, connectors.ErrYouTubeNeedsReview) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": err.Error()}, 0)
+			return
+		}
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube download failed"}, 0)
+		return
+	}
+	query := strings.TrimSpace(strings.Join(req.Artists, ", ") + " " + req.Title)
+	request, err := d.Acquisition.CreateWithSource(r.Context(), canonicalID, query, youtubeWatchURL(req.VideoID))
+	if err != nil {
+		if errors.Is(err, acquisition.ErrInvalidRequest) {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)
+			return
+		}
+		if errors.Is(err, acquisition.ErrDisabled) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "acquisition disabled"}, 0)
+			return
+		}
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "acquisition unavailable"}, 0)
+		return
+	}
+	d.publish("acquisition", newAcquisitionResponse(request))
+	d.publishNtfy(r, "acquisition", "acquisition queued")
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"request":      newAcquisitionResponse(request),
+		"canonical_id": canonicalID,
+	}, 0)
+}
+
+func youtubeWatchURL(videoID string) string {
+	return "https://music.youtube.com/watch?v=" + url.QueryEscape(videoID)
+}
+
 func (d Deps) handleYouTubePlaylistImport(w http.ResponseWriter, r *http.Request) {
 	if d.YouTubePlaylists == nil {
 		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "youtube playlist import unavailable"}, 0)
@@ -2220,12 +2456,13 @@ func (d Deps) handleAcquisitionCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		CanonicalID string `json:"canonical_id"`
 		Query       string `json:"query"`
+		Source      string `json:"source"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid request"}, 0)
 		return
 	}
-	request, err := d.Acquisition.Create(r.Context(), req.CanonicalID, req.Query)
+	request, err := d.Acquisition.CreateWithSource(r.Context(), req.CanonicalID, req.Query, req.Source)
 	if err != nil {
 		if errors.Is(err, acquisition.ErrInvalidRequest) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()}, 0)

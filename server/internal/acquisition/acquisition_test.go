@@ -368,3 +368,32 @@ func TestCreateRefusesHeldTrack(t *testing.T) {
 		t.Fatalf("Create() error = %v, want ErrInvalidRequest", err)
 	}
 }
+
+func TestCreateWithSource(t *testing.T) {
+	t.Parallel()
+
+	db := openAcquisitionDB(t)
+	now := time.Date(2026, 10, 30, 12, 0, 0, 0, time.UTC)
+	repo := Repo{DB: db, Now: func() time.Time { return now }, NewID: fixedID("req-1")}
+	ctx := context.Background()
+
+	request, err := repo.CreateWithSource(ctx, "track-1", "Song Artist", "https://music.youtube.com/watch?v=v1")
+	if err != nil {
+		t.Fatalf("CreateWithSource() error = %v", err)
+	}
+	if request.Source != "https://music.youtube.com/watch?v=v1" {
+		t.Fatalf("source = %q", request.Source)
+	}
+
+	requests, err := repo.List(ctx, StateQueued)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(requests) != 1 || requests[0].Source != request.Source {
+		t.Fatalf("listed requests = %#v", requests)
+	}
+
+	if _, err := repo.CreateWithSource(ctx, "track-1", "Song Artist", "file:///etc/passwd"); !errors.Is(err, ErrInvalidRequest) {
+		t.Fatalf("non-http source error = %v, want ErrInvalidRequest", err)
+	}
+}

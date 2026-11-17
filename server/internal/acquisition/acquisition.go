@@ -44,11 +44,14 @@ type Request struct {
 	ID          string
 	CanonicalID string
 	Query       string
-	State       State
-	Attempts    int
-	LastError   string
-	CreatedAt   time.Time
-	UpdatedAt   time.Time
+	// Source is the exact provider target, for example a YouTube watch URL.
+	// Empty means the worker searches using Query.
+	Source    string
+	State     State
+	Attempts  int
+	LastError string
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ErrRequestNotFound reports an unknown request id.
@@ -78,6 +81,14 @@ type Repo struct {
 // Create records a request for the worker. Queries carry MusicBrainz metadata,
 // never Spotify identifiers, because Spotify data must not drive lookups.
 func (r Repo) Create(ctx context.Context, canonicalID, query string) (Request, error) {
+	return r.CreateWithSource(ctx, canonicalID, query, "")
+}
+
+// CreateWithSource records a request that already names its provider target.
+// The worker fetches Source instead of searching, which keeps a download tied
+// to the item the user picked. Only http and https targets are accepted so a
+// source cannot be mistaken for a command-line option by the worker.
+func (r Repo) CreateWithSource(ctx context.Context, canonicalID, query, source string) (Request, error) {
 	if r.DB == nil {
 		return Request{}, errors.New("acquisition: database is required")
 	}
@@ -94,6 +105,13 @@ func (r Repo) Create(ctx context.Context, canonicalID, query string) (Request, e
 	}
 	if looksSpotify(query) {
 		return Request{}, fmt.Errorf("%w: query must not carry Spotify content", ErrInvalidRequest)
+	}
+	source = strings.TrimSpace(source)
+	if len(source) > 2048 {
+		return Request{}, fmt.Errorf("%w: source is longer than 2048 characters", ErrInvalidRequest)
+	}
+	if source != "" && !strings.HasPrefix(source, "http://") && !strings.HasPrefix(source, "https://") {
+		return Request{}, fmt.Errorf("%w: source must be an http or https URL", ErrInvalidRequest)
 	}
 	enabled, err := r.Enabled(ctx)
 	if err != nil {
@@ -140,14 +158,15 @@ func (r Repo) Create(ctx context.Context, canonicalID, query string) (Request, e
 		ID:          id,
 		CanonicalID: canonicalID,
 		Query:       query,
+		Source:      source,
 		State:       StateQueued,
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
 	if _, err := r.DB.ExecContext(ctx, `
-INSERT INTO acquisition_request (id, canonical_id, query, state, attempts, created_at, updated_at)
-VALUES (?, ?, ?, ?, 0, ?, ?)
-`, request.ID, request.CanonicalID, request.Query, string(request.State), stamp(now), stamp(now)); err != nil {
+INSERT INTO acquisition_request (id, canonical_id, query, source, state, attempts, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+`, request.ID, request.CanonicalID, request.Query, request.Source, string(request.State), stamp(now), stamp(now)); err != nil {
 		return Request{}, fmt.Errorf("acquisition: create request: %w", err)
 	}
 	return request, nil
@@ -159,7 +178,7 @@ func (r Repo) List(ctx context.Context, states ...State) ([]Request, error) {
 		return nil, errors.New("acquisition: database is required")
 	}
 	query := `
-SELECT id, canonical_id, query, state, attempts, last_error, created_at, updated_at
+SELECT id, canonical_id, query, source, state, attempts, last_error, created_at, updated_at
 FROM acquisition_request
 `
 	args := make([]any, 0, len(states))
@@ -185,7 +204,7 @@ FROM acquisition_request
 		var state string
 		var lastError sql.NullString
 		var createdAt, updatedAt string
-		if err := rows.Scan(&request.ID, &request.CanonicalID, &request.Query, &state, &request.Attempts, &lastError, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&request.ID, &request.CanonicalID, &request.Query, &request.Source, &state, &request.Attempts, &lastError, &createdAt, &updatedAt); err != nil {
 			return nil, fmt.Errorf("acquisition: scan request: %w", err)
 		}
 		request.State = State(state)

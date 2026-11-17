@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -28,6 +29,9 @@ type Track struct {
 	DurationMS int      `json:"duration_ms"`
 	Kind       string   `json:"kind,omitempty"`
 	VideoType  string   `json:"videoType,omitempty"`
+	// CanonicalID is filled by the core's catalog from the alias table. The
+	// sidecar never sends it.
+	CanonicalID string `json:"canonical_id,omitempty"`
 }
 
 // IsAudioTrack reports whether the item is the audio track rather than a
@@ -64,6 +68,27 @@ type Playlist struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	TrackCount int    `json:"track_count"`
+}
+
+// Album is one saved album as the sidecar reports it.
+type Album struct {
+	BrowseID   string   `json:"browse_id"`
+	Title      string   `json:"title"`
+	Artists    []string `json:"artists"`
+	Year       string   `json:"year,omitempty"`
+	TrackCount int      `json:"track_count,omitempty"`
+}
+
+// Artist is one followed artist as the sidecar reports it.
+type Artist struct {
+	BrowseID string `json:"browse_id"`
+	Name     string `json:"name"`
+}
+
+// Section is one home shelf.
+type Section struct {
+	Title  string  `json:"title"`
+	Tracks []Track `json:"tracks"`
 }
 
 // APIError is a non-success response from the sidecar.
@@ -111,6 +136,69 @@ func (c *Client) Health(ctx context.Context) error {
 		return statusError(resp)
 	}
 	return nil
+}
+
+// Search finds songs in the account's YouTube Music catalog.
+func (c *Client) Search(ctx context.Context, query string, limit int) ([]Track, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, errors.New("ytmusic: search query is required")
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	var payload struct {
+		Tracks []Track `json:"tracks"`
+	}
+	path := "/search?" + url.Values{"q": {query}, "limit": {strconv.Itoa(limit)}}.Encode()
+	if err := c.getJSON(ctx, path, &payload); err != nil {
+		return nil, err
+	}
+	return payload.Tracks, nil
+}
+
+// LibrarySongs returns every song in the account library.
+func (c *Client) LibrarySongs(ctx context.Context) ([]Track, error) {
+	var payload struct {
+		Tracks []Track `json:"tracks"`
+	}
+	if err := c.getJSON(ctx, "/library/songs", &payload); err != nil {
+		return nil, err
+	}
+	return payload.Tracks, nil
+}
+
+// LibraryAlbums returns the saved albums.
+func (c *Client) LibraryAlbums(ctx context.Context) ([]Album, error) {
+	var payload struct {
+		Albums []Album `json:"albums"`
+	}
+	if err := c.getJSON(ctx, "/library/albums", &payload); err != nil {
+		return nil, err
+	}
+	return payload.Albums, nil
+}
+
+// LibraryArtists returns the followed artists.
+func (c *Client) LibraryArtists(ctx context.Context) ([]Artist, error) {
+	var payload struct {
+		Artists []Artist `json:"artists"`
+	}
+	if err := c.getJSON(ctx, "/library/artists", &payload); err != nil {
+		return nil, err
+	}
+	return payload.Artists, nil
+}
+
+// Home returns the account's home shelves.
+func (c *Client) Home(ctx context.Context) ([]Section, error) {
+	var payload struct {
+		Sections []Section `json:"sections"`
+	}
+	if err := c.getJSON(ctx, "/home", &payload); err != nil {
+		return nil, err
+	}
+	return payload.Sections, nil
 }
 
 // Likes returns every liked song in the account library.
