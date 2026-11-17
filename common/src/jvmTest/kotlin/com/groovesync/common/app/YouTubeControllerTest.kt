@@ -146,6 +146,49 @@ class YouTubeControllerTest {
         }
     }
 
+    @Test
+    fun accountFillsTheSignedInIdentity() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.handle("/sync/v1/connectors/youtube/account", """
+            {"account":{"name":"Sample User","handle":"@sample"}}
+        """)
+        server.start()
+        try {
+            val api = SyncdApi(listOf("http://127.0.0.1:${server.address.port}"))
+            val controller = YouTubeController(api, AcquisitionController(api))
+
+            controller.loadAccount()
+
+            assertEquals("Sample User", controller.account?.name)
+            assertEquals("@sample", controller.account?.handle)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun aFailedAccountReadLeavesTheIdentityEmpty() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/sync/v1/connectors/youtube/account") { exchange ->
+            val body = """{"error":"youtube account failed"}""".toByteArray()
+            exchange.sendResponseHeaders(502, body.size.toLong())
+            exchange.responseBody.write(body)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val api = SyncdApi(listOf("http://127.0.0.1:${server.address.port}"))
+            val controller = YouTubeController(api, AcquisitionController(api))
+
+            controller.loadAccount()
+
+            assertEquals(null, controller.account)
+            assertEquals(null, controller.error)
+        } finally {
+            server.stop(0)
+        }
+    }
+
     private fun HttpServer.handle(path: String, json: String, capture: (String) -> Unit = {}) {
         createContext(path) { exchange ->
             if (exchange.requestMethod == "POST") {

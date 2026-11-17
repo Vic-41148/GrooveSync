@@ -5,6 +5,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.groovesync.common.syncd.ApiException
 import com.groovesync.common.syncd.SyncdApi
+import com.groovesync.common.syncd.YouTubeAccountDto
 import com.groovesync.common.syncd.YouTubeAlbumDto
 import com.groovesync.common.syncd.YouTubeArtistDto
 import com.groovesync.common.syncd.YouTubePlaylistDto
@@ -30,6 +31,10 @@ class YouTubeController(
         private set
 
     var loading by mutableStateOf(false)
+        private set
+
+    /** Who the sidecar is signed in as, once the server answers. */
+    var account by mutableStateOf<YouTubeAccountDto?>(null)
         private set
 
     var error by mutableStateOf<String?>(null)
@@ -74,6 +79,15 @@ class YouTubeController(
         playlistId = ""
         albumId = ""
         artistId = ""
+    }
+
+    /** Reads the signed-in identity; a failure only hides the line. */
+    suspend fun loadAccount() {
+        val target = api ?: return
+        val loaded = withContext(Dispatchers.IO) {
+            runCatching { target.youtubeAccount() }.getOrNull()
+        }
+        if (loaded != null) account = loaded
     }
 
     suspend fun search(query: String, limit: Int = 25) {

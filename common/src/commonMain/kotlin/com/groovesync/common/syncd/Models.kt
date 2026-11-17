@@ -241,6 +241,16 @@ data class AcquisitionCreateRequest(
     val source: String = "",
 )
 
+/** The signed-in YouTube Music identity the server's sidecar reports. */
+@Serializable
+data class YouTubeAccountDto(
+    val name: String = "",
+    val handle: String = "",
+)
+
+@Serializable
+data class YouTubeAccountResponse(val account: YouTubeAccountDto = YouTubeAccountDto())
+
 /** One YouTube Music item as the sidecar reports it. */
 @Serializable
 data class YouTubeTrackDto(

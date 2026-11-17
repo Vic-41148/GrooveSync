@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,6 +40,8 @@ fun YouTubePane(youTube: YouTubeController, acquisition: AcquisitionController) 
     var query by remember { mutableStateOf("") }
     val scope = rememberCoroutineScope()
 
+    LaunchedEffect(youTube) { youTube.loadAccount() }
+
     Column(Modifier.fillMaxSize()) {
         Row(
             Modifier.fillMaxWidth()
@@ -52,6 +55,14 @@ fun YouTubePane(youTube: YouTubeController, acquisition: AcquisitionController) 
             TextButton(onClick = { scope.launch { youTube.loadPlaylists() } }) { Text("Playlists") }
             TextButton(onClick = { scope.launch { youTube.loadAlbums() } }) { Text("Albums") }
             TextButton(onClick = { scope.launch { youTube.loadArtists() } }) { Text("Artists") }
+        }
+        youTube.account?.takeIf { it.name.isNotBlank() }?.let { account ->
+            Text(
+                "Signed in as " + account.name + account.handle.takeIf { it.isNotBlank() }
+                    ?.let { " ($it)" }.orEmpty(),
+                Modifier.padding(horizontal = 16.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp),

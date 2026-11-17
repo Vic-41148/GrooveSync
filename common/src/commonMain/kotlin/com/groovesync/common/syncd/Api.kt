@@ -188,6 +188,11 @@ class SyncdApi(
         return json.decodeFromString(AcquisitionCreateResponse.serializer(), response.text()).request
     }
 
+    fun youtubeAccount(): YouTubeAccountDto {
+        val response = requireOk(call("GET", "/sync/v1/connectors/youtube/account"), "youtube account")
+        return json.decodeFromString(YouTubeAccountResponse.serializer(), response.text()).account
+    }
+
     fun youtubeSearch(query: String, limit: Int = 20): List<YouTubeTrackDto> {
         val response = requireOk(
             call("GET", "/sync/v1/connectors/youtube/search?q=" + encode(query) + "&limit=$limit"),

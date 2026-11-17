@@ -14,6 +14,9 @@ class SyncdApiYouTubeTest {
         server.createContext("/sync/v1/connectors/youtube/") { exchange ->
             paths += exchange.requestURI.toString()
             val body = when {
+                exchange.requestURI.path.endsWith("/account") -> """
+                    {"account":{"name":"Sample User","handle":"@sample"}}
+                """.trimIndent()
                 exchange.requestURI.path.endsWith("/search") -> """
                     {"tracks":[{"video_id":"v1","title":"Song","artists":["Artist"],"album":"Album","duration_ms":180000,"canonical_id":"canon-1"}]}
                 """.trimIndent()
@@ -46,6 +49,10 @@ class SyncdApiYouTubeTest {
         server.start()
         try {
             val api = SyncdApi(listOf("http://127.0.0.1:${server.address.port}"))
+
+            val account = api.youtubeAccount()
+            assertEquals("Sample User", account.name)
+            assertEquals("@sample", account.handle)
 
             val tracks = api.youtubeSearch("night drive", 10)
             assertEquals("v1", tracks[0].videoId)
