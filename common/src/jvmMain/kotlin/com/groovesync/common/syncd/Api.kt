@@ -155,6 +155,35 @@ class SyncdApi(
      * the server that answered last, so a mesh failover is already reflected.
      * Returns null when no server is configured.
      */
+    /**
+     * Acquisition requests in the given states. An empty list asks for every
+     * state, which is what the review surface wants.
+     */
+    fun acquisitionRequests(states: List<String> = emptyList()): List<AcquisitionRequestDto> {
+        val query = if (states.isEmpty()) "" else "?state=" + states.joinToString(",") { encode(it) }
+        val response = requireOk(call("GET", "/sync/v1/acquisition$query"), "acquisition requests")
+        return json.decodeFromString(AcquisitionListResponse.serializer(), response.text()).requests
+    }
+
+    /**
+     * Files a request for a canonical track. The provider fetches it; this call
+     * never downloads anything itself.
+     */
+    fun requestAcquisition(canonicalId: String, query: String = ""): AcquisitionRequestDto {
+        val body = json.encodeToString(
+            AcquisitionCreateRequest.serializer(),
+            AcquisitionCreateRequest(canonicalId, query),
+        )
+        val response = call(
+            "POST",
+            "/sync/v1/acquisition",
+            mapOf("Content-Type" to "application/json"),
+            jsonBody(body),
+        )
+        requireOk(response, "acquisition request")
+        return json.decodeFromString(AcquisitionCreateResponse.serializer(), response.text()).request
+    }
+
     fun streamUrl(canonicalId: String): String? {
         if (canonicalId.isBlank()) return null
         val base = reachableBaseUrl ?: lastBaseUrl.ifBlank { serverUrls.firstOrNull().orEmpty() }

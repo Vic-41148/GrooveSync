@@ -49,6 +49,7 @@ fun SearchScreen(
     deviceSync: DeviceSync,
     api: SyncdApi?,
     playback: PlaybackController,
+    acquisition: AcquisitionController,
 ) {
     var query by rememberSaveable { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
@@ -98,6 +99,7 @@ fun SearchScreen(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
+        AcquisitionMessage(acquisition)
         LazyColumn(Modifier.fillMaxSize()) {
             items(results, key = { it.canonicalId }) { track ->
                 SearchResult(
@@ -108,6 +110,8 @@ fun SearchScreen(
                     onPlay = {
                         playMirrorTracks(results, results.indexOf(track), local, api, playback)
                     },
+                    acquisition = acquisition,
+                    downloaded = track.canonicalId in local,
                     onTogglePin = {
                         scope.launch {
                             pinned = withContext(Dispatchers.IO) {
@@ -144,6 +148,8 @@ private fun SearchResult(
     onOpen: () -> Unit,
     onPlay: () -> Unit,
     onTogglePin: () -> Unit,
+    acquisition: AcquisitionController,
+    downloaded: Boolean,
 ) {
     Row(
         Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
@@ -167,6 +173,7 @@ private fun SearchResult(
         TextButton(onClick = onPlay) {
             Text("Play")
         }
+        DownloadButton(track.canonicalId, downloaded, acquisition)
         TextButton(onClick = onTogglePin) {
             Text(if (pinned) "Unpin" else "Pin")
         }

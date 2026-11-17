@@ -87,6 +87,8 @@ fun GrooveSyncApp(
     }
     val start = Destination.entries.firstOrNull { it.name == startRoute }
         ?: if (configured) Destination.LIBRARY else Destination.HOME
+    val acquisition = remember(api) { AcquisitionController(api) }
+    LaunchedEffect(acquisition) { acquisition.refresh() }
     val navController = rememberNavController()
     Scaffold(
         bottomBar = {
@@ -118,8 +120,10 @@ fun GrooveSyncApp(
             Destination.entries.forEach { destination ->
                 composable(destination.name) {
                     when (destination) {
-                        Destination.LIBRARY -> LibraryScreen(mirror, seed, api, deviceSync, playback)
-                        Destination.SEARCH -> SearchScreen(mirror, deviceSync, api, playback)
+                        Destination.LIBRARY ->
+                            LibraryScreen(mirror, seed, api, deviceSync, playback, acquisition)
+                        Destination.SEARCH ->
+                            SearchScreen(mirror, deviceSync, api, playback, acquisition)
                         Destination.OFFLINE -> OfflineScreen(deviceSync, playback)
                         Destination.YOU -> PolicyScreen(settings, deviceSync)
                         Destination.HOME -> HomeScreen(mirror, deviceSync) { destination ->
@@ -147,6 +151,7 @@ fun LibraryScreen(
     api: SyncdApi?,
     deviceSync: DeviceSync,
     playback: PlaybackController,
+    acquisition: AcquisitionController,
 ) {
     var query by remember { mutableStateOf("") }
     var tracks by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
@@ -224,6 +229,7 @@ fun LibraryScreen(
         local = withContext(Dispatchers.IO) {
             deviceSync.localTracks().associate { it.canonicalId to it.file }
         }
+        acquisition.refresh()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -239,6 +245,7 @@ fun LibraryScreen(
                 Modifier.padding(horizontal = 16.dp),
             )
         }
+        AcquisitionMessage(acquisition)
         LazyColumn(Modifier.fillMaxSize()) {
             items(tracks, key = { it.canonicalId }) { track ->
                 Row(
@@ -252,6 +259,11 @@ fun LibraryScreen(
                         Text(track.artist)
                     }
                     OfflineBadgeLabel(badges[track.canonicalId] ?: OfflineBadge.ONLINE_ONLY)
+                    DownloadButton(
+                        canonicalId = track.canonicalId,
+                        downloaded = track.canonicalId in local,
+                        acquisition = acquisition,
+                    )
                     TextButton(
                         onClick = {
                             playMirrorTracks(tracks, tracks.indexOf(track), local, api, playback)

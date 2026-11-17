@@ -214,3 +214,27 @@ data class ReviewResponse(
     val limit: Int = 0,
     val offset: Int = 0,
 )
+
+@Serializable
+data class AcquisitionRequestDto(
+    val id: String = "",
+    @SerialName("canonical_id") val canonicalId: String = "",
+    val query: String = "",
+    val state: String = "",
+    val attempts: Int = 0,
+    @SerialName("last_error") val lastError: String = "",
+    @SerialName("created_at") val createdAt: String = "",
+    @SerialName("updated_at") val updatedAt: String = "",
+)
+
+@Serializable
+data class AcquisitionListResponse(val requests: List<AcquisitionRequestDto> = emptyList())
+
+@Serializable
+data class AcquisitionCreateResponse(val request: AcquisitionRequestDto = AcquisitionRequestDto())
+
+@Serializable
+data class AcquisitionCreateRequest(
+    @SerialName("canonical_id") val canonicalId: String,
+    val query: String = "",
+)
