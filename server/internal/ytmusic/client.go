@@ -238,6 +238,36 @@ func (c *Client) PlaylistTracks(ctx context.Context, playlistID string) ([]Track
 	return payload.Tracks, nil
 }
 
+// AlbumTracks returns the songs of one browse album.
+func (c *Client) AlbumTracks(ctx context.Context, browseID string) ([]Track, error) {
+	browseID = strings.TrimSpace(browseID)
+	if browseID == "" {
+		return nil, errors.New("ytmusic: album id is required")
+	}
+	var payload struct {
+		Tracks []Track `json:"tracks"`
+	}
+	if err := c.getJSON(ctx, "/albums/"+url.PathEscape(browseID)+"/tracks", &payload); err != nil {
+		return nil, err
+	}
+	return payload.Tracks, nil
+}
+
+// ArtistTracks returns the songs the sidecar lists for one artist.
+func (c *Client) ArtistTracks(ctx context.Context, browseID string) ([]Track, error) {
+	browseID = strings.TrimSpace(browseID)
+	if browseID == "" {
+		return nil, errors.New("ytmusic: artist id is required")
+	}
+	var payload struct {
+		Tracks []Track `json:"tracks"`
+	}
+	if err := c.getJSON(ctx, "/artists/"+url.PathEscape(browseID)+"/tracks", &payload); err != nil {
+		return nil, err
+	}
+	return payload.Tracks, nil
+}
+
 // SetRating sends a like or removes one. Removing sends INDIFFERENT, which is
 // how ytmusicapi clears a rating.
 func (c *Client) SetRating(ctx context.Context, videoID string, liked bool) error {

@@ -24,6 +24,8 @@ type stubYouTubeBrowse struct {
 	sections       []ytmusic.Section
 	playlists      []ytmusic.Playlist
 	playlistTracks []ytmusic.Track
+	albumTracks    []ytmusic.Track
+	artistTracks   []ytmusic.Track
 	canonical      string
 	err            error
 	importErr      error
@@ -65,6 +67,14 @@ func (s *stubYouTubeBrowse) Playlists(context.Context) ([]ytmusic.Playlist, erro
 
 func (s *stubYouTubeBrowse) PlaylistTracks(context.Context, string) ([]ytmusic.Track, error) {
 	return s.playlistTracks, s.err
+}
+
+func (s *stubYouTubeBrowse) AlbumTracks(context.Context, string) ([]ytmusic.Track, error) {
+	return s.albumTracks, s.err
+}
+
+func (s *stubYouTubeBrowse) ArtistTracks(context.Context, string) ([]ytmusic.Track, error) {
+	return s.artistTracks, s.err
 }
 
 func (s *stubYouTubeBrowse) ImportTrack(_ context.Context, track ytmusic.Track) (string, error) {
@@ -224,6 +234,8 @@ func TestYouTubeBrowseRoutesReadTheSidecar(t *testing.T) {
 		sections:       []ytmusic.Section{{Title: "Shelf"}},
 		playlists:      []ytmusic.Playlist{{ID: "PL1"}},
 		playlistTracks: []ytmusic.Track{{VideoID: "v2"}},
+		albumTracks:    []ytmusic.Track{{VideoID: "v3"}},
+		artistTracks:   []ytmusic.Track{{VideoID: "v4"}},
 	}
 	h := New(Deps{Version: "test", YouTubeBrowse: browse})
 
@@ -238,6 +250,8 @@ func TestYouTubeBrowseRoutesReadTheSidecar(t *testing.T) {
 		{"/sync/v1/connectors/youtube/home", "sections"},
 		{"/sync/v1/connectors/youtube/playlists", "playlists"},
 		{"/sync/v1/connectors/youtube/playlists/PL1/tracks", "tracks"},
+		{"/sync/v1/connectors/youtube/albums/a1/tracks", "tracks"},
+		{"/sync/v1/connectors/youtube/artists/ar1/tracks", "tracks"},
 	}
 	for _, tc := range cases {
 		recorder := httptest.NewRecorder()
@@ -271,6 +285,8 @@ func TestYouTubeBrowseReportsASidecarFailure(t *testing.T) {
 		"/sync/v1/connectors/youtube/home",
 		"/sync/v1/connectors/youtube/playlists",
 		"/sync/v1/connectors/youtube/playlists/PL1/tracks",
+		"/sync/v1/connectors/youtube/albums/a1/tracks",
+		"/sync/v1/connectors/youtube/artists/ar1/tracks",
 	}
 	for _, path := range paths {
 		recorder := httptest.NewRecorder()

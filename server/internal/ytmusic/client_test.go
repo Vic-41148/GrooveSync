@@ -197,6 +197,10 @@ func TestBrowseEndpoints(t *testing.T) {
 			_, _ = w.Write([]byte(`{"artists":[{"browse_id":"ar1","name":"Artist"}]}`))
 		case "/home":
 			_, _ = w.Write([]byte(`{"sections":[{"title":"Listen again","tracks":[{"video_id":"v3","title":"Again"}]}]}`))
+		case "/albums/a1/tracks":
+			_, _ = w.Write([]byte(`{"tracks":[{"video_id":"v4","title":"From album"}]}`))
+		case "/artists/ar1/tracks":
+			_, _ = w.Write([]byte(`{"tracks":[{"video_id":"v5","title":"From artist"}]}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -224,6 +228,23 @@ func TestBrowseEndpoints(t *testing.T) {
 	}
 	if sections, err := client.Home(ctx); err != nil || len(sections) != 1 || sections[0].Title != "Listen again" {
 		t.Fatalf("Home() = %#v, %v", sections, err)
+	}
+	if tracks, err := client.AlbumTracks(ctx, "a1"); err != nil || len(tracks) != 1 || tracks[0].VideoID != "v4" {
+		t.Fatalf("AlbumTracks() = %#v, %v", tracks, err)
+	}
+	if tracks, err := client.ArtistTracks(ctx, "ar1"); err != nil || len(tracks) != 1 || tracks[0].VideoID != "v5" {
+		t.Fatalf("ArtistTracks() = %#v, %v", tracks, err)
+	}
+	for _, tc := range []struct {
+		name string
+		call func() ([]Track, error)
+	}{
+		{name: "album", call: func() ([]Track, error) { return client.AlbumTracks(ctx, " ") }},
+		{name: "artist", call: func() ([]Track, error) { return client.ArtistTracks(ctx, " ") }},
+	} {
+		if _, err := tc.call(); err == nil {
+			t.Fatalf("%s without an id error = nil, want failure", tc.name)
+		}
 	}
 }
 

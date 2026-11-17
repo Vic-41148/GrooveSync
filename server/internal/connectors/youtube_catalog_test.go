@@ -38,6 +38,14 @@ func (s stubYouTubeCatalogClient) Home(context.Context) ([]ytmusic.Section, erro
 	return s.sections, nil
 }
 
+func (s stubYouTubeCatalogClient) AlbumTracks(context.Context, string) ([]ytmusic.Track, error) {
+	return s.tracks, nil
+}
+
+func (s stubYouTubeCatalogClient) ArtistTracks(context.Context, string) ([]ytmusic.Track, error) {
+	return s.tracks, nil
+}
+
 func TestYouTubeCatalogAnnotatesKnownVideos(t *testing.T) {
 	t.Parallel()
 
@@ -87,6 +95,19 @@ VALUES ('youtube', 'v1', 'canon-1', 1, 'youtube', 'auto')
 	}
 	if len(home) != 1 || home[0].Tracks[0].CanonicalID != "canon-1" || home[0].Tracks[1].CanonicalID != "" {
 		t.Fatalf("home = %#v", home)
+	}
+
+	for name, load := range map[string]func() ([]ytmusic.Track, error){
+		"album":  func() ([]ytmusic.Track, error) { return catalog.AlbumTracks(ctx, "a1") },
+		"artist": func() ([]ytmusic.Track, error) { return catalog.ArtistTracks(ctx, "ar1") },
+	} {
+		tracks, err := load()
+		if err != nil {
+			t.Fatalf("%s tracks error = %v", name, err)
+		}
+		if tracks[0].CanonicalID != "canon-1" || tracks[1].CanonicalID != "" {
+			t.Fatalf("%s canonical ids = %q %q", name, tracks[0].CanonicalID, tracks[1].CanonicalID)
+		}
 	}
 }
 

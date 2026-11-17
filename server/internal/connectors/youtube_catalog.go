@@ -25,6 +25,8 @@ type YouTubeBrowseClient interface {
 	Home(context.Context) ([]ytmusic.Section, error)
 	Playlists(context.Context) ([]ytmusic.Playlist, error)
 	PlaylistTracks(context.Context, string) ([]ytmusic.Track, error)
+	AlbumTracks(context.Context, string) ([]ytmusic.Track, error)
+	ArtistTracks(context.Context, string) ([]ytmusic.Track, error)
 }
 
 // ErrYouTubeNeedsReview reports that a browse item matched too weakly to be
@@ -101,6 +103,25 @@ func (c YouTubeCatalog) Playlists(ctx context.Context) ([]ytmusic.Playlist, erro
 // PlaylistTracks returns one playlist with annotated tracks.
 func (c YouTubeCatalog) PlaylistTracks(ctx context.Context, playlistID string) ([]ytmusic.Track, error) {
 	tracks, err := c.Client.PlaylistTracks(ctx, playlistID)
+	if err != nil {
+		return nil, err
+	}
+	return c.decorate(ctx, tracks)
+}
+
+// AlbumTracks returns one saved album's songs with known videos annotated.
+func (c YouTubeCatalog) AlbumTracks(ctx context.Context, browseID string) ([]ytmusic.Track, error) {
+	tracks, err := c.Client.AlbumTracks(ctx, browseID)
+	if err != nil {
+		return nil, err
+	}
+	return c.decorate(ctx, tracks)
+}
+
+// ArtistTracks returns the songs the sidecar lists for one artist, annotated
+// the same way.
+func (c YouTubeCatalog) ArtistTracks(ctx context.Context, browseID string) ([]ytmusic.Track, error) {
+	tracks, err := c.Client.ArtistTracks(ctx, browseID)
 	if err != nil {
 		return nil, err
 	}

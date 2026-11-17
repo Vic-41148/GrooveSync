@@ -296,6 +296,8 @@ type YouTubeBrowse interface {
 	Home(context.Context) ([]ytmusic.Section, error)
 	Playlists(context.Context) ([]ytmusic.Playlist, error)
 	PlaylistTracks(context.Context, string) ([]ytmusic.Track, error)
+	AlbumTracks(context.Context, string) ([]ytmusic.Track, error)
+	ArtistTracks(context.Context, string) ([]ytmusic.Track, error)
 	ImportTrack(context.Context, ytmusic.Track) (string, error)
 }
 
@@ -359,6 +361,8 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/connectors/youtube/home", d.handleYouTubeHome)
 	mux.HandleFunc("GET /sync/v1/connectors/youtube/playlists", d.handleYouTubePlaylists)
 	mux.HandleFunc("GET /sync/v1/connectors/youtube/playlists/{id}/tracks", d.handleYouTubePlaylistTracks)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/albums/{id}/tracks", d.handleYouTubeAlbumTracks)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/artists/{id}/tracks", d.handleYouTubeArtistTracks)
 	mux.HandleFunc("POST /sync/v1/connectors/youtube/download", d.handleYouTubeDownload)
 	mux.HandleFunc("POST /sync/v1/connectors/listenbrainz/{user}/import", d.handleListenBrainzImport)
 	mux.HandleFunc("GET /sync/v1/playlists", d.handlePlaylists)
@@ -1589,6 +1593,44 @@ func (d Deps) handleYouTubePlaylistTracks(w http.ResponseWriter, r *http.Request
 	tracks, err := d.YouTubeBrowse.PlaylistTracks(r.Context(), id)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube playlist tracks failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tracks": tracks}, 0)
+}
+
+func (d Deps) handleYouTubeAlbumTracks(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "album id is required"}, 0)
+		return
+	}
+	tracks, err := d.YouTubeBrowse.AlbumTracks(r.Context(), id)
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube album tracks failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tracks": tracks}, 0)
+}
+
+func (d Deps) handleYouTubeArtistTracks(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "artist id is required"}, 0)
+		return
+	}
+	tracks, err := d.YouTubeBrowse.ArtistTracks(r.Context(), id)
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube artist tracks failed"}, 0)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"tracks": tracks}, 0)
