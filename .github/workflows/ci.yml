@@ -179,6 +179,12 @@ jobs:
       - name: Build Android
         run: ./gradlew :android:assembleDebug
 
+      - name: Build the store variant
+        run: |
+          ./gradlew :android:assembleDebug -Pgroovesync.store=true
+          grep -q 'YOUTUBE_ENABLED = false' \
+            android/build/generated/source/buildConfig/debug/com/groovesync/android/BuildConfig.java
+
       - name: Lint Android
         run: ./gradlew :android:lintDebug
 
