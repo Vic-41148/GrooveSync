@@ -193,7 +193,7 @@ fun main(args: Array<String>) {
             val started = System.nanoTime()
             MirrorDatabase.open(dbFile).use { opened ->
                 val mirror = LibraryMirror(opened.db)
-                val seen = LibrarySync(api, mirror).refresh(pageSize, runId)
+                val seen = LibrarySync(api, mirror).refresh(pageSize, runId, force = true)
                 val elapsed = (System.nanoTime() - started) / 1_000_000
                 println("mirrored $seen tracks, ${mirror.count()} rows in ${dbFile.path} (${elapsed} ms)")
             }

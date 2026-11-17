@@ -21,9 +21,66 @@ class MirrorDatabase private constructor(val db: GrooveDb, private val driver: S
             applyPragmas(driver)
             if (!hasTrackTable(driver)) {
                 GrooveDb.Schema.create(driver)
+            } else {
+                val version = currentVersion(driver)
+                if (version < GrooveDb.Schema.version) {
+                    GrooveDb.Schema.migrate(driver, version, GrooveDb.Schema.version).value
+                }
             }
             return MirrorDatabase(GrooveDb(driver), driver)
         }
+
+        /**
+         * Older builds did not stamp `user_version`, so an unstamped file is
+         * identified from its columns. The mirror is rebuildable, but an
+         * upgrade should still keep the rows.
+         */
+        private fun currentVersion(driver: SqlDriver): Long {
+            val stamped = userVersion(driver)
+            if (stamped > 0) return stamped
+            return when {
+                !hasColumn(driver, "track", "first_seen_run") -> 1L
+                !hasColumn(driver, "track", "replay_gain_db") -> 2L
+                !hasTable(driver, "mirror_meta") -> 3L
+                else -> GrooveDb.Schema.version
+            }
+        }
+
+        private fun userVersion(driver: SqlDriver): Long =
+            driver.executeQuery(
+                identifier = null,
+                sql = "PRAGMA user_version",
+                mapper = { cursor ->
+                    cursor.next()
+                    QueryResult.Value(cursor.getLong(0) ?: 0L)
+                },
+                parameters = 0,
+            ).value
+
+        private fun hasTable(driver: SqlDriver, table: String): Boolean =
+            driver.executeQuery(
+                identifier = null,
+                sql = "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?",
+                mapper = { cursor ->
+                    cursor.next()
+                    QueryResult.Value((cursor.getLong(0) ?: 0L) > 0L)
+                },
+                parameters = 1,
+            ) { bindString(0, table) }.value
+
+        private fun hasColumn(driver: SqlDriver, table: String, column: String): Boolean =
+            driver.executeQuery(
+                identifier = null,
+                sql = "SELECT count(*) FROM pragma_table_info(?) WHERE name = ?",
+                mapper = { cursor ->
+                    cursor.next()
+                    QueryResult.Value((cursor.getLong(0) ?: 0L) > 0L)
+                },
+                parameters = 2,
+            ) {
+                bindString(0, table)
+                bindString(1, column)
+            }.value
 
         private fun applyPragmas(driver: SqlDriver) {
             driver.executeQuery(
