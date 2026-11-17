@@ -85,6 +85,12 @@ type Artist struct {
 	Name     string `json:"name"`
 }
 
+// Account is the signed-in YouTube Music identity the sidecar reports.
+type Account struct {
+	Name   string `json:"name"`
+	Handle string `json:"handle"`
+}
+
 // Section is one home shelf.
 type Section struct {
 	Title  string  `json:"title"`
@@ -136,6 +142,17 @@ func (c *Client) Health(ctx context.Context) error {
 		return statusError(resp)
 	}
 	return nil
+}
+
+// Account returns the signed-in account's name and handle.
+func (c *Client) Account(ctx context.Context) (Account, error) {
+	var payload struct {
+		Account Account `json:"account"`
+	}
+	if err := c.getJSON(ctx, "/account", &payload); err != nil {
+		return Account{}, err
+	}
+	return payload.Account, nil
 }
 
 // Search finds songs in the account's YouTube Music catalog.

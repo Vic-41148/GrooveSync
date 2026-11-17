@@ -17,6 +17,7 @@ import (
 // than the importer's interface because browse also serves search and the
 // account's shelves.
 type YouTubeBrowseClient interface {
+	Account(context.Context) (ytmusic.Account, error)
 	Search(context.Context, string, int) ([]ytmusic.Track, error)
 	Likes(context.Context) ([]ytmusic.Track, error)
 	LibrarySongs(context.Context) ([]ytmusic.Track, error)
@@ -38,6 +39,11 @@ var ErrYouTubeNeedsReview = errors.New("connectors: youtube track needs review")
 type YouTubeCatalog struct {
 	DB     *sql.DB
 	Client YouTubeBrowseClient
+}
+
+// Account returns who the sidecar is signed in as.
+func (c YouTubeCatalog) Account(ctx context.Context) (ytmusic.Account, error) {
+	return c.Client.Account(ctx)
 }
 
 // Search finds songs in the YouTube Music catalog.

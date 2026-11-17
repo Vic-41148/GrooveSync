@@ -57,6 +57,8 @@ func TestClientReadsLibrary(t *testing.T) {
 		switch r.URL.Path {
 		case "/health":
 			w.WriteHeader(http.StatusOK)
+		case "/account":
+			writeJSON(t, w, map[string]any{"account": Account{Name: "Sample User", Handle: "@sample"}})
 		case "/likes":
 			writeJSON(t, w, map[string]any{"tracks": []Track{{VideoID: "v1", Title: "Song", Artists: []string{"Artist"}, DurationMS: 1000}}})
 		case "/playlists":
@@ -73,6 +75,14 @@ func TestClientReadsLibrary(t *testing.T) {
 	ctx := context.Background()
 	if err := client.Health(ctx); err != nil {
 		t.Fatalf("Health() error = %v", err)
+	}
+
+	account, err := client.Account(ctx)
+	if err != nil {
+		t.Fatalf("Account() error = %v", err)
+	}
+	if account.Name != "Sample User" || account.Handle != "@sample" {
+		t.Fatalf("account = %#v", account)
 	}
 
 	likes, err := client.Likes(ctx)

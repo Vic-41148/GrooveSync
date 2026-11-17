@@ -288,6 +288,7 @@ type YouTubePlaylistImport interface {
 // YouTubeBrowse reads the signed-in account and resolves one item to a
 // canonical track. It is present only when the sidecar is configured.
 type YouTubeBrowse interface {
+	Account(context.Context) (ytmusic.Account, error)
 	Search(context.Context, string, int) ([]ytmusic.Track, error)
 	Likes(context.Context) ([]ytmusic.Track, error)
 	LibrarySongs(context.Context) ([]ytmusic.Track, error)
@@ -353,6 +354,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/connectors/spotify/{accountID}/playlists/import", d.handleSpotifyPlaylistImport)
 	mux.HandleFunc("POST /sync/v1/connectors/youtube/import", d.handleYouTubeImport)
 	mux.HandleFunc("POST /sync/v1/connectors/youtube/playlists/import", d.handleYouTubePlaylistImport)
+	mux.HandleFunc("GET /sync/v1/connectors/youtube/account", d.handleYouTubeAccount)
 	mux.HandleFunc("GET /sync/v1/connectors/youtube/search", d.handleYouTubeSearch)
 	mux.HandleFunc("GET /sync/v1/connectors/youtube/likes", d.handleYouTubeLikes)
 	mux.HandleFunc("GET /sync/v1/connectors/youtube/library/songs", d.handleYouTubeLibrarySongs)
@@ -1464,6 +1466,20 @@ func (d Deps) youtubeBrowseUnavailable(w http.ResponseWriter) {
 		"error":  "youtube browse unavailable",
 		"reason": "configure SYNCD_YTMUSIC_URL and sign the sidecar in to browse YouTube Music",
 	}, 0)
+}
+
+func (d Deps) handleYouTubeAccount(w http.ResponseWriter, r *http.Request) {
+	if d.YouTubeBrowse == nil {
+		d.youtubeBrowseUnavailable(w)
+		return
+	}
+	account, err := d.YouTubeBrowse.Account(r.Context())
+	if err != nil {
+		d.reportConnectorHealth(r.Context(), connectors.ProviderYouTube, connectors.HealthDegraded, err.Error())
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": "youtube account failed"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"account": account}, 0)
 }
 
 func (d Deps) handleYouTubeSearch(w http.ResponseWriter, r *http.Request) {

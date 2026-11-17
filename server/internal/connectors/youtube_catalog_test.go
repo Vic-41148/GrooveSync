@@ -18,6 +18,10 @@ type stubYouTubeCatalogClient struct {
 	searched []ytmusic.Track
 }
 
+func (s stubYouTubeCatalogClient) Account(context.Context) (ytmusic.Account, error) {
+	return ytmusic.Account{Name: "Sample User", Handle: "@sample"}, nil
+}
+
 func (s stubYouTubeCatalogClient) Search(context.Context, string, int) ([]ytmusic.Track, error) {
 	return s.searched, nil
 }

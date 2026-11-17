@@ -33,6 +33,10 @@ type stubYouTubeBrowse struct {
 	searchText     string
 }
 
+func (s *stubYouTubeBrowse) Account(context.Context) (ytmusic.Account, error) {
+	return ytmusic.Account{Name: "Sample User", Handle: "@sample"}, s.err
+}
+
 func (s *stubYouTubeBrowse) Search(_ context.Context, query string, _ int) ([]ytmusic.Track, error) {
 	s.searchText = query
 	if s.err != nil {
@@ -253,6 +257,24 @@ func TestYouTubeBrowseRoutesReadTheSidecar(t *testing.T) {
 		{"/sync/v1/connectors/youtube/albums/a1/tracks", "tracks"},
 		{"/sync/v1/connectors/youtube/artists/ar1/tracks", "tracks"},
 	}
+	accountRecorder := httptest.NewRecorder()
+	h.ServeHTTP(accountRecorder, httptest.NewRequest(http.MethodGet, "/sync/v1/connectors/youtube/account", nil))
+	if accountRecorder.Code != http.StatusOK {
+		t.Fatalf("account status = %d, body = %s", accountRecorder.Code, accountRecorder.Body.String())
+	}
+	var accountBody struct {
+		Account struct {
+			Name   string `json:"name"`
+			Handle string `json:"handle"`
+		} `json:"account"`
+	}
+	if err := json.Unmarshal(accountRecorder.Body.Bytes(), &accountBody); err != nil {
+		t.Fatalf("decode account: %v", err)
+	}
+	if accountBody.Account.Name != "Sample User" || accountBody.Account.Handle != "@sample" {
+		t.Fatalf("account = %#v", accountBody.Account)
+	}
+
 	for _, tc := range cases {
 		recorder := httptest.NewRecorder()
 		h.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tc.path, nil))
@@ -278,6 +300,7 @@ func TestYouTubeBrowseReportsASidecarFailure(t *testing.T) {
 
 	h := New(Deps{Version: "test", YouTubeBrowse: &stubYouTubeBrowse{err: errors.New("sidecar down")}})
 	paths := []string{
+		"/sync/v1/connectors/youtube/account",
 		"/sync/v1/connectors/youtube/likes",
 		"/sync/v1/connectors/youtube/library/songs",
 		"/sync/v1/connectors/youtube/library/albums",
