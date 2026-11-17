@@ -17,6 +17,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("app.cash.sqldelight:sqlite-driver:2.4.1")
     implementation(compose.desktop.currentOs)
+    implementation("com.github.hypfvieh:dbus-java-core:5.2.2")
+    implementation("com.github.hypfvieh:dbus-java-transport-native-unixsocket:5.2.2")
+    runtimeOnly("org.slf4j:slf4j-nop:2.0.16")
 }
 
 tasks.register<JavaExec>("mirrorBenchmark") {

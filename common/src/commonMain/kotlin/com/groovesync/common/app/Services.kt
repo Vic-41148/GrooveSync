@@ -17,6 +17,7 @@ data class PlayTrack(
     val title: String = "",
     val gainDb: Double? = null,
     val localPath: String? = null,
+    val artist: String = "",
 )
 
 /** A downloaded file as both screens present it. */

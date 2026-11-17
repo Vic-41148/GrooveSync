@@ -201,6 +201,7 @@ internal fun playMirrorTracks(
                 title = track.title,
                 gainDb = track.replayGainDb,
                 localPath = local[track.canonicalId],
+                artist = track.artist,
             )
         },
         index.coerceAtLeast(0),

@@ -68,6 +68,22 @@ class MpvPlayerEngine(
 
     fun positionMs(): Long = ((ipc.doubleProperty("time-pos") ?: 0.0) * 1000).toLong()
 
+    fun durationMs(): Long = ((ipc.doubleProperty("duration") ?: 0.0) * 1000).toLong()
+
+    fun volume(): Double = (ipc.doubleProperty("volume") ?: 100.0) / 100.0
+
+    fun setVolume(level: Double) {
+        ipc.setProperty("volume", (level.coerceIn(0.0, 1.0) * 100).toInt())
+    }
+
+    fun playlistNext() {
+        ipc.command(listOf("playlist-next", "force"))
+    }
+
+    fun playlistPrevious() {
+        ipc.command(listOf("playlist-prev", "force"))
+    }
+
     fun currentPath(): String? = ipc.stringProperty("path")
 
     fun isIdle(): Boolean = ipc.booleanProperty("idle-active") ?: true

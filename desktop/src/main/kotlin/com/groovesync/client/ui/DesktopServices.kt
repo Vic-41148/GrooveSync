@@ -1,6 +1,7 @@
 package com.groovesync.client.ui
 
 import com.groovesync.client.MirrorDatabase
+import com.groovesync.client.mpris.MprisPlayerHost
 import com.groovesync.client.player.MpvPlayerEngine
 import com.groovesync.common.app.AppServices
 import com.groovesync.common.app.LibrarySource
@@ -208,12 +209,17 @@ class DesktopAppServices(
     private val dataDir: File,
     private val music: File,
     val settings: DesktopSettings,
-) : AppServices {
+) : AppServices, MprisPlayerHost {
+    var quitAction: () -> Unit = {}
     private val mirrorSource = DesktopLibrarySource(settings, dataDir)
     override val library: LibrarySource = mirrorSource
     private val runner = SyncRunner(File(dataDir, "state.json"), music)
     private var engine: MpvPlayerEngine? = null
     private var engineError: String? = null
+    private var currentId: String = ""
+    private var currentTitle: String = ""
+    private var currentArtist: String = ""
+    private var pendingVolume: Double = 1.0
 
     override fun api(): SyncdApi? = settings.api()
 
@@ -297,15 +303,21 @@ class DesktopAppServices(
 
     override fun play(tracks: List<PlayTrack>, index: Int) {
         val api = settings.api()
+        val start = index.coerceIn(0, tracks.lastIndex.coerceAtLeast(0))
         val queue = tracks.mapNotNull { track ->
             val local = track.localPath?.let(::File)?.takeIf { it.isFile }
             local?.absolutePath ?: api?.streamUrl(track.canonicalId)
         }
         if (queue.isEmpty()) return
         val player = engine ?: openEngine() ?: return
+        tracks.getOrNull(start)?.let { track ->
+            currentId = track.canonicalId
+            currentTitle = track.title
+            currentArtist = track.artist
+        }
         runCatching {
             player.setHttpHeaders(api?.streamHeaders().orEmpty())
-            player.load(queue.drop(index.coerceIn(0, queue.lastIndex)))
+            player.load(queue.drop(start.coerceIn(0, queue.lastIndex)))
             player.play()
         }
     }
@@ -330,6 +342,55 @@ class DesktopAppServices(
         return !player.isPaused() && !player.isIdle()
     }
 
+    override fun play() = engine?.play() ?: Unit
+
+    override fun pause() = engine?.pause() ?: Unit
+
+    override fun playPause() = togglePlayback()
+
+    override fun stop() {
+        engine?.pause()
+        engine?.seek(0)
+    }
+
+    override fun next() {
+        engine?.playlistNext()
+    }
+
+    override fun previous() {
+        engine?.playlistPrevious()
+    }
+
+    override fun seek(positionMs: Long) {
+        engine?.seek(positionMs.coerceAtLeast(0))
+    }
+
+    override fun positionMs(): Long = engine?.positionMs() ?: 0L
+
+    override fun lengthMs(): Long = engine?.durationMs() ?: 0L
+
+    override fun isPlaying(): Boolean = playing()
+
+    override fun volume(): Double = engine?.volume() ?: pendingVolume
+
+    override fun setVolume(level: Double) {
+        pendingVolume = level.coerceIn(0.0, 1.0)
+        engine?.setVolume(pendingVolume)
+    }
+
+    override fun title(): String = currentTitle
+
+    override fun artist(): String = currentArtist
+
+    override fun trackId(): String {
+        val safe = currentId.ifBlank { "unknown" }.map { ch ->
+            if (ch.isLetterOrDigit()) ch else '_'
+        }.joinToString("")
+        return "/com/groovesync/track/$safe"
+    }
+
+    override fun quit() = quitAction()
+
     fun close() {
         engine?.close()
         mirrorSource.close()
@@ -338,7 +399,10 @@ class DesktopAppServices(
     private fun openEngine(): MpvPlayerEngine? {
         if (engineError != null) return null
         return try {
-            MpvPlayerEngine().also { engine = it }
+            MpvPlayerEngine().also {
+                it.setVolume(pendingVolume)
+                engine = it
+            }
         } catch (error: Exception) {
             engineError = error.message ?: "mpv unavailable"
             null
