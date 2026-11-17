@@ -215,12 +215,12 @@
       "severity": "none",
       "evidence": [
         "file:.maestro/home.yaml",
-        "file:.maestro/likes.yaml",
-        "file:.maestro/review.yaml",
+        "file:.maestro/search.yaml",
         "file:.maestro/library.yaml",
-        "file:.maestro/health.yaml"
+        "file:.maestro/offline.yaml",
+        "file:.maestro/you.yaml"
       ],
-      "note": "The flows target the smoke-screen app, so they do not prove the product UI works."
+      "note": "Each flow taps one destination and asserts text that only that destination shows, on a configured debug build. They do not cover playback or sync."
     },
     {
       "id": "v-opensubsonic-client",
