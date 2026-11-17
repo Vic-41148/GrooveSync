@@ -1,4 +1,4 @@
-package com.groovesync.android
+package com.groovesync.common.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -40,18 +40,18 @@ private data class HomeSummary(
 )
 
 @Composable
-fun HomeScreen(mirror: Mirror, deviceSync: DeviceSync, onOpen: (Destination) -> Unit) {
+fun HomeScreen(services: AppServices, onOpen: (Destination) -> Unit) {
     var summary by remember { mutableStateOf(HomeSummary()) }
 
     LaunchedEffect(Unit) {
         summary = withContext(Dispatchers.IO) {
             HomeSummary(
-                library = mirror.library.count(),
-                pinned = deviceSync.pinned().size,
-                recent = mirror.library.recent(RECENT_LIMIT),
-                configured = deviceSync.configured(),
-                mode = deviceSync.syncMode(),
-                lastSync = deviceSync.lastSync(),
+                library = services.library.count(),
+                pinned = services.pinned().size,
+                recent = services.library.recent(RECENT_LIMIT),
+                configured = services.configured(),
+                mode = services.syncMode(),
+                lastSync = services.lastSync(),
             )
         }
     }

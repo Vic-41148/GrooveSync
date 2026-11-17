@@ -1,5 +1,6 @@
 package com.groovesync.android
 
+import com.groovesync.common.app.PlayTrack
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
@@ -12,7 +13,7 @@ class PlaybackQueueTest {
         val file = Files.createTempFile("track", ".flac").toFile().also { it.deleteOnExit() }
 
         val queue = resolveQueue(
-            listOf(PlayTrack("track-1", "Title", 1.5, localFile = file)),
+            listOf(PlayTrack("track-1", "Title", 1.5, localPath = file.absolutePath)),
         ) { "http://server/track-1" }
 
         assertEquals(1, queue.size)
@@ -43,10 +44,10 @@ class PlaybackQueueTest {
 
     @Test
     fun aDeletedFileFallsBackToTheStream() {
-        val gone = File("/tmp/groovesync-does-not-exist-${System.nanoTime()}.flac")
+        val gone = "/tmp/groovesync-does-not-exist-${System.nanoTime()}.flac"
 
         val queue = resolveQueue(
-            listOf(PlayTrack("track-4", "Title", localFile = gone)),
+            listOf(PlayTrack("track-4", "Title", localPath = gone)),
         ) { "http://server/track-4/audio" }
 
         assertTrue(queue.single().stream)

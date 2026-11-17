@@ -1,4 +1,4 @@
-package com.groovesync.android
+package com.groovesync.common.app
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme

@@ -2,6 +2,7 @@ package com.groovesync.client
 
 import com.groovesync.client.player.MpvException
 import com.groovesync.client.player.MpvPlayerEngine
+import com.groovesync.client.ui.openWindow
 import com.groovesync.common.audio.AudioConfig
 import com.groovesync.common.mirror.LibraryMirror
 import com.groovesync.common.sync.StateStore
@@ -57,6 +58,7 @@ private fun usage(): Nothing {
         gsclient local    --data DIR [--search TEXT] [--limit 100] [--offset 0]
         gsclient review   --data DIR
         gsclient health   --data DIR
+        gsclient window   --data DIR [--music DIR]
         gsclient playback --data DIR [--music DIR] [--tracks ID,ID | --all]
                           [--gapless true|false] [--replaygain true|false]
                           [--preamp DB] [--mpv PATH] [--ao NAME] [--timeout SECONDS]
@@ -230,6 +232,7 @@ fun main(args: Array<String>) {
             out.writeText(DiagnosticsExporter(api).export())
             println("wrote ${out.absolutePath}")
         }
+        "window" -> openWindow(dataDir(f), musicDir(f))
         "playback" -> {
             val queue = playbackQueue(f, runner(f).state())
             if (queue.isEmpty()) {

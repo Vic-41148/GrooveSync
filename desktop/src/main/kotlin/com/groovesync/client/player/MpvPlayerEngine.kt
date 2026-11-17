@@ -72,6 +72,18 @@ class MpvPlayerEngine(
 
     fun isIdle(): Boolean = ipc.booleanProperty("idle-active") ?: true
 
+    fun isPaused(): Boolean = ipc.booleanProperty("pause") ?: true
+
+    /**
+     * Auth headers for the next HTTP request. The token can rotate while the
+     * window is open, so this is set at play time rather than at spawn time.
+     */
+    fun setHttpHeaders(headers: Map<String, String>) {
+        if (headers.isEmpty()) return
+        val fields = headers.entries.joinToString(",") { (name, value) -> "$name: $value" }
+        ipc.setProperty("http-header-fields", fields)
+    }
+
     override fun close() {
         runCatching { ipc.command(listOf("quit")) }
         runCatching { ipc.close() }

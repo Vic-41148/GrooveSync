@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.media3.common.util.UnstableApi
 import com.groovesync.android.playback.Media3PlayerEngine
 import com.groovesync.android.playback.QueueEntry
+import com.groovesync.common.app.PlayTrack
 import com.groovesync.common.syncd.SyncdApi
 import java.io.File
 
@@ -22,8 +23,8 @@ import java.io.File
  */
 internal fun resolveQueue(tracks: List<PlayTrack>, streamUrl: (String) -> String?): List<QueueEntry> =
     tracks.mapNotNull { track ->
-        val file = track.localFile
-        if (file != null && file.isFile) {
+        val file = track.localPath?.let(::File)?.takeIf { it.isFile }
+        if (file != null) {
             QueueEntry(
                 path = file.absolutePath,
                 mediaId = track.canonicalId,
@@ -41,17 +42,6 @@ internal fun resolveQueue(tracks: List<PlayTrack>, streamUrl: (String) -> String
             )
         }
     }
-
-/**
- * A queue item before it is resolved: the local file wins when the track is on
- * the phone, otherwise the item is streamed from the server.
- */
-data class PlayTrack(
-    val canonicalId: String,
-    val title: String = "",
-    val gainDb: Double? = null,
-    val localFile: File? = null,
-)
 
 /**
  * Binds the UI to [PlaybackService]. Playback outlives a screen, so the
@@ -100,7 +90,7 @@ class PlaybackController(private val context: Context) {
                     canonicalId = if (it.tracked) it.canonicalId else "",
                     title = it.file.name,
                     gainDb = it.replayGainDb,
-                    localFile = it.file,
+                    localPath = it.file.absolutePath,
                 )
             },
             index,

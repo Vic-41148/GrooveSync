@@ -1,4 +1,4 @@
-package com.groovesync.android
+package com.groovesync.common.app
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,6 +18,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,8 +38,11 @@ private const val GIB = 1024.0 * 1024.0 * 1024.0
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
-    val initial = remember { settings.policy }
+fun PolicyScreen(
+    services: AppServices,
+    folderPicker: FolderPickerSlot?,
+) {
+    val initial = remember(services) { services.policy() }
     var scope by remember { mutableStateOf(initial.scope) }
     var affinity by remember { mutableStateOf(initial.affinityThreshold.toFloat().coerceAtLeast(0.1f)) }
     var capGb by remember { mutableStateOf(gigabytes(initial.storageCapBytes)) }
@@ -48,16 +52,24 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
     var report by remember { mutableStateOf<SyncReport?>(null) }
-    var mode by remember { mutableStateOf(settings.syncMode) }
+    var mode by remember { mutableStateOf(services.syncMode()) }
+    var folder by remember { mutableStateOf(services.externalFolder()) }
     val coroutine = rememberCoroutineScope()
-    val api = remember { settings.api() }
+    val api = remember(services) { services.api() }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         Text("Device policy", style = MaterialTheme.typography.headlineSmall)
-        SyncModesScreen(settings, deviceSync, mode) { mode = it }
+        SyncModesSection(
+            services = services,
+            mode = mode,
+            folder = folder,
+            folderPicker = folderPicker,
+            onModeChanged = { mode = it },
+            onFolderChanged = { folder = it },
+        )
         Text(
             "Saving applies the policy and runs one sync. Nothing downloads in the background.",
             style = MaterialTheme.typography.bodyMedium,
@@ -117,8 +129,8 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
                         failure = null
                         try {
                             report = withContext(Dispatchers.IO) {
-                                deviceSync.applyPolicy(policy, mode)
-                                deviceSync.sync()
+                                services.applyPolicy(policy, mode)
+                                services.sync()
                             }
                         } catch (error: Exception) {
                             failure = error.message ?: "could not save the policy"
@@ -138,9 +150,127 @@ fun PolicyScreen(settings: Settings, deviceSync: DeviceSync) {
             Text("${result.holdings} files on this device")
             result.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
         }
-        Text("Files: ${deviceSync.musicDir.path}", style = MaterialTheme.typography.bodySmall)
+        Text("Files: ${services.musicDir()}", style = MaterialTheme.typography.bodySmall)
         ServerCapabilities(api)
         ReviewSection(api)
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SyncModesSection(
+    services: AppServices,
+    mode: String,
+    folder: String,
+    folderPicker: FolderPickerSlot?,
+    onModeChanged: (String) -> Unit,
+    onFolderChanged: (String) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var failure by remember { mutableStateOf<String?>(null) }
+    var report by remember { mutableStateOf<SyncReport?>(null) }
+
+    fun switchTo(target: String) {
+        if (target == mode) return
+        scope.launch {
+            busy = true
+            failure = null
+            try {
+                withContext(Dispatchers.IO) { services.setSyncMode(target) }
+                onModeChanged(target)
+            } catch (error: Exception) {
+                failure = error.message ?: "could not change the sync mode"
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Sync mode", style = MaterialTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = mode == "app",
+                onClick = { switchTo("app") },
+                label = { Text("App") },
+            )
+            FilterChip(
+                selected = mode == "external",
+                onClick = {
+                    if (folder.isBlank()) {
+                        failure = "choose a folder first"
+                    } else {
+                        switchTo("external")
+                    }
+                },
+                label = { Text("External") },
+            )
+            FilterChip(
+                selected = mode == "off",
+                onClick = { switchTo("off") },
+                label = { Text("Off") },
+            )
+        }
+        Text(
+            when (mode) {
+                "app" -> "GrooveSync owns the app music folder and fills it from the server."
+                "off" -> "Nothing syncs or downloads. Local files stay playable."
+                else -> "Another app owns this folder, for example Syncthing. GrooveSync only reads it."
+            },
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        if (folderPicker != null && (mode == "external" || folder.isNotBlank())) {
+            Text(
+                "Folder: ${folder.ifBlank { "not granted" }}",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (mode == "external" && folderPicker != null) {
+            folderPicker(if (folder.isBlank()) "Grant folder" else "Change folder", !busy) { picked ->
+                scope.launch {
+                    try {
+                        withContext(Dispatchers.IO) { services.setExternalFolder(picked) }
+                        onFolderChanged(picked)
+                        if (mode != "external") switchTo("external")
+                    } catch (error: Exception) {
+                        failure = error.message ?: "the folder could not be saved"
+                    }
+                }
+            }
+            Button(
+                enabled = !busy && folder.isNotBlank(),
+                onClick = {
+                    scope.launch {
+                        busy = true
+                        failure = null
+                        try {
+                            report = withContext(Dispatchers.IO) { services.sync() }
+                        } catch (error: Exception) {
+                            failure = error.message ?: "could not scan the folder"
+                        } finally {
+                            busy = false
+                        }
+                    }
+                },
+            ) {
+                Text(if (busy) "Scanning" else "Scan and report")
+            }
+            Text(
+                "Downloads, evictions and mirror deletes stay off while another app owns the " +
+                    "folder.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        failure?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        report?.let { result ->
+            Text(
+                "Reported ${result.holdings} files; downloaded ${result.downloaded}, " +
+                    "deleted ${result.deleted}, evicted ${result.evicted}",
+            )
+            result.warnings.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+        }
     }
 }
 

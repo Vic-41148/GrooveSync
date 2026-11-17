@@ -1,4 +1,4 @@
-package com.groovesync.android
+package com.groovesync.common.app
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,51 +21,40 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.groovesync.common.mirror.MirrorTrack
-import com.groovesync.common.syncd.SyncdApi
 import com.groovesync.common.ui.OfflineBadge
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
-private const val SEARCH_LIMIT = 500
 private const val SEARCH_DEBOUNCE_MS = 250L
 
-/**
- * Searches the local mirror, so results are available with the server down.
- * The query is debounced because every keystroke would otherwise scan the
- * 50k-track table.
- */
 @Composable
 fun SearchScreen(
-    mirror: Mirror,
-    deviceSync: DeviceSync,
-    api: SyncdApi?,
-    playback: PlaybackController,
+    services: AppServices,
     acquisition: AcquisitionController,
 ) {
-    var query by rememberSaveable { mutableStateOf("") }
+    var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
-    var searching by remember { mutableStateOf(false) }
-    var pinned by remember { mutableStateOf(deviceSync.pinned()) }
     var badges by remember { mutableStateOf<Map<String, OfflineBadge>>(emptyMap()) }
+    var pinned by remember { mutableStateOf(emptySet<String>()) }
+    var searching by remember { mutableStateOf(false) }
     var whyTrack by remember { mutableStateOf<MirrorTrack?>(null) }
-    var local by remember { mutableStateOf<Map<String, File>>(emptyMap()) }
+    var local by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     val scope = rememberCoroutineScope()
     val term = query.trim()
 
     // The folder is walked once per screen, not on every keystroke.
     LaunchedEffect(Unit) {
         local = withContext(Dispatchers.IO) {
-            deviceSync.localTracks().associate { it.canonicalId to it.file }
+            services.localTracks().associate { it.canonicalId to it.path }
         }
+        pinned = withContext(Dispatchers.IO) { services.pinned() }
     }
 
     LaunchedEffect(term) {
@@ -76,8 +65,8 @@ fun SearchScreen(
         }
         searching = true
         delay(SEARCH_DEBOUNCE_MS)
-        results = withContext(Dispatchers.IO) { mirror.library.search(term, SEARCH_LIMIT) }
-        badges = withContext(Dispatchers.IO) { deviceSync.offlineBadges() }
+        results = withContext(Dispatchers.IO) { services.library.search(term, SEARCH_LIMIT) }
+        badges = withContext(Dispatchers.IO) { services.offlineBadges() }
         searching = false
     }
 
@@ -108,18 +97,18 @@ fun SearchScreen(
                     pinned = track.canonicalId in pinned,
                     onOpen = { whyTrack = track },
                     onPlay = {
-                        playMirrorTracks(results, results.indexOf(track), local, api, playback)
+                        playMirrorTracks(services, results, results.indexOf(track), local)
                     },
-                    acquisition = acquisition,
-                    downloaded = track.canonicalId in local,
                     onTogglePin = {
                         scope.launch {
                             pinned = withContext(Dispatchers.IO) {
-                                deviceSync.togglePin(track.canonicalId)
+                                services.togglePin(track.canonicalId)
                             }
-                            badges = withContext(Dispatchers.IO) { deviceSync.offlineBadges() }
+                            badges = withContext(Dispatchers.IO) { services.offlineBadges() }
                         }
                     },
+                    acquisition = acquisition,
+                    downloaded = track.canonicalId in local,
                 )
                 HorizontalDivider()
             }
@@ -127,7 +116,7 @@ fun SearchScreen(
     }
 
     whyTrack?.let { track ->
-        WhySheet(api, track) { whyTrack = null }
+        WhySheet(services.api(), track) { whyTrack = null }
     }
 }
 

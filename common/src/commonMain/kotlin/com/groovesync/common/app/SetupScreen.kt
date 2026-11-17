@@ -1,6 +1,5 @@
-package com.groovesync.android
+package com.groovesync.common.app
 
-import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,14 +19,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.groovesync.common.syncd.SyncdApi
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 @Composable
-fun SetupScreen(settings: Settings, onConnected: () -> Unit) {
-    var serverUrl by remember { mutableStateOf(settings.serverUrl) }
+fun SetupScreen(setup: SetupActions, onConnected: () -> Unit) {
+    var serverUrl by remember { mutableStateOf(setup.serverUrl()) }
     var adminToken by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -65,26 +61,7 @@ fun SetupScreen(settings: Settings, onConnected: () -> Unit) {
                     busy = true
                     failure = null
                     try {
-                        val deviceId = withContext(Dispatchers.IO) { settings.deviceIdOrNew() }
-                        val policy = settings.policy
-                        val registered = withContext(Dispatchers.IO) {
-                            SyncdApi(listOf(base)).register(
-                                adminToken = adminToken,
-                                id = deviceId,
-                                name = Build.MODEL,
-                                platform = "android",
-                                syncMode = settings.syncMode,
-                                policy = policy,
-                                urls = listOf(base),
-                            )
-                        }
-                        settings.save(
-                            base,
-                            registered.token,
-                            registered.device.id.ifBlank { deviceId },
-                            policy,
-                            settings.syncMode,
-                        )
+                        setup.register(base, adminToken)
                         onConnected()
                     } catch (error: Exception) {
                         failure = error.message ?: "could not register this device"

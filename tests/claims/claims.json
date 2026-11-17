@@ -230,7 +230,7 @@
       "status": "verified",
       "severity": "none",
       "evidence": [
-        "file:common/src/jvmMain/kotlin/com/groovesync/common/net/OpenSubsonicClient.kt",
+        "file:common/src/commonMain/kotlin/com/groovesync/common/net/OpenSubsonicClient.kt",
         "contains:common/src/jvmTest/kotlin/com/groovesync/common/net/OpenSubsonicClientTest.kt::@Test"
       ],
       "note": ""
