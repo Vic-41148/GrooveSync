@@ -1,4 +1,6 @@
 appId: com.groovesync.android
 ---
 - launchApp
-- assertVisible: "LIBRARY"
+- tapOn:
+    point: "50%,95%"
+- assertVisible: ".*tracks.*"

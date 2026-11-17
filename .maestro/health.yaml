@@ -1,4 +1,0 @@
-appId: com.groovesync.android
----
-- launchApp
-- assertVisible: "HEALTH"

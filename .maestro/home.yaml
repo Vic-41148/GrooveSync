@@ -1,4 +1,6 @@
 appId: com.groovesync.android
 ---
 - launchApp
-- assertVisible: "HOME"
+- tapOn:
+    point: "10%,95%"
+- assertVisible: "Recently added"

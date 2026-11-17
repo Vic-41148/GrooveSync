@@ -1,0 +1,6 @@
+appId: com.groovesync.android
+---
+- launchApp
+- tapOn:
+    point: "90%,95%"
+- assertVisible: "Device policy"

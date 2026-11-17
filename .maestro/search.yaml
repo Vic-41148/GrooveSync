@@ -1,0 +1,6 @@
+appId: com.groovesync.android
+---
+- launchApp
+- tapOn:
+    point: "30%,95%"
+- assertVisible: "Search title or artist"
