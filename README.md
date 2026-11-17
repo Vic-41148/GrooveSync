@@ -177,6 +177,16 @@ Gapless playback and track ReplayGain are on by default; `--gapless false`,
 `--replaygain false` and `--preamp DB` change that. `--ao NAME` forwards an audio
 output to mpv, which is how the tests render to a file.
 
+The desktop window renders the same five destinations as the phone from `DIR`,
+with libmpv playback behind the shared player interface, MPRIS controls when a
+session bus is present, and a tray icon for open, play, pause and quit:
+
+```sh
+./gradlew :desktop:run --args="window --data DIR"
+```
+
+Packaging is deferred, so run the window from Gradle or `installDist`.
+
 `./gradlew :desktop:mirrorBenchmark` reports insert and page latency for a
 50k-track fixture. `./gradlew :benchmark:connectedBenchmarkAndroidTest` runs
 the Macrobenchmark cold start and library scroll on a connected device.
