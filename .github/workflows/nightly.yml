@@ -82,7 +82,7 @@ jobs:
             'until [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = "1" ]; do sleep 5; done'
           adb devices
       - name: Run the connected smoke
-        run: ./gradlew :android:connectedDebugAndroidTest
+        run: ./gradlew -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" :android:connectedDebugAndroidTest
       - name: Emulator log
         if: failure()
         run: tail -100 emulator.log
