@@ -6,6 +6,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,38 +18,53 @@ import (
 )
 
 type stubYouTubeBrowse struct {
-	tracks     []ytmusic.Track
-	canonical  string
-	importErr  error
-	imported   ytmusic.Track
-	searchText string
+	tracks         []ytmusic.Track
+	albums         []ytmusic.Album
+	artists        []ytmusic.Artist
+	sections       []ytmusic.Section
+	playlists      []ytmusic.Playlist
+	playlistTracks []ytmusic.Track
+	canonical      string
+	err            error
+	importErr      error
+	imported       ytmusic.Track
+	searchText     string
 }
 
 func (s *stubYouTubeBrowse) Search(_ context.Context, query string, _ int) ([]ytmusic.Track, error) {
 	s.searchText = query
+	if s.err != nil {
+		return nil, s.err
+	}
 	return s.tracks, nil
 }
 
-func (s *stubYouTubeBrowse) Likes(context.Context) ([]ytmusic.Track, error) { return s.tracks, nil }
+func (s *stubYouTubeBrowse) Likes(context.Context) ([]ytmusic.Track, error) {
+	return s.tracks, s.err
+}
 
 func (s *stubYouTubeBrowse) LibrarySongs(context.Context) ([]ytmusic.Track, error) {
-	return s.tracks, nil
+	return s.tracks, s.err
 }
 
 func (s *stubYouTubeBrowse) LibraryAlbums(context.Context) ([]ytmusic.Album, error) {
-	return nil, nil
+	return s.albums, s.err
 }
 
 func (s *stubYouTubeBrowse) LibraryArtists(context.Context) ([]ytmusic.Artist, error) {
-	return nil, nil
+	return s.artists, s.err
 }
 
-func (s *stubYouTubeBrowse) Home(context.Context) ([]ytmusic.Section, error) { return nil, nil }
+func (s *stubYouTubeBrowse) Home(context.Context) ([]ytmusic.Section, error) {
+	return s.sections, s.err
+}
 
-func (s *stubYouTubeBrowse) Playlists(context.Context) ([]ytmusic.Playlist, error) { return nil, nil }
+func (s *stubYouTubeBrowse) Playlists(context.Context) ([]ytmusic.Playlist, error) {
+	return s.playlists, s.err
+}
 
 func (s *stubYouTubeBrowse) PlaylistTracks(context.Context, string) ([]ytmusic.Track, error) {
-	return s.tracks, nil
+	return s.playlistTracks, s.err
 }
 
 func (s *stubYouTubeBrowse) ImportTrack(_ context.Context, track ytmusic.Track) (string, error) {
@@ -195,5 +211,72 @@ func TestYouTubeDownloadRejectsIncompleteItem(t *testing.T) {
 
 	if recorder.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", recorder.Code)
+	}
+}
+
+func TestYouTubeBrowseRoutesReadTheSidecar(t *testing.T) {
+	t.Parallel()
+
+	browse := &stubYouTubeBrowse{
+		tracks:         []ytmusic.Track{{VideoID: "v1"}},
+		albums:         []ytmusic.Album{{BrowseID: "album-1"}},
+		artists:        []ytmusic.Artist{{BrowseID: "artist-1"}},
+		sections:       []ytmusic.Section{{Title: "Shelf"}},
+		playlists:      []ytmusic.Playlist{{ID: "PL1"}},
+		playlistTracks: []ytmusic.Track{{VideoID: "v2"}},
+	}
+	h := New(Deps{Version: "test", YouTubeBrowse: browse})
+
+	cases := []struct {
+		path  string
+		field string
+	}{
+		{"/sync/v1/connectors/youtube/likes", "tracks"},
+		{"/sync/v1/connectors/youtube/library/songs", "tracks"},
+		{"/sync/v1/connectors/youtube/library/albums", "albums"},
+		{"/sync/v1/connectors/youtube/library/artists", "artists"},
+		{"/sync/v1/connectors/youtube/home", "sections"},
+		{"/sync/v1/connectors/youtube/playlists", "playlists"},
+		{"/sync/v1/connectors/youtube/playlists/PL1/tracks", "tracks"},
+	}
+	for _, tc := range cases {
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, tc.path, nil))
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, body = %s", tc.path, recorder.Code, recorder.Body.String())
+		}
+		var body map[string]json.RawMessage
+		if err := json.Unmarshal(recorder.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: decode response: %v", tc.path, err)
+		}
+		var rows []json.RawMessage
+		if err := json.Unmarshal(body[tc.field], &rows); err != nil {
+			t.Fatalf("%s: decode %s: %v", tc.path, tc.field, err)
+		}
+		if len(rows) != 1 {
+			t.Fatalf("%s: %s = %d rows, want 1", tc.path, tc.field, len(rows))
+		}
+	}
+}
+
+func TestYouTubeBrowseReportsASidecarFailure(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "test", YouTubeBrowse: &stubYouTubeBrowse{err: errors.New("sidecar down")}})
+	paths := []string{
+		"/sync/v1/connectors/youtube/likes",
+		"/sync/v1/connectors/youtube/library/songs",
+		"/sync/v1/connectors/youtube/library/albums",
+		"/sync/v1/connectors/youtube/library/artists",
+		"/sync/v1/connectors/youtube/home",
+		"/sync/v1/connectors/youtube/playlists",
+		"/sync/v1/connectors/youtube/playlists/PL1/tracks",
+	}
+	for _, path := range paths {
+		recorder := httptest.NewRecorder()
+		h.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, path, nil))
+		if recorder.Code != http.StatusBadGateway {
+			t.Fatalf("%s: status = %d, want 502", path, recorder.Code)
+		}
 	}
 }
