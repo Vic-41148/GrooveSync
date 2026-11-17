@@ -73,13 +73,22 @@ jobs:
           emulator -accel-check
       - name: Boot the emulator
         run: |
-          # shellcheck disable=SC2016
           emulator -avd ci -no-window -no-audio -no-boot-anim -no-metrics \
             -accel on -gpu swiftshader_indirect -no-snapshot \
             > emulator.log 2>&1 &
           timeout 180 adb wait-for-device
-          timeout 420 bash -c \
-            'until [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = "1" ]; do sleep 5; done'
+          booted=0
+          for _ in $(seq 1 84); do
+            if [ "$(adb shell getprop sys.boot_completed | tr -d "\r")" = "1" ]; then
+              booted=1
+              break
+            fi
+            sleep 5
+          done
+          if [ "$booted" != "1" ]; then
+            echo "emulator did not finish booting"
+            exit 1
+          fi
           adb devices
       - name: Run the connected smoke
         run: ./gradlew -Dorg.gradle.jvmargs="-Xmx4g -XX:MaxMetaspaceSize=1g" :android:connectedDebugAndroidTest
