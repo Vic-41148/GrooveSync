@@ -32,6 +32,22 @@ class MigrationTest {
         driver.close()
     }
 
+    @Test
+    fun addsRevisionStorageToAnExistingMirror() {
+        val driver = JdbcSqliteDriver(JdbcSqliteDriver.IN_MEMORY)
+        driver.execute(null, VERSION_3_SCHEMA, 0)
+        driver.execute(null, "PRAGMA user_version = 3", 0)
+
+        GrooveDb.Schema.migrate(driver, 3, 4).value
+
+        val mirror = LibraryMirror(GrooveDb(driver))
+        assertNull(mirror.revision())
+        mirror.setRevision("revision-1")
+        assertEquals("revision-1", mirror.revision())
+
+        driver.close()
+    }
+
     private companion object {
         val VERSION_2_SCHEMA = """
             CREATE TABLE track (
@@ -42,6 +58,21 @@ class MigrationTest {
                 artist_sort TEXT NOT NULL,
                 album TEXT NOT NULL,
                 duration_ms INTEGER NOT NULL,
+                first_seen_run INTEGER NOT NULL DEFAULT 0,
+                seen_run INTEGER NOT NULL DEFAULT 0
+            )
+        """.trimIndent()
+
+        val VERSION_3_SCHEMA = """
+            CREATE TABLE track (
+                canonical_id TEXT NOT NULL PRIMARY KEY,
+                title TEXT NOT NULL,
+                title_sort TEXT NOT NULL,
+                artist TEXT NOT NULL,
+                artist_sort TEXT NOT NULL,
+                album TEXT NOT NULL,
+                duration_ms INTEGER NOT NULL,
+                replay_gain_db REAL,
                 first_seen_run INTEGER NOT NULL DEFAULT 0,
                 seen_run INTEGER NOT NULL DEFAULT 0
             )

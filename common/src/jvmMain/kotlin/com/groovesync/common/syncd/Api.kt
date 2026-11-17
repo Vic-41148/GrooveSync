@@ -21,7 +21,7 @@ class SyncdApi(
     fun withToken(value: String): SyncdApi = SyncdApi(serverUrls, value, deviceId)
 
     private fun headers(extra: Map<String, String> = emptyMap()): Map<String, String> {
-        val out = linkedMapOf("Accept" to "application/json")
+        val out = linkedMapOf("Accept" to "application/json", "Accept-Encoding" to "gzip")
         if (token.isNotEmpty()) out["Authorization"] = "Bearer $token"
         if (deviceId.isNotEmpty()) out["X-Device-Id"] = deviceId
         out.putAll(extra)
@@ -93,6 +93,13 @@ class SyncdApi(
     fun library(limit: Int = 500, offset: Int = 0): LibraryResponse {
         val response = requireOk(call("GET", "/sync/v1/library?limit=$limit&offset=$offset"), "library")
         return json.decodeFromString(LibraryResponse.serializer(), response.text())
+    }
+
+    fun libraryRevision(): String? {
+        val response = call("GET", "/sync/v1/library/revision")
+        if (response.status == 404 || response.status == 501) return null
+        requireOk(response, "library revision")
+        return json.decodeFromString(LibraryRevisionResponse.serializer(), response.text()).revision
     }
 
     fun plan(deviceId: String, onWiFi: Boolean = false): PlanResponse {

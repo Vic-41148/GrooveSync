@@ -3,6 +3,7 @@ package com.groovesync.common.syncd
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.zip.GZIPInputStream
 
 data class HttpResponse(
     val status: Int,
@@ -39,12 +40,19 @@ object Http {
             }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val bytes = stream?.use { input ->
+            val raw = stream?.use { input ->
                 val out = ByteArrayOutputStream()
                 input.copyTo(out)
                 out.toByteArray()
             } ?: ByteArray(0)
-            return HttpResponse(status, bytes, connection.headerFields.filterKeys { it != null })
+            val headers = connection.headerFields.filterKeys { it != null }
+            val gzipped = connection.getHeaderField("Content-Encoding").equals("gzip", ignoreCase = true)
+            val bytes = if (gzipped) GZIPInputStream(raw.inputStream()).use { it.readBytes() } else raw
+            return HttpResponse(
+                status,
+                bytes,
+                if (gzipped) headers.filterKeys { !it.equals("Content-Encoding", ignoreCase = true) } else headers,
+            )
         } finally {
             connection.disconnect()
         }

@@ -47,6 +47,17 @@ LIMIT :limit;
 countAll:
 SELECT count(*) FROM track;
 
+CREATE TABLE mirror_meta (
+    key TEXT NOT NULL PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+revision:
+SELECT value FROM mirror_meta WHERE key = 'library_revision';
+
+setRevision:
+INSERT OR REPLACE INTO mirror_meta(key, value) VALUES ('library_revision', :value);
+
 deleteUnseen:
 DELETE FROM track WHERE seen_run <> :run_id;
 

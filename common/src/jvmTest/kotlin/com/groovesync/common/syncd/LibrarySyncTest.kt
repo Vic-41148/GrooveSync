@@ -17,6 +17,9 @@ class LibrarySyncTest {
     private lateinit var mirror: LibraryMirror
     private val tracks = mutableListOf<TrackDto>()
     private val seenAuth = mutableListOf<String?>()
+    private var libraryRequests = 0
+    private var revisionRequests = 0
+    private var revisionStatus = 200
 
     @BeforeTest
     fun setUp() {
@@ -24,6 +27,7 @@ class LibrarySyncTest {
         GrooveDb.Schema.create(driver)
         mirror = LibraryMirror(GrooveDb(driver))
         server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/sync/v1/library/revision", ::serveRevision)
         server.createContext("/sync/v1/library", ::serveLibrary)
         server.start()
     }
@@ -59,6 +63,42 @@ class LibrarySyncTest {
     }
 
     @Test
+    fun skipsTheFetchWhenTheRevisionIsUnchanged() {
+        tracks += (1..3).map { TrackDto("t$it", "Track $it") }
+        refresh(pageSize = 2, runId = 1)
+        val fetches = libraryRequests
+
+        val seen = refresh(pageSize = 2, runId = 2)
+
+        assertEquals(fetches, libraryRequests)
+        assertEquals(3, seen)
+        assertEquals(2, revisionRequests)
+    }
+
+    @Test
+    fun fetchesWhenTheRevisionEndpointIsMissing() {
+        tracks += TrackDto("t1", "Track 1")
+        revisionStatus = 404
+
+        val seen = refresh(pageSize = 10, runId = 1)
+
+        assertEquals(1, seen)
+        assertEquals(1, mirror.count())
+        assertEquals(1, revisionRequests)
+    }
+
+    @Test
+    fun forceRefetchesAnUnchangedLibrary() {
+        tracks += TrackDto("t1", "Track 1")
+        refresh(pageSize = 10, runId = 1)
+        val fetches = libraryRequests
+
+        refresh(pageSize = 10, runId = 2, force = true)
+
+        assertEquals(fetches * 2, libraryRequests)
+    }
+
+    @Test
     fun sendsTheDeviceToken() {
         tracks += TrackDto("t1", "Track 1")
 
@@ -67,16 +107,31 @@ class LibrarySyncTest {
         assertEquals(listOf<String?>("Bearer device-token"), seenAuth)
     }
 
-    private fun refresh(pageSize: Int, runId: Long, token: String = ""): Int {
+    private fun refresh(pageSize: Int, runId: Long, token: String = "", force: Boolean = false): Int {
         val api = SyncdApi(
             serverUrls = listOf("http://127.0.0.1:${server.address.port}"),
             token = token,
             deviceId = "test-device",
         )
-        return LibrarySync(api, mirror).refresh(pageSize, runId)
+        return LibrarySync(api, mirror).refresh(pageSize, runId, force)
+    }
+
+    private fun serveRevision(exchange: HttpExchange) {
+        revisionRequests++
+        if (revisionStatus != 200) {
+            exchange.sendResponseHeaders(revisionStatus, -1)
+            exchange.close()
+            return
+        }
+        val body = """{"revision":"${tracks.joinToString("|") { "${it.canonicalId}:${it.title}" }}"}"""
+        val bytes = body.toByteArray(Charsets.UTF_8)
+        exchange.responseHeaders.add("Content-Type", "application/json")
+        exchange.sendResponseHeaders(200, bytes.size.toLong())
+        exchange.responseBody.use { it.write(bytes) }
     }
 
     private fun serveLibrary(exchange: HttpExchange) {
+        libraryRequests++
         seenAuth += exchange.requestHeaders.getFirst("Authorization")
         val query = exchange.requestURI.query.orEmpty()
             .split('&')

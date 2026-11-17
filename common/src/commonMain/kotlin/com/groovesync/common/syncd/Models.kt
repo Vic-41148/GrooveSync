@@ -74,6 +74,11 @@ data class LibraryResponse(
 )
 
 @Serializable
+data class LibraryRevisionResponse(
+    val revision: String = "",
+)
+
+@Serializable
 data class FileDto(
     @SerialName("canonical_id") val canonicalId: String,
     val hash: String,

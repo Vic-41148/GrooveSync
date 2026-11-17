@@ -55,6 +55,10 @@ class LibraryMirror(private val db: GrooveDb) {
 
     fun count(): Long = queries.countAll().executeAsOne()
 
+    fun revision(): String? = queries.revision().executeAsOneOrNull()
+
+    fun setRevision(value: String) = queries.setRevision(value)
+
     fun gain(canonicalId: String): Double? =
         queries.gain(canonicalId).executeAsOneOrNull()?.replay_gain_db
 }
