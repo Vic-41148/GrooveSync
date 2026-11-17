@@ -20,8 +20,20 @@ class SyncdApiYouTubeTest {
                 exchange.requestURI.path.endsWith("/playlists") -> """
                     {"playlists":[{"id":"p1","name":"Mix","track_count":4}]}
                 """.trimIndent()
+                exchange.requestURI.path.contains("/albums/") -> """
+                    {"tracks":[{"video_id":"v4","title":"From album","artists":["x"]}]}
+                """.trimIndent()
+                exchange.requestURI.path.contains("/artists/") -> """
+                    {"tracks":[{"video_id":"v5","title":"From artist","artists":["x"]}]}
+                """.trimIndent()
                 exchange.requestURI.path.endsWith("/tracks") -> """
                     {"tracks":[{"video_id":"v2","title":"From mix","artists":["x"]}]}
+                """.trimIndent()
+                exchange.requestURI.path.endsWith("/library/albums") -> """
+                    {"albums":[{"browse_id":"a1","title":"Album","artists":["Artist"],"year":"2020"}]}
+                """.trimIndent()
+                exchange.requestURI.path.endsWith("/library/artists") -> """
+                    {"artists":[{"browse_id":"ar1","name":"Artist"}]}
                 """.trimIndent()
                 else -> """
                     {"sections":[{"title":"Listen again","tracks":[{"video_id":"v3","title":"Again"}]}]}
@@ -45,6 +57,10 @@ class SyncdApiYouTubeTest {
             assertEquals(4, playlists[0].trackCount)
 
             assertEquals("v2", api.youtubePlaylistTracks("p1")[0].videoId)
+            assertEquals("a1", api.youtubeAlbums()[0].browseId)
+            assertEquals("ar1", api.youtubeArtists()[0].browseId)
+            assertEquals("v4", api.youtubeAlbumTracks("a1")[0].videoId)
+            assertEquals("v5", api.youtubeArtistTracks("ar1")[0].videoId)
             assertEquals("Listen again", api.youtubeHome()[0].title)
             assertTrue(paths.any { it.contains("q=night%20drive") && it.contains("limit=10") }, paths.toString())
         } finally {

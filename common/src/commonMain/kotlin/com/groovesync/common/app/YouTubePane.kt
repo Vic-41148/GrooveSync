@@ -1,6 +1,8 @@
 package com.groovesync.common.app
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -39,13 +41,17 @@ fun YouTubePane(youTube: YouTubeController, acquisition: AcquisitionController) 
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+            Modifier.fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             TextButton(onClick = { scope.launch { youTube.loadHome() } }) { Text("Home") }
             TextButton(onClick = { scope.launch { youTube.loadLikes() } }) { Text("Liked") }
             TextButton(onClick = { scope.launch { youTube.loadLibrary() } }) { Text("Your library") }
             TextButton(onClick = { scope.launch { youTube.loadPlaylists() } }) { Text("Playlists") }
+            TextButton(onClick = { scope.launch { youTube.loadAlbums() } }) { Text("Albums") }
+            TextButton(onClick = { scope.launch { youTube.loadArtists() } }) { Text("Artists") }
         }
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp),
@@ -98,6 +104,60 @@ fun YouTubePane(youTube: YouTubeController, acquisition: AcquisitionController) 
         if (youTube.source == YouTubeSource.PLAYLISTS && youTube.playlistId.isNotBlank()) {
             TextButton(onClick = { scope.launch { youTube.loadPlaylists() } }) {
                 Text("Back to playlists")
+            }
+        }
+
+        if (youTube.source == YouTubeSource.ALBUMS && youTube.albumId.isBlank()) {
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(youTube.albums, key = { it.browseId }) { album ->
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clickable { scope.launch { youTube.loadAlbumTracks(album.browseId) } }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(album.title, style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                (album.artists + album.year).filter { it.isNotBlank() }.joinToString(", "),
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        Text("Album", style = MaterialTheme.typography.bodySmall)
+                    }
+                    HorizontalDivider()
+                }
+            }
+            return@Column
+        }
+
+        if (youTube.source == YouTubeSource.ALBUMS && youTube.albumId.isNotBlank()) {
+            TextButton(onClick = { scope.launch { youTube.loadAlbums() } }) {
+                Text("Back to albums")
+            }
+        }
+
+        if (youTube.source == YouTubeSource.ARTISTS && youTube.artistId.isBlank()) {
+            LazyColumn(Modifier.fillMaxSize()) {
+                items(youTube.artists, key = { it.browseId }) { artist ->
+                    Row(
+                        Modifier.fillMaxWidth()
+                            .clickable { scope.launch { youTube.loadArtistTracks(artist.browseId) } }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(artist.name, Modifier.weight(1f))
+                        Text("Artist", style = MaterialTheme.typography.bodySmall)
+                    }
+                    HorizontalDivider()
+                }
+            }
+            return@Column
+        }
+
+        if (youTube.source == YouTubeSource.ARTISTS && youTube.artistId.isNotBlank()) {
+            TextButton(onClick = { scope.launch { youTube.loadArtists() } }) {
+                Text("Back to artists")
             }
         }
 

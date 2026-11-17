@@ -5,6 +5,8 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.groovesync.common.syncd.ApiException
 import com.groovesync.common.syncd.SyncdApi
+import com.groovesync.common.syncd.YouTubeAlbumDto
+import com.groovesync.common.syncd.YouTubeArtistDto
 import com.groovesync.common.syncd.YouTubePlaylistDto
 import com.groovesync.common.syncd.YouTubeSectionDto
 import com.groovesync.common.syncd.YouTubeTrackDto
@@ -13,7 +15,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 
 /** Where the YouTube Music pane gets its rows. */
-enum class YouTubeSource { HOME, SEARCH, LIKED, LIBRARY, PLAYLISTS }
+enum class YouTubeSource { HOME, SEARCH, LIKED, LIBRARY, PLAYLISTS, ALBUMS, ARTISTS }
 
 /**
  * Browse state for the signed-in YouTube Music account. The account itself
@@ -39,6 +41,12 @@ class YouTubeController(
     var playlists by mutableStateOf<List<YouTubePlaylistDto>>(emptyList())
         private set
 
+    var albums by mutableStateOf<List<YouTubeAlbumDto>>(emptyList())
+        private set
+
+    var artists by mutableStateOf<List<YouTubeArtistDto>>(emptyList())
+        private set
+
     var sections by mutableStateOf<List<YouTubeSectionDto>>(emptyList())
         private set
 
@@ -46,6 +54,12 @@ class YouTubeController(
         private set
 
     var playlistId by mutableStateOf("")
+        private set
+
+    var albumId by mutableStateOf("")
+        private set
+
+    var artistId by mutableStateOf("")
         private set
 
     /** Videos whose request the client already filed in this session. */
@@ -58,11 +72,16 @@ class YouTubeController(
     fun select(source: YouTubeSource) {
         this.source = source
         playlistId = ""
+        albumId = ""
+        artistId = ""
     }
 
     suspend fun search(query: String, limit: Int = 25) {
         val target = api ?: return
         source = YouTubeSource.SEARCH
+        playlistId = ""
+        albumId = ""
+        artistId = ""
         load {
             tracks = target.youtubeSearch(query, limit)
             playlists = emptyList()
@@ -73,6 +92,9 @@ class YouTubeController(
     suspend fun loadLikes() {
         val target = api ?: return
         source = YouTubeSource.LIKED
+        playlistId = ""
+        albumId = ""
+        artistId = ""
         load {
             tracks = target.youtubeLikes()
             sections = emptyList()
@@ -82,6 +104,9 @@ class YouTubeController(
     suspend fun loadLibrary() {
         val target = api ?: return
         source = YouTubeSource.LIBRARY
+        playlistId = ""
+        albumId = ""
+        artistId = ""
         load {
             tracks = target.youtubeLibrarySongs()
             sections = emptyList()
@@ -91,6 +116,8 @@ class YouTubeController(
     suspend fun loadPlaylists() {
         val target = api ?: return
         source = YouTubeSource.PLAYLISTS
+        albumId = ""
+        artistId = ""
         load {
             playlists = target.youtubePlaylists()
             tracks = emptyList()
@@ -111,10 +138,61 @@ class YouTubeController(
     suspend fun loadHome() {
         val target = api ?: return
         source = YouTubeSource.HOME
+        playlistId = ""
+        albumId = ""
+        artistId = ""
         load {
             sections = target.youtubeHome()
             tracks = emptyList()
             playlists = emptyList()
+        }
+    }
+
+    suspend fun loadAlbums() {
+        val target = api ?: return
+        source = YouTubeSource.ALBUMS
+        playlistId = ""
+        albumId = ""
+        artistId = ""
+        load {
+            albums = target.youtubeAlbums()
+            tracks = emptyList()
+            playlists = emptyList()
+            sections = emptyList()
+        }
+    }
+
+    suspend fun loadAlbumTracks(id: String) {
+        val target = api ?: return
+        source = YouTubeSource.ALBUMS
+        load {
+            albumId = id
+            tracks = target.youtubeAlbumTracks(id)
+            sections = emptyList()
+        }
+    }
+
+    suspend fun loadArtists() {
+        val target = api ?: return
+        source = YouTubeSource.ARTISTS
+        playlistId = ""
+        albumId = ""
+        artistId = ""
+        load {
+            artists = target.youtubeArtists()
+            tracks = emptyList()
+            playlists = emptyList()
+            sections = emptyList()
+        }
+    }
+
+    suspend fun loadArtistTracks(id: String) {
+        val target = api ?: return
+        source = YouTubeSource.ARTISTS
+        load {
+            artistId = id
+            tracks = target.youtubeArtistTracks(id)
+            sections = emptyList()
         }
     }
 

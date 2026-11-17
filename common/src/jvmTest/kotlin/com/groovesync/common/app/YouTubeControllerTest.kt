@@ -106,6 +106,46 @@ class YouTubeControllerTest {
         }
     }
 
+    @Test
+    fun albumsAndArtistsDrillIntoTheirTracks() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.handle("/sync/v1/connectors/youtube/library/albums", """
+            {"albums":[{"browse_id":"a1","title":"Album","artists":["Artist"],"year":"2020"}]}
+        """)
+        server.handle("/sync/v1/connectors/youtube/albums/a1/tracks", """
+            {"tracks":[{"video_id":"v4","title":"From album","artists":["Artist"],"canonical_id":"canon-4"}]}
+        """)
+        server.handle("/sync/v1/connectors/youtube/library/artists", """
+            {"artists":[{"browse_id":"ar1","name":"Artist"}]}
+        """)
+        server.handle("/sync/v1/connectors/youtube/artists/ar1/tracks", """
+            {"tracks":[{"video_id":"v5","title":"From artist","artists":["Artist"]}]}
+        """)
+        server.start()
+        try {
+            val api = SyncdApi(listOf("http://127.0.0.1:${server.address.port}"))
+            val controller = YouTubeController(api, AcquisitionController(api))
+
+            controller.loadAlbums()
+            assertEquals(YouTubeSource.ALBUMS, controller.source)
+            assertEquals("a1", controller.albums.single().browseId)
+
+            controller.loadAlbumTracks("a1")
+            assertEquals("a1", controller.albumId)
+            assertEquals("canon-4", controller.tracks.single().canonicalId)
+
+            controller.loadArtists()
+            assertEquals(YouTubeSource.ARTISTS, controller.source)
+            assertEquals("ar1", controller.artists.single().browseId)
+
+            controller.loadArtistTracks("ar1")
+            assertEquals("ar1", controller.artistId)
+            assertEquals("v5", controller.tracks.single().videoId)
+        } finally {
+            server.stop(0)
+        }
+    }
+
     private fun HttpServer.handle(path: String, json: String, capture: (String) -> Unit = {}) {
         createContext(path) { exchange ->
             if (exchange.requestMethod == "POST") {

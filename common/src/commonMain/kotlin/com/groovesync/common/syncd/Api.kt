@@ -201,6 +201,28 @@ class SyncdApi(
     fun youtubeLibrarySongs(): List<YouTubeTrackDto> =
         youtubeTracks("/sync/v1/connectors/youtube/library/songs", "youtube library")
 
+    fun youtubeAlbums(): List<YouTubeAlbumDto> {
+        val response = requireOk(call("GET", "/sync/v1/connectors/youtube/library/albums"), "youtube albums")
+        return json.decodeFromString(YouTubeAlbumsResponse.serializer(), response.text()).albums
+    }
+
+    fun youtubeArtists(): List<YouTubeArtistDto> {
+        val response = requireOk(call("GET", "/sync/v1/connectors/youtube/library/artists"), "youtube artists")
+        return json.decodeFromString(YouTubeArtistsResponse.serializer(), response.text()).artists
+    }
+
+    fun youtubeAlbumTracks(browseId: String): List<YouTubeTrackDto> =
+        youtubeTracks(
+            "/sync/v1/connectors/youtube/albums/" + encode(browseId) + "/tracks",
+            "youtube album",
+        )
+
+    fun youtubeArtistTracks(browseId: String): List<YouTubeTrackDto> =
+        youtubeTracks(
+            "/sync/v1/connectors/youtube/artists/" + encode(browseId) + "/tracks",
+            "youtube artist",
+        )
+
     fun youtubePlaylists(): List<YouTubePlaylistDto> {
         val response = requireOk(call("GET", "/sync/v1/connectors/youtube/playlists"), "youtube playlists")
         return json.decodeFromString(YouTubePlaylistsResponse.serializer(), response.text()).playlists
