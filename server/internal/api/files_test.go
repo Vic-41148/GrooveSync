@@ -359,3 +359,79 @@ func TestLibraryUploadRoundTrip(t *testing.T) {
 		t.Fatalf("download body differs from the uploaded content")
 	}
 }
+
+func TestLibraryTrackAudioStreamsByCanonicalID(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	root := t.TempDir()
+	local := []byte("local lossless bytes")
+	if err := os.WriteFile(filepath.Join(root, "song.flac"), local, 0o644); err != nil {
+		t.Fatalf("write local: %v", err)
+	}
+	cachedContent := []byte("cached bytes")
+	if err := os.WriteFile(filepath.Join(root, "song.opus"), cachedContent, 0o644); err != nil {
+		t.Fatalf("write cached: %v", err)
+	}
+	localSum := sha256.Sum256(local)
+	cachedSum := sha256.Sum256(cachedContent)
+	if _, err := db.Exec(`INSERT INTO track (canonical_id, title, artist) VALUES ('track-1', 'Song', 'Artist')`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO rendition (canonical_id, kind, path_or_uri, sha256, bitrate) VALUES ('track-1', 'cached', 'song.opus', ?, 320000)`,
+		hex.EncodeToString(cachedSum[:]),
+	); err != nil {
+		t.Fatalf("insert cached rendition: %v", err)
+	}
+	if _, err := db.Exec(
+		`INSERT INTO rendition (canonical_id, kind, path_or_uri, sha256) VALUES ('track-1', 'file', 'song.flac', ?)`,
+		hex.EncodeToString(localSum[:]),
+	); err != nil {
+		t.Fatalf("insert file rendition: %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now, LibraryFiles: library.FileStore{DB: db, Root: root}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library/tracks/track-1/audio", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if rec.Body.String() != string(local) {
+		t.Fatalf("body = %q, want the local rendition, not the cached one", rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "audio/") {
+		t.Fatalf("content type = %q, want an audio type", got)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/sync/v1/library/tracks/track-1/audio", nil)
+	req.Header.Set("Range", "bytes=0-4")
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPartialContent || rec.Body.String() != "local" {
+		t.Fatalf("range status = %d body = %q, want a partial response", rec.Code, rec.Body.String())
+	}
+}
+
+func TestLibraryTrackAudioReportsMissingTracks(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now, LibraryFiles: library.FileStore{DB: db, Root: t.TempDir()}})
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library/tracks/unknown/audio", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	noFiles := New(Deps{Version: "1.2.3", Proto: 3, Schema: 16, Now: time.Now})
+	rec = httptest.NewRecorder()
+	noFiles.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/library/tracks/unknown/audio", nil))
+	if rec.Code != http.StatusNotImplemented {
+		t.Fatalf("status without a file store = %d, want %d", rec.Code, http.StatusNotImplemented)
+	}
+}

@@ -12,6 +12,7 @@ import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.groovesync.android.playback.Media3PlayerEngine
+import com.groovesync.android.playback.STREAM_EXTRA
 import com.groovesync.common.play.PlayDecision
 import com.groovesync.common.play.PlaybackTracker
 import kotlinx.coroutines.CoroutineScope
@@ -134,7 +135,10 @@ class PlaybackService : MediaLibraryService() {
 
     private fun track(item: MediaItem?) {
         val canonicalId = item.canonicalId() ?: return
-        if (canonicalId != tracker.currentId) tracker.start(canonicalId, engine.durationMs())
+        val streamed = item?.mediaMetadata?.extras?.getBoolean(STREAM_EXTRA) == true
+        if (canonicalId != tracker.currentId) {
+            tracker.startIfCountable(canonicalId, engine.durationMs(), countable = !streamed)
+        }
     }
 
     private fun MediaItem?.canonicalId(): String? =

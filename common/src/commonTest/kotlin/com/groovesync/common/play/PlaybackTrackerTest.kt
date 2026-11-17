@@ -84,3 +84,26 @@ class PlaybackTrackerTest {
         assertNull(tracker.completed())
     }
 }
+
+class StreamNotCountedTest {
+    @Test
+    fun aStreamReportsNoPlayOrSkip() {
+        val tracker = PlaybackTracker(shouldScrobble = { _, _ -> true }, minimumSkipMs = 1_000)
+        tracker.startIfCountable("track-1", durationMs = 200_000, countable = false)
+        assertNull(tracker.currentId)
+        tracker.progress(150_000)
+        assertNull(tracker.completed(durationMs = 200_000))
+        assertNull(tracker.skipped())
+    }
+
+    @Test
+    fun aLocalTrackStillReports() {
+        val tracker = PlaybackTracker(shouldScrobble = { _, _ -> true }, minimumSkipMs = 1_000)
+        tracker.startIfCountable("track-1", durationMs = 200_000, countable = true)
+        assertEquals("track-1", tracker.currentId)
+        tracker.progress(150_000)
+        val decision = tracker.completed(durationMs = 200_000)
+        assertEquals("track-1", decision?.canonicalId)
+        assertEquals("play", decision?.type)
+    }
+}

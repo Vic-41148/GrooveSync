@@ -18,6 +18,9 @@ class SyncdApi(
     var lastBaseUrl: String = serverUrls.firstOrNull().orEmpty()
         private set
 
+    /** The base a request actually succeeded on, so a stream skips dead URLs. */
+    private var reachableBaseUrl: String? = null
+
     fun withToken(value: String): SyncdApi = SyncdApi(serverUrls, value, deviceId)
 
     private fun headers(extra: Map<String, String> = emptyMap()): Map<String, String> {
@@ -43,6 +46,7 @@ class SyncdApi(
                     continue
                 }
                 lastBaseUrl = base
+                reachableBaseUrl = base
                 return response
             } catch (error: Exception) {
                 last = error
@@ -144,6 +148,26 @@ class SyncdApi(
         val suffix = if (since.isBlank()) "" else "&since=${URLEncoder.encode(since, "UTF-8")}"
         val response = requireOk(call("GET", "/sync/v1/events?limit=$limit$suffix"), "events")
         return json.decodeFromString(EventsResponse.serializer(), response.text())
+    }
+
+    /**
+     * Absolute URL that streams the best rendition of a canonical track. Uses
+     * the server that answered last, so a mesh failover is already reflected.
+     * Returns null when no server is configured.
+     */
+    fun streamUrl(canonicalId: String): String? {
+        if (canonicalId.isBlank()) return null
+        val base = reachableBaseUrl ?: lastBaseUrl.ifBlank { serverUrls.firstOrNull().orEmpty() }
+        if (base.isBlank()) return null
+        return base.trimEnd('/') + "/sync/v1/library/tracks/" + encode(canonicalId) + "/audio"
+    }
+
+    /** Headers for a media request: the JSON calls' auth, without gzip. */
+    fun streamHeaders(): Map<String, String> {
+        val out = linkedMapOf<String, String>()
+        if (token.isNotEmpty()) out["Authorization"] = "Bearer $token"
+        if (deviceId.isNotEmpty()) out["X-Device-Id"] = deviceId
+        return out
     }
 
     fun eventsStream(): SseStream {

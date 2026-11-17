@@ -33,6 +33,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 private const val SEARCH_LIMIT = 500
 private const val SEARCH_DEBOUNCE_MS = 250L
@@ -43,15 +44,28 @@ private const val SEARCH_DEBOUNCE_MS = 250L
  * 50k-track table.
  */
 @Composable
-fun SearchScreen(mirror: Mirror, deviceSync: DeviceSync, api: SyncdApi?) {
+fun SearchScreen(
+    mirror: Mirror,
+    deviceSync: DeviceSync,
+    api: SyncdApi?,
+    playback: PlaybackController,
+) {
     var query by rememberSaveable { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var pinned by remember { mutableStateOf(deviceSync.pinned()) }
     var badges by remember { mutableStateOf<Map<String, OfflineBadge>>(emptyMap()) }
     var whyTrack by remember { mutableStateOf<MirrorTrack?>(null) }
+    var local by remember { mutableStateOf<Map<String, File>>(emptyMap()) }
     val scope = rememberCoroutineScope()
     val term = query.trim()
+
+    // The folder is walked once per screen, not on every keystroke.
+    LaunchedEffect(Unit) {
+        local = withContext(Dispatchers.IO) {
+            deviceSync.localTracks().associate { it.canonicalId to it.file }
+        }
+    }
 
     LaunchedEffect(term) {
         if (term.isBlank()) {
@@ -91,6 +105,9 @@ fun SearchScreen(mirror: Mirror, deviceSync: DeviceSync, api: SyncdApi?) {
                     badge = badges[track.canonicalId] ?: OfflineBadge.ONLINE_ONLY,
                     pinned = track.canonicalId in pinned,
                     onOpen = { whyTrack = track },
+                    onPlay = {
+                        playMirrorTracks(results, results.indexOf(track), local, api, playback)
+                    },
                     onTogglePin = {
                         scope.launch {
                             pinned = withContext(Dispatchers.IO) {
@@ -125,6 +142,7 @@ private fun SearchResult(
     badge: OfflineBadge,
     pinned: Boolean,
     onOpen: () -> Unit,
+    onPlay: () -> Unit,
     onTogglePin: () -> Unit,
 ) {
     Row(
@@ -145,6 +163,9 @@ private fun SearchResult(
         OfflineBadgeLabel(badge)
         if (track.durationMs > 0) {
             Text(formatDuration(track.durationMs), style = MaterialTheme.typography.bodySmall)
+        }
+        TextButton(onClick = onPlay) {
+            Text("Play")
         }
         TextButton(onClick = onTogglePin) {
             Text(if (pinned) "Unpin" else "Pin")

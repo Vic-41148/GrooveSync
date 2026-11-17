@@ -87,3 +87,32 @@ LIMIT 1
 		Reader:  file,
 	}, nil
 }
+
+// HashForTrack picks the digest a device should stream for a canonical track.
+// Local files outrank cached downloads, then the highest bitrate, so the same
+// choice is made every time while several renditions exist.
+func (s FileStore) HashForTrack(ctx context.Context, canonicalID string) (string, error) {
+	if s.DB == nil {
+		return "", errors.New("library: database is required")
+	}
+	canonicalID = strings.TrimSpace(canonicalID)
+	if canonicalID == "" {
+		return "", ErrFileNotFound
+	}
+	var hash string
+	err := s.DB.QueryRowContext(ctx, `
+SELECT lower(sha256)
+FROM rendition
+WHERE canonical_id = ? AND sha256 IS NOT NULL AND sha256 <> ''
+ORDER BY CASE kind WHEN 'file' THEN 0 WHEN 'cached' THEN 1 ELSE 2 END,
+         COALESCE(bitrate, 0) DESC, id ASC
+LIMIT 1
+`, canonicalID).Scan(&hash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrFileNotFound
+	}
+	if err != nil {
+		return "", fmt.Errorf("library: find audio for %s: %w", canonicalID, err)
+	}
+	return hash, nil
+}

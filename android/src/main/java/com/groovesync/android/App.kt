@@ -63,6 +63,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.io.IOException
 
 private const val LIST_LIMIT = 50_000
@@ -117,8 +118,8 @@ fun GrooveSyncApp(
             Destination.entries.forEach { destination ->
                 composable(destination.name) {
                     when (destination) {
-                        Destination.LIBRARY -> LibraryScreen(mirror, seed, api, deviceSync)
-                        Destination.SEARCH -> SearchScreen(mirror, deviceSync, api)
+                        Destination.LIBRARY -> LibraryScreen(mirror, seed, api, deviceSync, playback)
+                        Destination.SEARCH -> SearchScreen(mirror, deviceSync, api, playback)
                         Destination.OFFLINE -> OfflineScreen(deviceSync, playback)
                         Destination.YOU -> PolicyScreen(settings, deviceSync)
                         Destination.HOME -> HomeScreen(mirror, deviceSync) { destination ->
@@ -140,7 +141,13 @@ private fun icon(destination: Destination) = when (destination) {
 }
 
 @Composable
-fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: DeviceSync) {
+fun LibraryScreen(
+    mirror: Mirror,
+    seed: Boolean,
+    api: SyncdApi?,
+    deviceSync: DeviceSync,
+    playback: PlaybackController,
+) {
     var query by remember { mutableStateOf("") }
     var tracks by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
@@ -150,6 +157,7 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
     var pinned by remember { mutableStateOf(deviceSync.pinned()) }
     var badges by remember { mutableStateOf<Map<String, OfflineBadge>>(emptyMap()) }
     var whyTrack by remember { mutableStateOf<MirrorTrack?>(null) }
+    var local by remember { mutableStateOf<Map<String, File>>(emptyMap()) }
     val scope = rememberCoroutineScope()
     val changes = remember { Channel<Unit>(Channel.CONFLATED) }
 
@@ -206,8 +214,16 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
                 mirror.library.search(query, SEARCH_LIMIT)
             }
         }
-        badges = withContext(Dispatchers.IO) { deviceSync.offlineBadges() }
         loading = false
+    }
+
+    // Downloads change on a sync, not on a keystroke, so this walk is not
+    // repeated for every query.
+    LaunchedEffect(reload) {
+        badges = withContext(Dispatchers.IO) { deviceSync.offlineBadges() }
+        local = withContext(Dispatchers.IO) {
+            deviceSync.localTracks().associate { it.canonicalId to it.file }
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -236,6 +252,13 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
                         Text(track.artist)
                     }
                     OfflineBadgeLabel(badges[track.canonicalId] ?: OfflineBadge.ONLINE_ONLY)
+                    TextButton(
+                        onClick = {
+                            playMirrorTracks(tracks, tracks.indexOf(track), local, api, playback)
+                        },
+                    ) {
+                        Text("Play")
+                    }
                     val isPinned = track.canonicalId in pinned
                     TextButton(
                         onClick = {
@@ -257,6 +280,28 @@ fun LibraryScreen(mirror: Mirror, seed: Boolean, api: SyncdApi?, deviceSync: Dev
     whyTrack?.let { track ->
         WhySheet(api, track) { whyTrack = null }
     }
+}
+
+/** Plays the visible list, using a downloaded file where one exists. */
+internal fun playMirrorTracks(
+    tracks: List<MirrorTrack>,
+    index: Int,
+    local: Map<String, File>,
+    api: SyncdApi?,
+    playback: PlaybackController,
+) {
+    playback.play(
+        tracks.map { track ->
+            PlayTrack(
+                canonicalId = track.canonicalId,
+                title = track.title,
+                gainDb = track.replayGainDb,
+                localFile = local[track.canonicalId],
+            )
+        },
+        index.coerceAtLeast(0),
+        api,
+    )
 }
 
 private suspend fun refreshLibrary(mirror: Mirror, api: SyncdApi): Boolean =

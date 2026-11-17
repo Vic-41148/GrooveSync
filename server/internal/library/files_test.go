@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,5 +58,48 @@ INSERT INTO rendition (canonical_id, kind, path_or_uri, sha256) VALUES ('track-1
 	other := sha256.Sum256([]byte("other"))
 	if _, err := store.Open(ctx, hex.EncodeToString(other[:])); !errors.Is(err, ErrFileNotFound) {
 		t.Fatalf("Open() unknown error = %v, want ErrFileNotFound", err)
+	}
+}
+
+func TestFileStoreHashForTrackPrefersLocalThenBitrate(t *testing.T) {
+	t.Parallel()
+
+	db := openLibraryDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-1", "Song", "Artist", "Album", "", "")
+	insert := func(kind, path, hash string, bitrate int) {
+		t.Helper()
+		if _, err := db.Exec(`
+INSERT INTO rendition (canonical_id, kind, path_or_uri, sha256, bitrate) VALUES ('track-1', ?, ?, ?, ?)
+`, kind, path, hash, bitrate); err != nil {
+			t.Fatalf("insert %s rendition: %v", kind, err)
+		}
+	}
+	insert("cached", "low.opus", strings.Repeat("a", 64), 128000)
+	insert("cached", "high.opus", strings.Repeat("b", 64), 320000)
+	insert("file", "exact.flac", strings.Repeat("c", 64), 0)
+
+	store := FileStore{DB: db, Root: t.TempDir()}
+	hash, err := store.HashForTrack(ctx, "track-1")
+	if err != nil {
+		t.Fatalf("hash for track: %v", err)
+	}
+	if hash != strings.Repeat("c", 64) {
+		t.Fatalf("hash = %q, want the local file", hash)
+	}
+
+	if _, err := db.Exec(`DELETE FROM rendition WHERE kind = 'file'`); err != nil {
+		t.Fatalf("drop local rendition: %v", err)
+	}
+	hash, err = store.HashForTrack(ctx, "track-1")
+	if err != nil {
+		t.Fatalf("hash for cached track: %v", err)
+	}
+	if hash != strings.Repeat("b", 64) {
+		t.Fatalf("hash = %q, want the highest bitrate cached rendition", hash)
+	}
+
+	if _, err := store.HashForTrack(ctx, "missing"); !errors.Is(err, ErrFileNotFound) {
+		t.Fatalf("missing track error = %v, want ErrFileNotFound", err)
 	}
 }

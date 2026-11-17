@@ -16,8 +16,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -220,9 +222,11 @@ type LibraryHasher interface {
 	Run(context.Context, int) (library.HashResult, error)
 }
 
-// LibraryFiles opens a mirrored file by content hash.
+// LibraryFiles opens a mirrored file by content hash and resolves the digest
+// a device should stream for a canonical track.
 type LibraryFiles interface {
 	Open(context.Context, string) (library.Content, error)
+	HashForTrack(context.Context, string) (string, error)
 }
 
 // LibraryUploads stages files contributed by devices.
@@ -370,6 +374,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("PUT /sync/v1/why/{id}/override", d.handleWhyOverrideSet)
 	mux.HandleFunc("DELETE /sync/v1/why/{id}/override", d.handleWhyOverrideDelete)
 	mux.HandleFunc("GET /sync/v1/library/files/{hash}", d.handleLibraryFile)
+	mux.HandleFunc("GET /sync/v1/library/tracks/{id}/audio", d.handleLibraryTrackAudio)
 	mux.HandleFunc("PUT /sync/v1/library/uploads/{hash}", d.handleLibraryUpload)
 	mux.HandleFunc("GET /sync/v1/library/uploads/{hash}", d.handleLibraryUploadStatus)
 
@@ -2576,6 +2581,30 @@ func (d Deps) handleLibraryFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash := strings.ToLower(strings.TrimSpace(r.PathValue("hash")))
+	d.serveLibraryContent(w, r, hash, false)
+}
+
+// handleLibraryTrackAudio streams the best rendition of a canonical track, so
+// a client can play a track it has not downloaded without knowing a hash.
+func (d Deps) handleLibraryTrackAudio(w http.ResponseWriter, r *http.Request) {
+	if d.LibraryFiles == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "streaming unavailable"}, 0)
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	hash, err := d.LibraryFiles.HashForTrack(r.Context(), id)
+	switch {
+	case errors.Is(err, library.ErrFileNotFound):
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "no playable audio"}, 0)
+		return
+	case err != nil:
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "stream unavailable"}, 0)
+		return
+	}
+	d.serveLibraryContent(w, r, hash, true)
+}
+
+func (d Deps) serveLibraryContent(w http.ResponseWriter, r *http.Request, hash string, asAudio bool) {
 	content, err := d.LibraryFiles.Open(r.Context(), hash)
 	switch {
 	case errors.Is(err, library.ErrInvalidHash):
@@ -2590,7 +2619,13 @@ func (d Deps) handleLibraryFile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer content.Reader.Close()
 
-	w.Header().Set("Content-Type", "application/octet-stream")
+	contentType := "application/octet-stream"
+	if asAudio {
+		if known := mime.TypeByExtension(strings.ToLower(filepath.Ext(content.Name))); known != "" {
+			contentType = known
+		}
+	}
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", `"`+hash+`"`)
 	http.ServeContent(w, r, content.Name, content.ModTime, content.Reader)
 }

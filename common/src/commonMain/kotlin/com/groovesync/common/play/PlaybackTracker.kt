@@ -43,6 +43,18 @@ class PlaybackTracker(
     val currentId: String?
         get() = track?.canonicalId
 
+    /**
+     * [countable] is false for a stream. The handbook says a stream must not
+     * create a play, so nothing is tracked and no later skip is reported.
+     */
+    fun startIfCountable(canonicalId: String, durationMs: Long = 0, countable: Boolean = true) {
+        if (!countable) {
+            track = null
+            return
+        }
+        start(canonicalId, durationMs)
+    }
+
     fun start(canonicalId: String, durationMs: Long = 0) {
         if (canonicalId.isBlank()) {
             track = null

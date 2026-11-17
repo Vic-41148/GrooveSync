@@ -9,10 +9,14 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
 import com.groovesync.common.audio.AudioConfig
 import com.groovesync.common.audio.PlayerEngine
 import com.groovesync.common.audio.ReplayGain
@@ -23,18 +27,26 @@ import java.io.File
  * the formats it supports; [setConfig] drives the ReplayGain audio processor
  * and ignores the EQ and crossfade fields until those stages exist.
  */
-/** A file to play, tagged with the canonical id when the file came from the mirror. */
+/**
+ * A queue item: either a local file or a server URL. [stream] marks the second
+ * case, because a stream must not be reported as a play.
+ */
 data class QueueEntry(
     val path: String,
     val mediaId: String = "",
     /** Per-track ReplayGain in dB, null when the file carries no tag. */
     val gainDb: Float? = null,
+    /** Display title for a stream, which has no file name to fall back on. */
+    val title: String? = null,
+    val stream: Boolean = false,
 )
 
-private const val GAIN_DB_KEY = "com.groovesync.gainDb"
+internal const val GAIN_DB_KEY = "com.groovesync.gainDb"
+internal const val STREAM_EXTRA = "com.groovesync.stream"
 
 @androidx.annotation.OptIn(UnstableApi::class)
 class Media3PlayerEngine(context: Context) : PlayerEngine {
+    private val appContext = context.applicationContext
     private val replayGain = ReplayGainProcessor()
     private var replayGainEnabled = true
     private var fallbackGainDb = 0f
@@ -86,10 +98,15 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
         applyGain(player.currentMediaItem)
     }
 
-    fun playFrom(queue: List<QueueEntry>, index: Int) {
-        player.setMediaItems(queue.map(::mediaItem))
+    /**
+     * [headers] carry the session token for streamed items. The factory is
+     * rebuilt per play so a rotated token never reaches a later request.
+     */
+    fun playFrom(queue: List<QueueEntry>, index: Int = 0, headers: Map<String, String> = emptyMap()) {
+        val factory = mediaSourceFactory(headers)
+        val sources = queue.map { entry -> factory.createMediaSource(mediaItem(entry)) }
+        exoPlayer.setMediaSources(sources, index.coerceIn(0, (queue.size - 1).coerceAtLeast(0)), 0)
         player.prepare()
-        player.seekTo(index.coerceIn(0, (queue.size - 1).coerceAtLeast(0)), 0)
         applyGain(player.currentMediaItem)
         player.play()
     }
@@ -129,17 +146,30 @@ class Media3PlayerEngine(context: Context) : PlayerEngine {
         player.release()
     }
 
+    private fun mediaSourceFactory(headers: Map<String, String>): MediaSource.Factory {
+        val upstream = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(15_000)
+        if (headers.isNotEmpty()) upstream.setDefaultRequestProperties(headers)
+        return DefaultMediaSourceFactory(DefaultDataSource.Factory(appContext, upstream))
+    }
+
     private fun mediaItem(entry: QueueEntry): MediaItem {
         val uri = if (entry.path.contains("://")) {
             Uri.parse(entry.path)
         } else {
             Uri.fromFile(File(entry.path))
         }
-        val title = if (uri.scheme == "file") File(uri.path.orEmpty()).name else null
-        val metadata = MediaMetadata.Builder().setTitle(title)
-        entry.gainDb?.let { gain ->
-            metadata.setExtras(Bundle().apply { putFloat(GAIN_DB_KEY, gain) })
-        }
+        val title = entry.title ?: if (uri.scheme == "file") File(uri.path.orEmpty()).name else null
+        val extras = Bundle()
+        entry.gainDb?.let { gain -> extras.putFloat(GAIN_DB_KEY, gain) }
+        if (entry.stream) extras.putBoolean(STREAM_EXTRA, true)
+        val metadata = MediaMetadata.Builder()
+            .setTitle(title)
+            .setExtras(extras)
+            .setIsPlayable(true)
+            .setIsBrowsable(false)
         return MediaItem.Builder()
             .setUri(uri)
             .setMediaId(entry.mediaId.ifBlank { entry.path })
