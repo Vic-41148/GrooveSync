@@ -17,6 +17,12 @@ android {
         versionName = "0.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("boolean", "ALLOW_SEED", "false")
+        // Store artefacts are built with -Pgroovesync.store=true and must not
+        // offer the YouTube provider. GitHub Release artefacts keep it.
+        val storeBuild = providers.gradleProperty("groovesync.store")
+            .map { it.toBoolean() }
+            .getOrElse(false)
+        buildConfigField("boolean", "YOUTUBE_ENABLED", (!storeBuild).toString())
     }
 
     buildTypes {

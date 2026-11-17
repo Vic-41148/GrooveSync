@@ -43,6 +43,7 @@ fun LibraryScreen(
     services: AppServices,
     seed: Boolean,
     acquisition: AcquisitionController,
+    youTube: YouTubeController? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var tracks by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
@@ -55,8 +56,15 @@ fun LibraryScreen(
     var whyTrack by remember { mutableStateOf<MirrorTrack?>(null) }
     var local by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     val scope = rememberCoroutineScope()
+    var youTubeMode by remember { mutableStateOf(false) }
     val changes = remember { Channel<Unit>(Channel.CONFLATED) }
     val api = remember(services) { services.api() }
+
+    LaunchedEffect(youTubeMode, youTube) {
+        if (youTubeMode && youTube != null && youTube.tracks.isEmpty() && !youTube.loading) {
+            youTube.loadLikes()
+        }
+    }
 
     LaunchedEffect(api) {
         if (api == null) return@LaunchedEffect
@@ -126,6 +134,26 @@ fun LibraryScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
+        if (youTube != null) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+            ) {
+                androidx.compose.material3.FilterChip(
+                    selected = !youTubeMode,
+                    onClick = { youTubeMode = false },
+                    label = { Text("Local") },
+                )
+                androidx.compose.material3.FilterChip(
+                    selected = youTubeMode,
+                    onClick = { youTubeMode = true },
+                    label = { Text("YouTube Music") },
+                )
+            }
+        }
+        if (youTubeMode && youTube != null) {
+            YouTubePane(youTube, acquisition)
+        } else {
         TextField(value = query, onValueChange = { query = it }, label = { Text("Search") })
         if (loading) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -179,6 +207,7 @@ fun LibraryScreen(
                     }
                 }
             }
+        }
         }
     }
 

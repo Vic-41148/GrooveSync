@@ -169,10 +169,14 @@ class SyncdApi(
      * Files a request for a canonical track. The provider fetches it; this call
      * never downloads anything itself.
      */
-    fun requestAcquisition(canonicalId: String, query: String = ""): AcquisitionRequestDto {
+    fun requestAcquisition(
+        canonicalId: String,
+        query: String = "",
+        source: String = "",
+    ): AcquisitionRequestDto {
         val body = json.encodeToString(
             AcquisitionCreateRequest.serializer(),
-            AcquisitionCreateRequest(canonicalId, query),
+            AcquisitionCreateRequest(canonicalId, query, source),
         )
         val response = call(
             "POST",
@@ -182,6 +186,66 @@ class SyncdApi(
         )
         requireOk(response, "acquisition request")
         return json.decodeFromString(AcquisitionCreateResponse.serializer(), response.text()).request
+    }
+
+    fun youtubeSearch(query: String, limit: Int = 20): List<YouTubeTrackDto> {
+        val response = requireOk(
+            call("GET", "/sync/v1/connectors/youtube/search?q=" + encode(query) + "&limit=$limit"),
+            "youtube search",
+        )
+        return json.decodeFromString(YouTubeTracksResponse.serializer(), response.text()).tracks
+    }
+
+    fun youtubeLikes(): List<YouTubeTrackDto> = youtubeTracks("/sync/v1/connectors/youtube/likes", "youtube likes")
+
+    fun youtubeLibrarySongs(): List<YouTubeTrackDto> =
+        youtubeTracks("/sync/v1/connectors/youtube/library/songs", "youtube library")
+
+    fun youtubePlaylists(): List<YouTubePlaylistDto> {
+        val response = requireOk(call("GET", "/sync/v1/connectors/youtube/playlists"), "youtube playlists")
+        return json.decodeFromString(YouTubePlaylistsResponse.serializer(), response.text()).playlists
+    }
+
+    fun youtubePlaylistTracks(playlistId: String): List<YouTubeTrackDto> =
+        youtubeTracks(
+            "/sync/v1/connectors/youtube/playlists/" + encode(playlistId) + "/tracks",
+            "youtube playlist",
+        )
+
+    fun youtubeHome(): List<YouTubeSectionDto> {
+        val response = requireOk(call("GET", "/sync/v1/connectors/youtube/home"), "youtube home")
+        return json.decodeFromString(YouTubeHomeResponse.serializer(), response.text()).sections
+    }
+
+    /**
+     * Resolves one browse item to a canonical track and files its acquisition
+     * request. The watch URL travels with the request so the worker fetches the
+     * item the user picked instead of searching again.
+     */
+    fun youtubeDownload(track: YouTubeTrackDto): YouTubeDownloadResponse {
+        val body = json.encodeToString(
+            YouTubeDownloadRequest.serializer(),
+            YouTubeDownloadRequest(
+                videoId = track.videoId,
+                title = track.title,
+                artists = track.artists,
+                album = track.album,
+                durationMs = track.durationMs,
+            ),
+        )
+        val response = call(
+            "POST",
+            "/sync/v1/connectors/youtube/download",
+            mapOf("Content-Type" to "application/json"),
+            jsonBody(body),
+        )
+        requireOk(response, "youtube download")
+        return json.decodeFromString(YouTubeDownloadResponse.serializer(), response.text())
+    }
+
+    private fun youtubeTracks(path: String, what: String): List<YouTubeTrackDto> {
+        val response = requireOk(call("GET", path), what)
+        return json.decodeFromString(YouTubeTracksResponse.serializer(), response.text()).tracks
     }
 
     fun streamUrl(canonicalId: String): String? {

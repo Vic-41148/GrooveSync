@@ -51,12 +51,14 @@ class AcquisitionController(private val api: SyncdApi?) {
         states = next
     }
 
-    suspend fun request(canonicalId: String) {
-        val target = api ?: return
+    suspend fun request(canonicalId: String, query: String = "", source: String = ""): Boolean {
+        val target = api ?: return false
+        var queued = false
         message = withContext(Dispatchers.IO) {
             try {
-                val created = target.requestAcquisition(canonicalId)
+                val created = target.requestAcquisition(canonicalId, query, source)
                 states = states + (canonicalId to created.state)
+                queued = true
                 "Download queued"
             } catch (error: ApiException) {
                 when (error.status) {
@@ -72,10 +74,16 @@ class AcquisitionController(private val api: SyncdApi?) {
                 "Request failed: server unreachable"
             }
         }
+        return queued
     }
 
     fun clearMessage() {
         message = null
+    }
+
+    /** Lets a browse surface report an outcome that went through another route. */
+    fun note(text: String) {
+        message = text
     }
 
     private companion object {

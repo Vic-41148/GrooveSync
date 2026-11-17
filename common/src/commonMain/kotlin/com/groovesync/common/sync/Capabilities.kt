@@ -7,11 +7,16 @@ import com.groovesync.common.syncd.MetaDto
  * server does not advertise renders disabled with the reason, never hidden.
  */
 object Capabilities {
-    private data class Feature(val key: String, val label: String)
+    private data class Feature(val key: String, val label: String, val reason: String = "")
 
     private val features = listOf(
         Feature("why", "Score details"),
         Feature("override", "Manual ratings"),
+        Feature(
+            "youtube",
+            "YouTube Music browse",
+            "Sign the server's YouTube Music sidecar in to browse and download.",
+        ),
     )
 
     /** Feature keys these rows consume, so the UI can show the rest separately. */
@@ -31,7 +36,9 @@ object Capabilities {
                 Capability(
                     feature.label,
                     false,
-                    "This server does not advertise ${feature.label.lowercase()}.",
+                    feature.reason.ifBlank {
+                        "This server does not advertise ${feature.label.lowercase()}."
+                    },
                 )
             }
         }

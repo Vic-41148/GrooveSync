@@ -74,6 +74,7 @@ class MainActivity : ComponentActivity() {
                 seed = seed,
                 startRoute = start,
                 folderPicker = folderPicker,
+                youtube = BuildConfig.YOUTUBE_ENABLED,
             )
         }
     }

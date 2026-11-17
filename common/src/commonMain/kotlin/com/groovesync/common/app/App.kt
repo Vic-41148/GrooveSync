@@ -17,6 +17,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.groovesync.common.ui.Destination
 
 /**
@@ -32,6 +34,7 @@ fun GrooveSyncApp(
     seed: Boolean,
     startRoute: String? = null,
     folderPicker: FolderPickerSlot? = null,
+    youtube: Boolean = true,
 ) {
     var configured by remember { mutableStateOf(services.configured()) }
     if (!configured && !seed) {
@@ -43,6 +46,15 @@ fun GrooveSyncApp(
     val api = remember(configured) { services.api() }
     val acquisition = remember(api) { AcquisitionController(api) }
     LaunchedEffect(acquisition) { acquisition.refresh() }
+    var serverYouTube by remember(api) { mutableStateOf(false) }
+    LaunchedEffect(api) {
+        serverYouTube = withContext(Dispatchers.IO) {
+            runCatching { api?.metaInfo()?.features?.contains("youtube") == true }.getOrDefault(false)
+        }
+    }
+    val youTube = remember(api, acquisition, youtube, serverYouTube) {
+        if (youtube && serverYouTube && api != null) YouTubeController(api, acquisition) else null
+    }
     val start = Destination.entries.firstOrNull { it.name == startRoute }
         ?: if (configured) Destination.LIBRARY else Destination.HOME
     var current by rememberSaveable { mutableStateOf(start) }
@@ -66,9 +78,9 @@ fun GrooveSyncApp(
             Box(Modifier.fillMaxSize().padding(padding)) {
                 when (current) {
                     Destination.LIBRARY ->
-                        LibraryScreen(services, seed, acquisition)
+                        LibraryScreen(services, seed, acquisition, youTube)
                     Destination.SEARCH ->
-                        SearchScreen(services, acquisition)
+                        SearchScreen(services, acquisition, youTube)
                     Destination.OFFLINE ->
                         OfflineScreen(services, sync)
                     Destination.YOU ->

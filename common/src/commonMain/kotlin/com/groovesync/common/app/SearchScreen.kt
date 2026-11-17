@@ -38,6 +38,7 @@ private const val SEARCH_DEBOUNCE_MS = 250L
 fun SearchScreen(
     services: AppServices,
     acquisition: AcquisitionController,
+    youTube: YouTubeController? = null,
 ) {
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<MirrorTrack>>(emptyList()) }
@@ -47,6 +48,7 @@ fun SearchScreen(
     var whyTrack by remember { mutableStateOf<MirrorTrack?>(null) }
     var local by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     val scope = rememberCoroutineScope()
+    var youTubeMode by remember { mutableStateOf(false) }
     val term = query.trim()
 
     // The folder is walked once per screen, not on every keystroke.
@@ -57,7 +59,17 @@ fun SearchScreen(
         pinned = withContext(Dispatchers.IO) { services.pinned() }
     }
 
-    LaunchedEffect(term) {
+    LaunchedEffect(youTubeMode, youTube) {
+        if (youTubeMode && youTube != null && youTube.tracks.isEmpty() && !youTube.loading) {
+            youTube.loadLikes()
+        }
+    }
+
+    LaunchedEffect(term, youTubeMode) {
+        if (youTubeMode) {
+            searching = false
+            return@LaunchedEffect
+        }
         if (term.isBlank()) {
             results = emptyList()
             searching = false
@@ -71,6 +83,26 @@ fun SearchScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
+        if (youTube != null) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                androidx.compose.material3.FilterChip(
+                    selected = !youTubeMode,
+                    onClick = { youTubeMode = false },
+                    label = { Text("Local") },
+                )
+                androidx.compose.material3.FilterChip(
+                    selected = youTubeMode,
+                    onClick = { youTubeMode = true },
+                    label = { Text("YouTube Music") },
+                )
+            }
+        }
+        if (youTubeMode && youTube != null) {
+            YouTubePane(youTube, acquisition)
+        } else {
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -112,6 +144,7 @@ fun SearchScreen(
                 )
                 HorizontalDivider()
             }
+        }
         }
     }
 

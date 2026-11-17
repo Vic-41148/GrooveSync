@@ -220,6 +220,7 @@ data class AcquisitionRequestDto(
     val id: String = "",
     @SerialName("canonical_id") val canonicalId: String = "",
     val query: String = "",
+    val source: String = "",
     val state: String = "",
     val attempts: Int = 0,
     @SerialName("last_error") val lastError: String = "",
@@ -237,4 +238,76 @@ data class AcquisitionCreateResponse(val request: AcquisitionRequestDto = Acquis
 data class AcquisitionCreateRequest(
     @SerialName("canonical_id") val canonicalId: String,
     val query: String = "",
+    val source: String = "",
+)
+
+/** One YouTube Music item as the sidecar reports it. */
+@Serializable
+data class YouTubeTrackDto(
+    @SerialName("video_id") val videoId: String = "",
+    val title: String = "",
+    val artists: List<String> = emptyList(),
+    val album: String = "",
+    @SerialName("duration_ms") val durationMs: Int = 0,
+    val kind: String = "",
+    @SerialName("canonical_id") val canonicalId: String = "",
+) {
+    val artist: String get() = artists.joinToString(", ")
+}
+
+@Serializable
+data class YouTubeTracksResponse(val tracks: List<YouTubeTrackDto> = emptyList())
+
+@Serializable
+data class YouTubePlaylistDto(
+    val id: String = "",
+    val name: String = "",
+    @SerialName("track_count") val trackCount: Int = 0,
+)
+
+@Serializable
+data class YouTubePlaylistsResponse(val playlists: List<YouTubePlaylistDto> = emptyList())
+
+@Serializable
+data class YouTubeAlbumDto(
+    @SerialName("browse_id") val browseId: String = "",
+    val title: String = "",
+    val artists: List<String> = emptyList(),
+    val year: String = "",
+)
+
+@Serializable
+data class YouTubeAlbumsResponse(val albums: List<YouTubeAlbumDto> = emptyList())
+
+@Serializable
+data class YouTubeArtistDto(
+    @SerialName("browse_id") val browseId: String = "",
+    val name: String = "",
+)
+
+@Serializable
+data class YouTubeArtistsResponse(val artists: List<YouTubeArtistDto> = emptyList())
+
+@Serializable
+data class YouTubeSectionDto(
+    val title: String = "",
+    val tracks: List<YouTubeTrackDto> = emptyList(),
+)
+
+@Serializable
+data class YouTubeHomeResponse(val sections: List<YouTubeSectionDto> = emptyList())
+
+@Serializable
+data class YouTubeDownloadRequest(
+    @SerialName("video_id") val videoId: String,
+    val title: String,
+    val artists: List<String> = emptyList(),
+    val album: String = "",
+    @SerialName("duration_ms") val durationMs: Int = 0,
+)
+
+@Serializable
+data class YouTubeDownloadResponse(
+    val request: AcquisitionRequestDto = AcquisitionRequestDto(),
+    @SerialName("canonical_id") val canonicalId: String = "",
 )
