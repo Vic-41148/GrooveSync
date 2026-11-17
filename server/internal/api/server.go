@@ -2400,6 +2400,7 @@ type acquisitionResponse struct {
 	ID          string `json:"id"`
 	CanonicalID string `json:"canonical_id"`
 	Query       string `json:"query"`
+	Source      string `json:"source,omitempty"`
 	State       string `json:"state"`
 	Attempts    int    `json:"attempts"`
 	LastError   string `json:"last_error,omitempty"`
@@ -2412,6 +2413,7 @@ func newAcquisitionResponse(request acquisition.Request) acquisitionResponse {
 		ID:          request.ID,
 		CanonicalID: request.CanonicalID,
 		Query:       request.Query,
+		Source:      request.Source,
 		State:       string(request.State),
 		Attempts:    request.Attempts,
 		LastError:   request.LastError,

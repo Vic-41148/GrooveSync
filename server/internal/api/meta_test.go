@@ -677,6 +677,45 @@ func TestAcquisitionSuggestions(t *testing.T) {
 	}
 }
 
+func TestAcquisitionSourceSurvivesTheResponse(t *testing.T) {
+	t.Parallel()
+
+	db := openAPIConnectorTestDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	if _, err := db.ExecContext(ctx, `INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-1', 'Song', 'Artist', 180000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+
+	h := New(Deps{Version: "1.2.3", Proto: 3, Schema: 9, Now: time.Now, Acquisition: acquisition.Repo{DB: db}})
+	body := `{"canonical_id":"track-1","query":"Song Artist","source":"https://music.youtube.com/watch?v=v1"}`
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/sync/v1/acquisition", strings.NewReader(body)))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusCreated, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/sync/v1/acquisition", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	var listed struct {
+		Requests []struct {
+			Source string `json:"source"`
+		} `json:"requests"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if len(listed.Requests) != 1 {
+		t.Fatalf("requests = %#v, want one", listed.Requests)
+	}
+	if listed.Requests[0].Source != "https://music.youtube.com/watch?v=v1" {
+		t.Fatalf("source = %q", listed.Requests[0].Source)
+	}
+}
+
 func TestAcquisitionLifecycle(t *testing.T) {
 	t.Parallel()
 
