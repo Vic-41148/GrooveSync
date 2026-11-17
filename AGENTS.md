@@ -28,4 +28,7 @@ Binding for every agent and contributor working in this repo.
 - `docs/` is local only and never committed.
 - Every GitHub Action is pinned by full commit SHA with the tag in a comment.
 - The Flatpak manifest is human-written, always.
-- No Spotify or YouTube audio, no in-app APK updater, no proprietary SDKs.
+- No Spotify audio, no in-app APK updater, no proprietary SDKs.
+- YouTube audio is allowed only in non-store builds. Extraction stays in the
+  separate provisioner repo; GitHub Release artefacts may include it, Play and
+  F-Droid artefacts must not.
