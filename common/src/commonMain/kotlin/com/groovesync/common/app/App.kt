@@ -46,6 +46,9 @@ fun GrooveSyncApp(
     val api = remember(configured) { services.api() }
     val acquisition = remember(api) { AcquisitionController(api) }
     LaunchedEffect(acquisition) { acquisition.refresh() }
+    LaunchedEffect(acquisition, acquisition.pending) {
+        if (acquisition.pending) acquisition.pollPending()
+    }
     var serverYouTube by remember(api) { mutableStateOf(false) }
     LaunchedEffect(api) {
         serverYouTube = withContext(Dispatchers.IO) {

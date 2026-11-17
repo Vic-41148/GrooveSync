@@ -33,6 +33,10 @@ class AcquisitionController(private val api: SyncdApi?) {
     var states by mutableStateOf<Map<String, String>>(emptyMap())
         private set
 
+    /** True while a filed request has not reached a terminal state. */
+    val pending: Boolean
+        get() = states.values.any { it == "queued" || it == "claimed" }
+
     var message by mutableStateOf<String?>(null)
         private set
 
@@ -49,6 +53,20 @@ class AcquisitionController(private val api: SyncdApi?) {
             }
         }
         states = next
+    }
+
+    /**
+     * Refreshes while something is still moving, so a finished download stops
+     * looking queued. The attempt cap keeps a stopped provider from polling
+     * forever; a reopen or a Library refresh starts a new run.
+     */
+    suspend fun pollPending(intervalMillis: Long = 5_000, attempts: Int = 120) {
+        var remaining = attempts
+        while (pending && remaining > 0) {
+            remaining -= 1
+            delay(intervalMillis)
+            refresh()
+        }
     }
 
     suspend fun request(canonicalId: String, query: String = "", source: String = ""): Boolean {
