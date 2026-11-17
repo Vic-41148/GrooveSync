@@ -6,9 +6,13 @@ package library
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
+	"strconv"
 	"strings"
 )
 
@@ -240,6 +244,59 @@ func (r Repo) Count(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("library: count tracks: %w", err)
 	}
 	return total, nil
+}
+
+// Revision digests the track fields a client mirror keeps, so a poller can
+// skip a full fetch when nothing changed. Renditions and identifiers are left
+// out on purpose: they are not mirrored, and including them would trigger a
+// refresh that changes no row on the client.
+func (r Repo) Revision(ctx context.Context) (string, error) {
+	if r.DB == nil {
+		return "", errors.New("library: database is required")
+	}
+	rows, err := r.DB.QueryContext(ctx, `
+SELECT canonical_id, title, artist, COALESCE(album, ''), duration_ms, replay_gain_track_db
+FROM track
+ORDER BY canonical_id ASC
+`)
+	if err != nil {
+		return "", fmt.Errorf("library: revision: %w", err)
+	}
+	defer rows.Close()
+
+	digest := sha256.New()
+	for rows.Next() {
+		var id, title, artist, album string
+		var duration int
+		var gain sql.NullFloat64
+		if err := rows.Scan(&id, &title, &artist, &album, &duration, &gain); err != nil {
+			return "", fmt.Errorf("library: revision scan: %w", err)
+		}
+		writeField(digest, id)
+		writeField(digest, title)
+		writeField(digest, artist)
+		writeField(digest, album)
+		writeField(digest, strconv.Itoa(duration))
+		writeField(digest, gainField(gain))
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("library: revision rows: %w", err)
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+// writeField length-prefixes a value so adjacent fields cannot be confused.
+func writeField(w io.Writer, value string) {
+	io.WriteString(w, strconv.Itoa(len(value)))
+	io.WriteString(w, ":")
+	io.WriteString(w, value)
+}
+
+func gainField(gain sql.NullFloat64) string {
+	if !gain.Valid {
+		return ""
+	}
+	return strconv.FormatFloat(gain.Float64, 'g', -1, 64)
 }
 
 func (r Repo) renditions(ctx context.Context, ids []string) (map[string][]Rendition, error) {

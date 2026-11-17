@@ -156,3 +156,47 @@ UPDATE track SET replay_gain_track_db = -7.5, replay_gain_album_db = -6.25 WHERE
 		t.Fatalf("Get() track gain = %v, want -7.5", got.ReplayGainTrack)
 	}
 }
+
+func TestRevisionTracksMirrorFields(t *testing.T) {
+	t.Parallel()
+
+	db := openLibraryDB(t)
+	ctx := context.Background()
+	seedTrack(t, db, "track-a", "Alpha", "Artist", "Album", "", "")
+	seedTrack(t, db, "track-b", "Beta", "Artist", "Album", "", "")
+
+	repo := Repo{DB: db}
+	first, err := repo.Revision(ctx)
+	if err != nil {
+		t.Fatalf("Revision() error = %v", err)
+	}
+	again, err := repo.Revision(ctx)
+	if err != nil {
+		t.Fatalf("Revision() second error = %v", err)
+	}
+	if first == "" || first != again {
+		t.Fatalf("Revision() = %q then %q, want a stable non-empty digest", first, again)
+	}
+
+	if _, err := db.Exec(`UPDATE track SET title = 'Alpha Two' WHERE canonical_id = 'track-a'`); err != nil {
+		t.Fatalf("update title: %v", err)
+	}
+	renamed, err := repo.Revision(ctx)
+	if err != nil {
+		t.Fatalf("Revision() after rename error = %v", err)
+	}
+	if renamed == first {
+		t.Fatal("Revision() unchanged after a title edit")
+	}
+
+	if _, err := db.Exec(`INSERT INTO track (canonical_id, title, artist, duration_ms) VALUES ('track-c', 'Gamma', 'Artist', 1000)`); err != nil {
+		t.Fatalf("insert track: %v", err)
+	}
+	added, err := repo.Revision(ctx)
+	if err != nil {
+		t.Fatalf("Revision() after insert error = %v", err)
+	}
+	if added == renamed {
+		t.Fatal("Revision() unchanged after an insert")
+	}
+}

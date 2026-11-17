@@ -5,9 +5,11 @@ package api
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -230,6 +232,52 @@ func TestWithCompatibilityEnforcesMinBuild(t *testing.T) {
 
 			if rec.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
+		})
+	}
+}
+
+func TestGzipCompressesJSONOnly(t *testing.T) {
+	t.Parallel()
+
+	h := New(Deps{Version: "1.2.3"})
+
+	tests := []struct {
+		name     string
+		encoding string
+		wantGzip bool
+	}{
+		{name: "offered", encoding: "gzip, deflate", wantGzip: true},
+		{name: "not offered", encoding: "", wantGzip: false},
+		{name: "refused by weight", encoding: "gzip;q=0", wantGzip: false},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req := httptest.NewRequest(http.MethodGet, "/sync/v1/meta", nil)
+			if tc.encoding != "" {
+				req.Header.Set("Accept-Encoding", tc.encoding)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+
+			if got := rec.Header().Get("Content-Encoding") == "gzip"; got != tc.wantGzip {
+				t.Fatalf("Content-Encoding gzip = %v, want %v (header %q)", got, tc.wantGzip, rec.Header().Get("Content-Encoding"))
+			}
+			body := rec.Body.Bytes()
+			if tc.wantGzip {
+				reader, err := gzip.NewReader(bytes.NewReader(body))
+				if err != nil {
+					t.Fatalf("gzip.NewReader: %v", err)
+				}
+				if body, err = io.ReadAll(reader); err != nil {
+					t.Fatalf("read gzip body: %v", err)
+				}
+			}
+			var meta map[string]any
+			if err := json.Unmarshal(body, &meta); err != nil {
+				t.Fatalf("body is not JSON: %v", err)
 			}
 		})
 	}

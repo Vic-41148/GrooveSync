@@ -4,8 +4,11 @@
 package library
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -38,6 +41,60 @@ func BenchmarkListLibrary(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// BenchmarkFullLibraryPayload sizes a complete `/sync/v1/library` refresh, which
+// is what a client does today. It reports both the wire bytes and the same body
+// gzipped, so the UX-4 metadata budget can be checked against a real payload.
+func BenchmarkFullLibraryPayload(b *testing.B) {
+	db := openBenchDB(b, benchLibrarySize)
+	repo := Repo{DB: db}
+	ctx := context.Background()
+
+	const pageSize = 500
+	var rawBytes, gzipBytes int
+	for b.Loop() {
+		rawBytes, gzipBytes = 0, 0
+		for offset := 0; offset < benchLibrarySize; offset += pageSize {
+			tracks, err := repo.List(ctx, pageSize, offset)
+			if err != nil {
+				b.Fatal(err)
+			}
+			body, err := json.Marshal(map[string]any{
+				"limit":  pageSize,
+				"offset": offset,
+				"total":  benchLibrarySize,
+				"tracks": tracks,
+			})
+			if err != nil {
+				b.Fatal(err)
+			}
+			rawBytes += len(body) + 1
+			var compressed bytes.Buffer
+			writer := gzip.NewWriter(&compressed)
+			if _, err := writer.Write(body); err != nil {
+				b.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				b.Fatal(err)
+			}
+			gzipBytes += compressed.Len() + 1
+		}
+	}
+	b.ReportMetric(float64(rawBytes), "payload-bytes")
+	b.ReportMetric(float64(gzipBytes), "gzip-bytes")
+}
+
+func BenchmarkRevision(b *testing.B) {
+	db := openBenchDB(b, benchLibrarySize)
+	repo := Repo{DB: db}
+	ctx := context.Background()
+
+	for b.Loop() {
+		if _, err := repo.Revision(ctx); err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

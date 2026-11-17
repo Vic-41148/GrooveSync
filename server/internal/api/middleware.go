@@ -4,6 +4,7 @@
 package api
 
 import (
+	"compress/gzip"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -68,6 +69,97 @@ func newRequestID() string {
 func requestIDFrom(ctx context.Context) string {
 	id, _ := ctx.Value(requestIDKey).(string)
 	return id
+}
+
+// withGzip compresses JSON responses when the caller offers gzip. The
+// decision follows the response content type at WriteHeader, so audio streams,
+// server-sent events and plain-text errors pass through untouched.
+func withGzip(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !acceptsGzip(r.Header.Get("Accept-Encoding")) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		gw := &gzipResponseWriter{ResponseWriter: w}
+		defer gw.close()
+		next.ServeHTTP(gw, r)
+	})
+}
+
+func acceptsGzip(header string) bool {
+	for _, part := range strings.Split(header, ",") {
+		fields := strings.Split(part, ";")
+		if !strings.EqualFold(strings.TrimSpace(fields[0]), "gzip") {
+			continue
+		}
+		refused := false
+		for _, field := range fields[1:] {
+			key, value, found := strings.Cut(strings.TrimSpace(field), "=")
+			if found && strings.EqualFold(key, "q") && strings.TrimSpace(value) == "0" {
+				refused = true
+			}
+		}
+		return !refused
+	}
+	return false
+}
+
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	writer   *gzip.Writer
+	decided  bool
+	compress bool
+}
+
+func (w *gzipResponseWriter) WriteHeader(status int) {
+	if w.decided {
+		return
+	}
+	w.decided = true
+	w.compress = w.Header().Get("Content-Encoding") == "" &&
+		strings.HasPrefix(w.Header().Get("Content-Type"), "application/json")
+	if w.compress {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Add("Vary", "Accept-Encoding")
+		w.Header().Del("Content-Length")
+		w.writer = gzip.NewWriter(w.ResponseWriter)
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *gzipResponseWriter) Write(body []byte) (int, error) {
+	if !w.decided {
+		w.WriteHeader(http.StatusOK)
+	}
+	if !w.compress {
+		return w.ResponseWriter.Write(body)
+	}
+	return w.writer.Write(body)
+}
+
+// Flush keeps server-sent events working through the wrapper. A non-JSON
+// response is never compressed, so its flushes go straight to the client.
+func (w *gzipResponseWriter) Flush() {
+	if !w.decided {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.compress && w.writer != nil {
+		w.writer.Flush()
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *gzipResponseWriter) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
+
+func (w *gzipResponseWriter) close() error {
+	if w.writer == nil {
+		return nil
+	}
+	return w.writer.Close()
 }
 
 // withRecovery turns a panic into a 500 and keeps the process alive. It logs

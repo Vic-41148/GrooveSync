@@ -365,6 +365,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("POST /sync/v1/library/hash", d.handleLibraryHash)
 	mux.HandleFunc("POST /sync/v1/library/enrich", d.handleLibraryEnrich)
 	mux.HandleFunc("GET /sync/v1/library", d.handleLibrary)
+	mux.HandleFunc("GET /sync/v1/library/revision", d.handleLibraryRevision)
 	mux.HandleFunc("GET /sync/v1/why/{id}", d.handleWhy)
 	mux.HandleFunc("PUT /sync/v1/why/{id}/override", d.handleWhyOverrideSet)
 	mux.HandleFunc("DELETE /sync/v1/why/{id}/override", d.handleWhyOverrideDelete)
@@ -373,6 +374,7 @@ func New(d Deps) http.Handler {
 	mux.HandleFunc("GET /sync/v1/library/uploads/{hash}", d.handleLibraryUploadStatus)
 
 	var h http.Handler = mux
+	h = withGzip(h)
 	h = withCompatibility(depsAdapter{d}, h)
 	// Wrap auth next so handlers see an authenticated request context.
 	h = withAuth(depsAdapter{d}, h)
@@ -2820,6 +2822,22 @@ func (d Deps) trackExists(ctx context.Context, id string) bool {
 	}
 	_, err := getter.Get(ctx, id)
 	return err == nil
+}
+
+func (d Deps) handleLibraryRevision(w http.ResponseWriter, r *http.Request) {
+	reviser, ok := d.Library.(interface {
+		Revision(context.Context) (string, error)
+	})
+	if !ok {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "library revision unavailable"}, 0)
+		return
+	}
+	revision, err := reviser.Revision(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "library unavailable"}, 0)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"revision": revision}, 0)
 }
 
 func (d Deps) handleLibrary(w http.ResponseWriter, r *http.Request) {
