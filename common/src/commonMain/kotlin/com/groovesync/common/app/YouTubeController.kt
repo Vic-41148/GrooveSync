@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 
 /** Where the YouTube Music pane gets its rows. */
-enum class YouTubeSource { SEARCH, LIKED, LIBRARY, PLAYLISTS }
+enum class YouTubeSource { HOME, SEARCH, LIKED, LIBRARY, PLAYLISTS }
 
 /**
  * Browse state for the signed-in YouTube Music account. The account itself
@@ -66,19 +66,26 @@ class YouTubeController(
         load {
             tracks = target.youtubeSearch(query, limit)
             playlists = emptyList()
+            sections = emptyList()
         }
     }
 
     suspend fun loadLikes() {
         val target = api ?: return
         source = YouTubeSource.LIKED
-        load { tracks = target.youtubeLikes() }
+        load {
+            tracks = target.youtubeLikes()
+            sections = emptyList()
+        }
     }
 
     suspend fun loadLibrary() {
         val target = api ?: return
         source = YouTubeSource.LIBRARY
-        load { tracks = target.youtubeLibrarySongs() }
+        load {
+            tracks = target.youtubeLibrarySongs()
+            sections = emptyList()
+        }
     }
 
     suspend fun loadPlaylists() {
@@ -87,6 +94,7 @@ class YouTubeController(
         load {
             playlists = target.youtubePlaylists()
             tracks = emptyList()
+            sections = emptyList()
         }
     }
 
@@ -96,12 +104,18 @@ class YouTubeController(
         load {
             playlistId = id
             tracks = target.youtubePlaylistTracks(id)
+            sections = emptyList()
         }
     }
 
     suspend fun loadHome() {
         val target = api ?: return
-        load { sections = target.youtubeHome() }
+        source = YouTubeSource.HOME
+        load {
+            sections = target.youtubeHome()
+            tracks = emptyList()
+            playlists = emptyList()
+        }
     }
 
     /**

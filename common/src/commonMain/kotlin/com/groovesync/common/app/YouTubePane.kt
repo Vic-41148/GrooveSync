@@ -42,6 +42,7 @@ fun YouTubePane(youTube: YouTubeController, acquisition: AcquisitionController) 
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            TextButton(onClick = { scope.launch { youTube.loadHome() } }) { Text("Home") }
             TextButton(onClick = { scope.launch { youTube.loadLikes() } }) { Text("Liked") }
             TextButton(onClick = { scope.launch { youTube.loadLibrary() } }) { Text("Your library") }
             TextButton(onClick = { scope.launch { youTube.loadPlaylists() } }) { Text("Playlists") }
@@ -100,9 +101,28 @@ fun YouTubePane(youTube: YouTubeController, acquisition: AcquisitionController) 
             }
         }
 
+        if (youTube.source == YouTubeSource.HOME) {
+            LazyColumn(Modifier.fillMaxSize()) {
+                youTube.sections.forEachIndexed { index, section ->
+                    item(key = "section-$index") {
+                        Text(
+                            section.title,
+                            Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp),
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                    }
+                    items(section.tracks, key = { "section-$index-${it.videoId}" }) { track ->
+                        YouTubeRow(track, youTube, acquisition, scope)
+                        HorizontalDivider()
+                    }
+                }
+            }
+            return@Column
+        }
+
         LazyColumn(Modifier.fillMaxSize()) {
             items(youTube.tracks, key = { it.videoId }) { track ->
-                YouTubeRow(track, youTube, scope)
+                YouTubeRow(track, youTube, acquisition, scope)
                 HorizontalDivider()
             }
         }
@@ -113,6 +133,7 @@ fun YouTubePane(youTube: YouTubeController, acquisition: AcquisitionController) 
 private fun YouTubeRow(
     track: YouTubeTrackDto,
     youTube: YouTubeController,
+    acquisition: AcquisitionController,
     scope: kotlinx.coroutines.CoroutineScope,
 ) {
     Row(
@@ -137,7 +158,10 @@ private fun YouTubeRow(
                 style = MaterialTheme.typography.bodySmall,
             )
         }
-        val requested = track.videoId in youTube.requested
+        // A row the library already queued keeps its queued label across
+        // visits, not only in the session that filed it.
+        val requested = track.videoId in youTube.requested ||
+            (track.canonicalId.isNotBlank() && track.canonicalId in acquisition.states)
         val downloading = track.videoId in youTube.downloading
         TextButton(
             enabled = !requested && !downloading,

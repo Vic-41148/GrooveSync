@@ -84,6 +84,28 @@ class YouTubeControllerTest {
         }
     }
 
+    @Test
+    fun homeLoadsTheAccountShelves() = runBlocking {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.handle("/sync/v1/connectors/youtube/home", """
+            {"sections":[{"title":"Listen again","tracks":[{"video_id":"v1","title":"Song","artists":["Artist"]}]}]}
+        """)
+        server.start()
+        try {
+            val api = SyncdApi(listOf("http://127.0.0.1:${server.address.port}"))
+            val controller = YouTubeController(api, AcquisitionController(api))
+
+            controller.loadHome()
+
+            assertEquals(YouTubeSource.HOME, controller.source)
+            assertEquals("Listen again", controller.sections.single().title)
+            assertEquals("v1", controller.sections.single().tracks.single().videoId)
+            assertTrue(controller.tracks.isEmpty())
+        } finally {
+            server.stop(0)
+        }
+    }
+
     private fun HttpServer.handle(path: String, json: String, capture: (String) -> Unit = {}) {
         createContext(path) { exchange ->
             if (exchange.requestMethod == "POST") {
